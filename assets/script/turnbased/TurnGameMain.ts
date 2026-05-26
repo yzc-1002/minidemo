@@ -27,8 +27,25 @@ export default class TurnGameMain extends cc.Component {
     private _upgradeQueue: TurnCamp[] = [];
     private _currentUpgradeCamp: TurnCamp = null;
     private _upgradeHintToken = 0;
+    private readonly _legacyNodeNames = [
+        "_tiled",
+        "_joystick",
+        "_lyStart",
+        "_ui",
+        "_toggle",
+        "_btnSetting",
+        "_btnTest",
+        "_btnWish",
+        "_btnCircle",
+        "_btnCube",
+        "_preDefense",
+        "_preBullet",
+        "_recommendBtns",
+        "_nUpdate",
+    ];
 
     onLoad() {
+        this.disableLegacyRealtimeNodes();
         this.ensureRoots();
         this.ensureMapPrefab();
         this._battleMap.onStatsChanged = this.refreshHudNumbers.bind(this);
@@ -42,9 +59,14 @@ export default class TurnGameMain extends cc.Component {
     }
 
     start() {
-        this._battleMap.initMap(this._config);
         this._hud.initHud();
         this.refreshHudNumbers();
+
+        if (!this.ensureMapPrefab()) {
+            return;
+        }
+
+        this._battleMap.initMap(this._config);
 
         if (this.autoStart) {
             this.startMatch();
@@ -88,6 +110,12 @@ export default class TurnGameMain extends cc.Component {
             this.hudRoot = new cc.Node("TurnHud");
             this.hudRoot.parent = this.node;
         }
+        this.mapRoot.active = true;
+        this.hudRoot.active = true;
+        this.mapRoot.setPosition(0, 0);
+        this.hudRoot.setPosition(0, 0);
+        this.mapRoot.zIndex = 2000;
+        this.hudRoot.zIndex = 3000;
 
         this._battleMap = this.mapRoot.getComponent(TurnBattleMap);
         if (!this._battleMap) {
@@ -100,26 +128,31 @@ export default class TurnGameMain extends cc.Component {
         }
     }
 
-    private ensureMapPrefab() {
+    private ensureMapPrefab(): boolean {
         if (this.gameMapPrefab) {
             this._battleMap.tiledMapPrefab = this.gameMapPrefab;
-            return;
+            cc.log("[TurnGame] using bound GameMap prefab", this.gameMapPrefab.name || "unknown");
+            return true;
         }
 
         if (this._battleMap.tiledMapPrefab) {
-            return;
+            this.gameMapPrefab = this._battleMap.tiledMapPrefab;
+            cc.log("[TurnGame] using TurnBattleMap tiledMapPrefab", this.gameMapPrefab.name || "unknown");
+            return true;
         }
 
-        cc.loader.loadRes("prefab/GameMap", cc.Prefab, function (err: Error, prefab: cc.Prefab) {
-            if (err) {
-                cc.error("[TurnGame] load GameMap prefab failed", err);
-                return;
+        cc.error("[TurnGame] gameMapPrefab is required. Please bind assets/prefab/GameMap.prefab on TurnGameMain.prefab.");
+        return false;
+    }
+
+    private disableLegacyRealtimeNodes() {
+        for (let i = 0; i < this._legacyNodeNames.length; i++) {
+            let child = this.node.getChildByName(this._legacyNodeNames[i]);
+            if (!child) {
+                continue;
             }
-            this.gameMapPrefab = prefab;
-            if (this._battleMap) {
-                this._battleMap.tiledMapPrefab = prefab;
-            }
-        }.bind(this));
+            child.active = false;
+        }
     }
 
     private onTurnPhaseChanged(snapshot: TurnStateSnapshot) {

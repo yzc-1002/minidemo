@@ -4,6 +4,23 @@ import { TurnStateSnapshot } from "./TurnStateMachine";
 
 const { ccclass, property } = cc._decorator;
 
+const TURN_POINT_ALIAS: { [name: string]: string } = {
+    crystalA: "crystalA",
+    baseA: "crystalA",
+    aCrystal: "crystalA",
+    crystalB: "crystalB",
+    baseB: "crystalB",
+    bCrystal: "crystalB",
+    tankA: "tankA",
+    playerA: "tankA",
+    spawnA: "tankA",
+    tankB: "tankB",
+    playerB: "tankB",
+    spawnB: "tankB",
+};
+
+const STATIC_OBSTACLE_NAME_RE = /qiang|mountain|tree|wall/i;
+
 interface TurnCrystalState {
     node: cc.Node;
     hp: number;
@@ -104,6 +121,9 @@ export default class TurnBattleMap extends cc.Component {
     private _buildAreas: { [camp: string]: cc.Rect } = { A: null, B: null };
     private _noBuildAreas: cc.Rect[] = [];
     private _spawnPoints: { [name: string]: cc.Vec2 } = {};
+    private _pointSource = "fallback";
+    private _roadSource = "fallback";
+    private _buildSource = "fallback";
 
     private readonly _dynamicObstacleSize = cc.size(56, 44);
 
@@ -123,6 +143,9 @@ export default class TurnBattleMap extends cc.Component {
         this._buildAreas = { A: null, B: null };
         this._noBuildAreas = [];
         this._spawnPoints = {};
+        this._pointSource = "fallback";
+        this._roadSource = "fallback";
+        this._buildSource = "fallback";
         this._campStats = {
             A: this.createCampStats(),
             B: this.createCampStats(),
@@ -838,7 +861,7 @@ export default class TurnBattleMap extends cc.Component {
 
     private createCrystal(camp: TurnCamp, position: cc.Vec2): { node: cc.Node; label: cc.Label } {
         let node = new cc.Node("Crystal" + camp);
-        node.parent = this.contentRoot;
+        node.parent = this._obstacleLayer || this.contentRoot;
         node.setPosition(position.x, position.y);
 
         let graphics = node.addComponent(cc.Graphics);
@@ -855,7 +878,7 @@ export default class TurnBattleMap extends cc.Component {
 
     private createTank(camp: TurnCamp, position: cc.Vec2): cc.Node {
         let node = new cc.Node("TurnTank" + camp);
-        node.parent = this.contentRoot;
+        node.parent = this._obstacleLayer || this.contentRoot;
         node.setPosition(position.x, position.y);
 
         let graphics = node.addComponent(cc.Graphics);
@@ -1067,6 +1090,7 @@ export default class TurnBattleMap extends cc.Component {
 
     private initTiledMap(): boolean {
         if (!this.tiledMapPrefab) {
+            cc.error("[TurnBattleMap] tiledMapPrefab is null, cannot init turn battle map.");
             return false;
         }
 
@@ -1077,10 +1101,8 @@ export default class TurnBattleMap extends cc.Component {
 
         this.stripLegacyGameMapComponent(mapNode);
         mapNode.name = "TurnTiledMap";
-        mapNode.active = false;
         mapNode.parent = this.node;
         mapNode.setPosition(0, 0);
-        mapNode.active = true;
         this.contentRoot = mapNode;
         this._mapNode = mapNode;
         this._tiledMap = this.findTiledMapComponent(mapNode);
@@ -1098,11 +1120,14 @@ export default class TurnBattleMap extends cc.Component {
         this._mapPixelSize = cc.size(mapSize.width * tileSize.width, mapSize.height * tileSize.height);
         this.contentRoot.setContentSize(this._mapPixelSize);
         this.node.setContentSize(this._mapPixelSize);
+        this.node.scale = 1;
 
         this.parseTurnPoints();
-        this.parseTurnAreas();
         this.parseStaticObstacles();
+        this.parseTurnAreas();
         this.ensureRuntimeLayers();
+        this.fitMapToView();
+        this.logMapInitResult();
         return true;
     }
 
@@ -1111,8 +1136,10 @@ export default class TurnBattleMap extends cc.Component {
         this._mapNode = this.node;
         this._mapPixelSize = cc.size(this._config.mapWidth, this._config.mapHeight);
         this.node.setContentSize(this._mapPixelSize);
+        this.node.scale = 1;
         this.ensureRuntimeLayers();
         this.drawBoard();
+        this.fitMapToView();
     }
 
     private ensureRuntimeLayers() {
@@ -1150,69 +1177,91 @@ export default class TurnBattleMap extends cc.Component {
 
     private stripLegacyGameMapComponent(root: cc.Node) {
         let legacyGameMap = root.getComponent(GameMap);
-        if (!legacyGameMap) {
-            return;
+        if (legacyGameMap) {
+            legacyGameMap.enabled = false;
+            root.removeComponent(legacyGameMap);
         }
-
-        legacyGameMap.enabled = false;
-        root.removeComponent(legacyGameMap);
+        for (let i = 0; i < root.childrenCount; i++) {
+            this.stripLegacyGameMapComponent(root.children[i]);
+        }
     }
 
     private parseTurnPoints() {
-        let objectGroup = this._tiledMap.getObjectGroup("_tmLayerTurnPoints");
-        if (!objectGroup) {
-            return;
+        let objectGroup = this.findObjectGroupByTrimmedName("_tmLayerTurnPoints");
+        if (objectGroup) {
+            this._pointSource = "_tmLayerTurnPoints";
+            this.readSpawnPointsFromGroup(objectGroup);
         }
-
-        let objects = objectGroup.getObjects();
-        for (let i = 0; i < objects.length; i++) {
-            let item: any = objects[i];
-            if (!item || !item.name) {
-                continue;
+        else {
+            objectGroup = this.findObjectGroupByTrimmedName("_tmLayerBorn");
+            if (objectGroup) {
+                this._pointSource = "_tmLayerBorn";
+                this.readSpawnPointsFromGroup(objectGroup);
             }
-            let center = this.tiledObjectToGameCenter(item);
-            this._spawnPoints[item.name] = center;
         }
+        this.ensureFallbackSpawnPoint("crystalA");
+        this.ensureFallbackSpawnPoint("crystalB");
+        this.ensureFallbackSpawnPoint("tankA");
+        this.ensureFallbackSpawnPoint("tankB");
     }
 
     private parseTurnAreas() {
-        let objectGroup = this._tiledMap.getObjectGroup("_tmLayerTurnAreas");
-        if (!objectGroup) {
-            return;
+        let objectGroup = this.findObjectGroupByTrimmedName("_tmLayerTurnAreas");
+        let areaRects: { [name: string]: cc.Rect[] } = {
+            roadA: [],
+            roadB: [],
+            buildA: [],
+            buildB: [],
+        };
+        if (objectGroup) {
+            let objects = this.getObjectGroupObjects(objectGroup);
+            for (let i = 0; i < objects.length; i++) {
+                let item: any = objects[i];
+                if (!item || !item.name) {
+                    continue;
+                }
+                let rect = this.tiledObjectToGameRect(item);
+                if (rect.width <= 0 || rect.height <= 0) {
+                    continue;
+                }
+                if (item.name === "noBuild") {
+                    this._noBuildAreas.push(rect);
+                    continue;
+                }
+                if (areaRects[item.name]) {
+                    areaRects[item.name].push(rect);
+                }
+            }
         }
 
-        let objects = objectGroup.getObjects();
-        for (let i = 0; i < objects.length; i++) {
-            let item: any = objects[i];
-            if (!item || !item.name) {
-                continue;
-            }
-            let rect = this.tiledObjectToGameRect(item);
-            if (item.name === "roadA") {
-                this._roads.A = rect;
-            }
-            else if (item.name === "roadB") {
-                this._roads.B = rect;
-            }
-            else if (item.name === "buildA") {
-                this._buildAreas.A = rect;
-            }
-            else if (item.name === "buildB") {
-                this._buildAreas.B = rect;
-            }
-            else if (item.name === "noBuild") {
-                this._noBuildAreas.push(rect);
-            }
+        let tankA = this.getSpawnPosition("tankA", cc.v2(0, this._config.roadY.A));
+        let tankB = this.getSpawnPosition("tankB", cc.v2(0, this._config.roadY.B));
+        let crystalA = this.getSpawnPosition("crystalA", cc.v2(0, this._config.crystalY.A));
+        let crystalB = this.getSpawnPosition("crystalB", cc.v2(0, this._config.crystalY.B));
+        this._roads.A = this.pickClosestRect(areaRects.roadA.concat(areaRects.roadB), tankA.y) || this.deriveRoadRect("A");
+        this._roads.B = this.pickClosestRect(areaRects.roadA.concat(areaRects.roadB), tankB.y, this._roads.A) || this.deriveRoadRect("B");
+        this._buildAreas.A = this.pickClosestRect(areaRects.buildA.concat(areaRects.buildB), crystalA.y) || this.deriveBuildRect("A");
+        this._buildAreas.B = this.pickClosestRect(areaRects.buildA.concat(areaRects.buildB), crystalB.y, this._buildAreas.A) || this.deriveBuildRect("B");
+
+        let hasRoadObjects = areaRects.roadA.length + areaRects.roadB.length > 0;
+        let hasBuildObjects = areaRects.buildA.length + areaRects.buildB.length > 0;
+        this._roadSource = hasRoadObjects ? "_tmLayerTurnAreas" : "derived";
+        this._buildSource = hasBuildObjects ? "_tmLayerTurnAreas" : "derived";
+        if (hasRoadObjects && (!this._roads.A || !this._roads.B)) {
+            this._roadSource = "partial _tmLayerTurnAreas + derived";
+        }
+        if (hasBuildObjects && (!this._buildAreas.A || !this._buildAreas.B)) {
+            this._buildSource = "partial _tmLayerTurnAreas + derived";
         }
     }
 
     private parseStaticObstacles() {
-        let objectGroup = this._tiledMap.getObjectGroup("_tmLayerObstacle");
+        let objectGroup = this.findObjectGroupByTrimmedName("_tmLayerObstacle");
         if (objectGroup) {
-            let objects = objectGroup.getObjects();
+            let objects = this.getObjectGroupObjects(objectGroup);
             for (let i = 0; i < objects.length; i++) {
                 let item: any = objects[i];
-                if (!item || item.name === "grass") {
+                if (!item || !this.isStaticObstacleObject(item)) {
                     continue;
                 }
                 let rect = this.tiledObjectToGameRect(item);
@@ -1230,7 +1279,7 @@ export default class TurnBattleMap extends cc.Component {
             }
         }
 
-        let tileLayer = this._tiledMap.getLayer("_tmLayerObstacle");
+        let tileLayer = this.findLayerByTrimmedName("_tmLayerObstacle");
         if (!tileLayer) {
             return;
         }
@@ -1379,5 +1428,243 @@ export default class TurnBattleMap extends cc.Component {
             return cc.v2(item.offset.x || 0, item.offset.y || 0);
         }
         return cc.v2();
+    }
+
+    private findObjectGroupByTrimmedName(name: string): cc.TiledObjectGroup {
+        if (this._tiledMap) {
+            let group = this._tiledMap.getObjectGroup(name);
+            if (group) {
+                return group;
+            }
+        }
+        if (!this._mapNode) {
+            return null;
+        }
+        let node = this.findChildByTrimmedName(this._mapNode, name);
+        if (!node) {
+            return null;
+        }
+        return node.getComponent(cc.TiledObjectGroup);
+    }
+
+    private findLayerByTrimmedName(name: string): cc.TiledLayer {
+        if (!this._mapNode) {
+            return null;
+        }
+        let node = this.findChildByTrimmedName(this._mapNode, name);
+        if (!node) {
+            return null;
+        }
+        return node.getComponent(cc.TiledLayer);
+    }
+
+    private findChildByTrimmedName(root: cc.Node, name: string): cc.Node {
+        if (!root) {
+            return null;
+        }
+        if (root.name && root.name.trim() === name) {
+            return root;
+        }
+        for (let i = 0; i < root.childrenCount; i++) {
+            let result = this.findChildByTrimmedName(root.children[i], name);
+            if (result) {
+                return result;
+            }
+        }
+        return null;
+    }
+
+    private readSpawnPointsFromGroup(objectGroup: cc.TiledObjectGroup) {
+        let objects = this.getObjectGroupObjects(objectGroup);
+        for (let i = 0; i < objects.length; i++) {
+            let item: any = objects[i];
+            if (!item || !item.name) {
+                continue;
+            }
+            let key = TURN_POINT_ALIAS[item.name];
+            if (!key) {
+                continue;
+            }
+            this._spawnPoints[key] = this.tiledObjectToGameCenter(item);
+        }
+    }
+
+    private getObjectGroupObjects(objectGroup: cc.TiledObjectGroup): any[] {
+        if (!objectGroup) {
+            return [];
+        }
+        let groupAny: any = objectGroup as any;
+        let objects = typeof groupAny.getObjects === "function" ? groupAny.getObjects() : null;
+        if (Array.isArray(objects)) {
+            return objects;
+        }
+        if (Array.isArray(groupAny._objects)) {
+            return groupAny._objects;
+        }
+        cc.warn("[TurnBattleMap] object group has no readable objects array", objectGroup.node ? objectGroup.node.name : "unknown");
+        return [];
+    }
+
+    private ensureFallbackSpawnPoint(name: string) {
+        if (this._spawnPoints[name]) {
+            return;
+        }
+        let fallback = this.createFallbackSpawnPoint(name);
+        this._spawnPoints[name] = fallback;
+        cc.warn("[TurnBattleMap] missing point " + name + ", using fallback point at", fallback);
+    }
+
+    private createFallbackSpawnPoint(name: string): cc.Vec2 {
+        let mapRect = this.getMapRect();
+        let centerX = 0;
+        let crystalInset = Math.max(72, Math.min(128, this._mapPixelSize.height * 0.1));
+        let tankInset = crystalInset + 96;
+        if (name === "crystalA") {
+            return cc.v2(centerX, mapRect.y + crystalInset);
+        }
+        if (name === "crystalB") {
+            return cc.v2(centerX, mapRect.y + mapRect.height - crystalInset);
+        }
+        if (name === "tankA") {
+            return cc.v2(centerX, mapRect.y + tankInset);
+        }
+        if (name === "tankB") {
+            return cc.v2(centerX, mapRect.y + mapRect.height - tankInset);
+        }
+        return cc.v2();
+    }
+
+    private pickClosestRect(rects: cc.Rect[], targetY: number, usedRect?: cc.Rect): cc.Rect {
+        let picked: cc.Rect = null;
+        let minDistance = Number.MAX_VALUE;
+        for (let i = 0; i < rects.length; i++) {
+            let rect = rects[i];
+            if (!rect) {
+                continue;
+            }
+            if (usedRect && this.rectEquals(rect, usedRect)) {
+                continue;
+            }
+            let centerY = rect.y + rect.height / 2;
+            let distance = Math.abs(centerY - targetY);
+            if (distance < minDistance) {
+                minDistance = distance;
+                picked = rect;
+            }
+        }
+        return picked;
+    }
+
+    private deriveRoadRect(camp: TurnCamp): cc.Rect {
+        let tankPosition = this.getSpawnPosition("tank" + camp, this.createFallbackSpawnPoint("tank" + camp));
+        let bounds = this.getInteriorHorizontalBounds();
+        let height = 48;
+        return cc.rect(bounds.minX, tankPosition.y - height / 2, bounds.maxX - bounds.minX, height);
+    }
+
+    private deriveBuildRect(camp: TurnCamp): cc.Rect {
+        let crystal = this.getSpawnPosition("crystal" + camp, this.createFallbackSpawnPoint("crystal" + camp));
+        let mapRect = this.getMapRect();
+        let bounds = this.getInteriorHorizontalBounds();
+        let margin = 44;
+        let minY = 0;
+        let maxY = 0;
+        if (crystal.y <= 0) {
+            minY = Math.max(mapRect.y + 24, crystal.y + margin);
+            maxY = -8;
+        }
+        else {
+            minY = 8;
+            maxY = Math.min(mapRect.y + mapRect.height - 24, crystal.y - margin);
+        }
+        if (maxY < minY) {
+            let centerY = crystal.y <= 0 ? crystal.y + 100 : crystal.y - 100;
+            minY = centerY - 60;
+            maxY = centerY + 60;
+        }
+        return cc.rect(bounds.minX, minY, bounds.maxX - bounds.minX, Math.max(24, maxY - minY));
+    }
+
+    private getInteriorHorizontalBounds(): { minX: number; maxX: number } {
+        let mapRect = this.getMapRect();
+        let inset = Math.max(this._tileSize.width, 24);
+        let minX = mapRect.x + inset;
+        let maxX = mapRect.x + mapRect.width - inset;
+        for (let i = 0; i < this._staticObstacles.length; i++) {
+            let rect = this._staticObstacles[i].rect;
+            if (rect.x <= mapRect.x + inset * 1.5) {
+                minX = Math.max(minX, rect.x + rect.width);
+            }
+            if (rect.x + rect.width >= mapRect.x + mapRect.width - inset * 1.5) {
+                maxX = Math.min(maxX, rect.x);
+            }
+        }
+        if (maxX - minX < 120) {
+            minX = mapRect.x + inset;
+            maxX = mapRect.x + mapRect.width - inset;
+        }
+        return { minX: minX, maxX: maxX };
+    }
+
+    private isStaticObstacleObject(item: any): boolean {
+        let name = item && item.name ? String(item.name) : "";
+        if (!name) {
+            return false;
+        }
+        if (name.toLowerCase() === "grass") {
+            return false;
+        }
+        if (STATIC_OBSTACLE_NAME_RE.test(name)) {
+            return true;
+        }
+        return true;
+    }
+
+    private rectEquals(a: cc.Rect, b: cc.Rect): boolean {
+        return !!a && !!b
+            && Math.abs(a.x - b.x) < 0.01
+            && Math.abs(a.y - b.y) < 0.01
+            && Math.abs(a.width - b.width) < 0.01
+            && Math.abs(a.height - b.height) < 0.01;
+    }
+
+    private fitMapToView() {
+        let visibleSize = cc.view.getVisibleSize();
+        if (!visibleSize || visibleSize.width <= 0 || visibleSize.height <= 0) {
+            return;
+        }
+        let fitScale = Math.min(1, visibleSize.width / this._mapPixelSize.width, visibleSize.height / this._mapPixelSize.height);
+        this.node.scale = fitScale > 0 ? fitScale : 1;
+    }
+
+    private logMapInitResult() {
+        let runtimeLayerReady = !!(this._obstacleLayer && this._bulletLayer && this._zoneLayer && this._effectLayer);
+        let prefabName = this.tiledMapPrefab ? (this.tiledMapPrefab.name || "unknown") : "null";
+        let isGameMapPrefab = prefabName === "GameMap";
+        cc.log(
+            "[TurnBattleMap] initTiledMap ok",
+            "useGameMapPrefab=" + (isGameMapPrefab ? "true" : "false"),
+            "prefab=" + prefabName,
+            "size=" + this._mapPixelSize.width + "x" + this._mapPixelSize.height,
+            "pointSource=" + this._pointSource,
+            "roadSource=" + this._roadSource,
+            "buildSource=" + this._buildSource,
+            "staticObstacleCount=" + this._staticObstacles.length,
+            "runtimeLayers=" + (runtimeLayerReady ? "ok" : "missing"),
+        );
+        cc.log(
+            "[TurnBattleMap] points",
+            "crystalA=" + this.formatVec2(this._spawnPoints.crystalA),
+            "crystalB=" + this.formatVec2(this._spawnPoints.crystalB),
+            "tankA=" + this.formatVec2(this._spawnPoints.tankA),
+            "tankB=" + this.formatVec2(this._spawnPoints.tankB),
+        );
+    }
+
+    private formatVec2(value: cc.Vec2): string {
+        if (!value) {
+            return "null";
+        }
+        return "(" + value.x.toFixed(1) + ", " + value.y.toFixed(1) + ")";
     }
 }
