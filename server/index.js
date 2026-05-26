@@ -268,8 +268,819 @@ const room = {
   smallEnergyHubSlotIds: [],
 };
 
+const TURN_MAX_PLAYERS = 2;
+const TURN_MAP_BOUNDS = {
+  halfWidth: 1000,
+  halfHeight: 700,
+};
+const TURN_CONFIG = {
+  buildSeconds: 8,
+  zoneSeconds: 5,
+  attackSeconds: 3,
+  waitBulletSeconds: 5,
+  upgradeSeconds: 8,
+  attackRounds: 3,
+  crystalHp: 100,
+  initialObstacles: 3,
+  obstacleGainPerRound: 1,
+  baseExp: 10,
+  obstacleHitExp: 8,
+  crystalHitExp: 20,
+  expNeed: 60,
+  maxBulletResultDamage: 80,
+};
+const TURN_PHASE = {
+  WAITING: 'waiting',
+  BUILD: 'build',
+  ZONE: 'zone',
+  ATTACK: 'attack',
+  WAIT_BULLET: 'waitBullet',
+  UPGRADE: 'upgrade',
+  FINISH: 'finish',
+};
+const TURN_CAMPS = ['A', 'B'];
+const TURN_UPGRADE_POOL = [
+  { id: 'bulletBounce', type: 'bullet', title: '反弹 +1', value: 1 },
+  { id: 'multiShot', type: 'attack', title: '每次行动多发 +1', value: 1 },
+  { id: 'damageUp', type: 'attr', title: '子弹伤害 +10', value: 10 },
+  { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20 },
+  { id: 'unlockBlackHole', type: 'zone', title: '解锁黑洞区', value: 'blackHole' },
+];
+
+const turnRooms = {};
+let nextTurnRoomId = 1;
+
+function sendJson(ws, payload) {
+  if (isSocketOpen(ws)) {
+    ws.send(JSON.stringify(payload));
+  }
+}
+
+function logTurn(roomState, message, extra) {
+  const suffix = extra == null ? '' : ` ${JSON.stringify(extra)}`;
+  console.log(`[TurnRoom:${roomState.id}] ${message}${suffix}`);
+}
+
 function isSocketOpen(ws) {
   return ws && ws.readyState === WebSocket.OPEN;
+}
+
+function createTurnPlayer(ws, camp, index) {
+  return {
+    socket: ws,
+    playerId: index,
+    camp,
+    disconnected: false,
+    exp: 0,
+    expNeed: TURN_CONFIG.expNeed,
+    inventory: {
+      obstacles: TURN_CONFIG.initialObstacles,
+    },
+    upgrades: {
+      bulletBounce: 0,
+      multiShot: 0,
+      damageAdd: 0,
+      zones: [],
+    },
+    pendingUpgradeOptions: [],
+  };
+}
+
+function createTurnRoom() {
+  const id = `turn_${nextTurnRoomId++}`;
+  return {
+    id,
+    players: [],
+    seed: Date.now() ^ Math.floor(Math.random() * 1000000),
+    phase: TURN_PHASE.WAITING,
+    roundIndex: 0,
+    attackRoundIndex: 0,
+    actionCamp: '',
+    phaseEndAt: 0,
+    phaseTimer: null,
+    timerSync: null,
+    waitingForBulletCamp: '',
+    actionSubmitted: false,
+    actedCampsInZone: {},
+    crystals: {
+      A: { camp: 'A', hp: TURN_CONFIG.crystalHp, maxHp: TURN_CONFIG.crystalHp },
+      B: { camp: 'B', hp: TURN_CONFIG.crystalHp, maxHp: TURN_CONFIG.crystalHp },
+    },
+    obstacles: {},
+    zones: [],
+    nextObstacleId: 1,
+    nextZoneId: 1,
+    finished: false,
+  };
+}
+
+function getTurnRoom(ws) {
+  if (!ws || !ws.turnRoomId) {
+    return null;
+  }
+  return turnRooms[ws.turnRoomId] || null;
+}
+
+function getTurnPlayer(roomState, ws) {
+  if (!roomState || !ws) {
+    return null;
+  }
+  return roomState.players.find((player) => player.socket === ws) || null;
+}
+
+function findJoinableTurnRoom() {
+  const rooms = Object.keys(turnRooms).map((id) => turnRooms[id]);
+  for (let i = 0; i < rooms.length; i++) {
+    const roomState = rooms[i];
+    if (roomState && roomState.phase === TURN_PHASE.WAITING && roomState.players.length < TURN_MAX_PLAYERS) {
+      return roomState;
+    }
+  }
+  const roomState = createTurnRoom();
+  turnRooms[roomState.id] = roomState;
+  return roomState;
+}
+
+function clearTurnTimers(roomState) {
+  if (!roomState) {
+    return;
+  }
+  if (roomState.phaseTimer) {
+    clearTimeout(roomState.phaseTimer);
+    roomState.phaseTimer = null;
+  }
+  if (roomState.timerSync) {
+    clearInterval(roomState.timerSync);
+    roomState.timerSync = null;
+  }
+}
+
+function broadcastTurn(roomState, payload) {
+  if (!roomState) {
+    return;
+  }
+  const data = JSON.stringify(payload);
+  roomState.players.forEach((player) => {
+    if (isSocketOpen(player.socket)) {
+      player.socket.send(data);
+    }
+  });
+}
+
+function sendTurnError(ws, message, code = 'turnError') {
+  sendJson(ws, {
+    type: 'turnError',
+    code,
+    message,
+  });
+}
+
+function getTurnStateSnapshot(roomState) {
+  return {
+    type: 'stateSnapshot',
+    roomId: roomState.id,
+    phase: roomState.phase,
+    roundIndex: roomState.roundIndex,
+    attackRoundIndex: roomState.attackRoundIndex,
+    actionCamp: roomState.actionCamp,
+    endAt: roomState.phaseEndAt,
+    crystals: {
+      A: { ...roomState.crystals.A },
+      B: { ...roomState.crystals.B },
+    },
+    obstacles: Object.keys(roomState.obstacles).map((id) => ({ ...roomState.obstacles[id] })),
+    zones: roomState.zones.map((zone) => ({ ...zone })),
+    exp: roomState.players.reduce((result, player) => {
+      result[player.camp] = {
+        exp: player.exp,
+        expNeed: player.expNeed,
+      };
+      return result;
+    }, {}),
+    inventories: roomState.players.reduce((result, player) => {
+      result[player.camp] = { ...player.inventory };
+      return result;
+    }, {}),
+    upgrades: roomState.players.reduce((result, player) => {
+      result[player.camp] = {
+        bulletBounce: player.upgrades.bulletBounce,
+        multiShot: player.upgrades.multiShot,
+        damageAdd: player.upgrades.damageAdd,
+        zones: player.upgrades.zones.slice(),
+      };
+      return result;
+    }, {}),
+  };
+}
+
+function broadcastTurnSnapshot(roomState) {
+  broadcastTurn(roomState, getTurnStateSnapshot(roomState));
+}
+
+function getTurnPhaseDurationSeconds(phase) {
+  if (phase === TURN_PHASE.BUILD) {
+    return TURN_CONFIG.buildSeconds;
+  }
+  if (phase === TURN_PHASE.ZONE) {
+    return TURN_CONFIG.zoneSeconds;
+  }
+  if (phase === TURN_PHASE.ATTACK) {
+    return TURN_CONFIG.attackSeconds;
+  }
+  if (phase === TURN_PHASE.WAIT_BULLET) {
+    return TURN_CONFIG.waitBulletSeconds;
+  }
+  if (phase === TURN_PHASE.UPGRADE) {
+    return TURN_CONFIG.upgradeSeconds;
+  }
+  return 0;
+}
+
+function setTurnPhase(roomState, phase, durationSeconds, onTimeout) {
+  clearTurnTimers(roomState);
+  if (roomState.finished) {
+    return;
+  }
+  roomState.phase = phase;
+  roomState.phaseEndAt = durationSeconds > 0 ? Date.now() + durationSeconds * 1000 : 0;
+  broadcastTurn(roomState, {
+    type: 'phaseChanged',
+    roomId: roomState.id,
+    phase: roomState.phase,
+    roundIndex: roomState.roundIndex,
+    attackRoundIndex: roomState.attackRoundIndex,
+    actionCamp: roomState.actionCamp,
+    endAt: roomState.phaseEndAt,
+  });
+  broadcastTurnSnapshot(roomState);
+  if (durationSeconds > 0) {
+    roomState.timerSync = setInterval(() => {
+      broadcastTurn(roomState, {
+        type: 'timerSync',
+        roomId: roomState.id,
+        phase: roomState.phase,
+        endAt: roomState.phaseEndAt,
+        remainingMs: Math.max(0, roomState.phaseEndAt - Date.now()),
+      });
+    }, 1000);
+    roomState.phaseTimer = setTimeout(() => {
+      roomState.phaseTimer = null;
+      if (roomState.timerSync) {
+        clearInterval(roomState.timerSync);
+        roomState.timerSync = null;
+      }
+      onTimeout();
+    }, durationSeconds * 1000);
+  }
+}
+
+function startTurnBuildPhase(roomState) {
+  roomState.actionCamp = '';
+  roomState.attackRoundIndex = 0;
+  roomState.waitingForBulletCamp = '';
+  roomState.actionSubmitted = false;
+  roomState.actedCampsInZone = {};
+  if (roomState.roundIndex > 0) {
+    roomState.players.forEach((player) => {
+      player.inventory.obstacles += TURN_CONFIG.obstacleGainPerRound;
+    });
+  }
+  logTurn(roomState, `phase build round=${roomState.roundIndex}`);
+  setTurnPhase(roomState, TURN_PHASE.BUILD, TURN_CONFIG.buildSeconds, () => {
+    if (roomState.roundIndex <= 0) {
+      startTurnAttackPhase(roomState, 'A');
+      return;
+    }
+    startTurnZonePhase(roomState);
+  });
+}
+
+function startTurnZonePhase(roomState) {
+  roomState.actionCamp = '';
+  roomState.actedCampsInZone = {};
+  logTurn(roomState, `phase zone round=${roomState.roundIndex}`);
+  setTurnPhase(roomState, TURN_PHASE.ZONE, TURN_CONFIG.zoneSeconds, () => {
+    startTurnAttackPhase(roomState, 'A');
+  });
+}
+
+function startTurnAttackPhase(roomState, camp) {
+  roomState.actionCamp = camp;
+  roomState.waitingForBulletCamp = '';
+  roomState.actionSubmitted = false;
+  logTurn(roomState, `phase attack camp=${camp} attackRound=${roomState.attackRoundIndex}`);
+  setTurnPhase(roomState, TURN_PHASE.ATTACK, TURN_CONFIG.attackSeconds, () => {
+    advanceTurnAttack(roomState);
+  });
+}
+
+function startTurnWaitBulletPhase(roomState, camp) {
+  roomState.actionCamp = camp;
+  roomState.waitingForBulletCamp = camp;
+  logTurn(roomState, `phase waitBullet camp=${camp}`);
+  setTurnPhase(roomState, TURN_PHASE.WAIT_BULLET, TURN_CONFIG.waitBulletSeconds, () => {
+    advanceTurnAttack(roomState);
+  });
+}
+
+function advanceTurnAttack(roomState) {
+  if (roomState.finished) {
+    return;
+  }
+  roomState.waitingForBulletCamp = '';
+  roomState.actionSubmitted = false;
+  if (roomState.actionCamp === 'A') {
+    startTurnAttackPhase(roomState, 'B');
+    return;
+  }
+  roomState.attackRoundIndex += 1;
+  if (roomState.attackRoundIndex < TURN_CONFIG.attackRounds) {
+    startTurnAttackPhase(roomState, 'A');
+    return;
+  }
+  startTurnUpgradePhase(roomState);
+}
+
+function getTurnUpgradeOptions(roomState, player) {
+  if (player.pendingUpgradeOptions.length > 0) {
+    return player.pendingUpgradeOptions;
+  }
+  const startIndex = Math.abs((roomState.seed + roomState.roundIndex + player.playerId) % TURN_UPGRADE_POOL.length);
+  const options = [];
+  for (let i = 0; i < TURN_UPGRADE_POOL.length && options.length < 3; i++) {
+    const option = TURN_UPGRADE_POOL[(startIndex + i) % TURN_UPGRADE_POOL.length];
+    options.push({ ...option });
+  }
+  player.pendingUpgradeOptions = options;
+  return options;
+}
+
+function startTurnUpgradePhase(roomState) {
+  roomState.actionCamp = '';
+  roomState.players.forEach((player) => {
+    player.exp += TURN_CONFIG.baseExp;
+    if (player.exp >= player.expNeed) {
+      sendJson(player.socket, {
+        type: 'upgradeOptions',
+        roomId: roomState.id,
+        camp: player.camp,
+        options: getTurnUpgradeOptions(roomState, player),
+      });
+    }
+  });
+  logTurn(roomState, `phase upgrade round=${roomState.roundIndex}`);
+  setTurnPhase(roomState, TURN_PHASE.UPGRADE, TURN_CONFIG.upgradeSeconds, () => {
+    roomState.roundIndex += 1;
+    startTurnBuildPhase(roomState);
+  });
+}
+
+function startTurnRoom(roomState) {
+  roomState.phase = TURN_PHASE.BUILD;
+  roomState.players.forEach((player) => {
+    const ws = player.socket;
+    ws.turnPlayerId = player.playerId;
+    ws.turnCamp = player.camp;
+    sendJson(ws, {
+      type: 'turnGameStart',
+      roomId: roomState.id,
+      playerId: player.playerId,
+      camp: player.camp,
+      seed: roomState.seed,
+      config: TURN_CONFIG,
+    });
+  });
+  logTurn(roomState, 'game start');
+  startTurnBuildPhase(roomState);
+}
+
+function removeFromLegacyWaitingRoom(ws) {
+  if (room.players.indexOf(ws) < 0) {
+    return;
+  }
+  if (room.state === ROOM_STATE.WAITING || room.state === ROOM_STATE.COUNTDOWN) {
+    removeWaitingPlayer(ws);
+  }
+}
+
+function handleJoinTurnRoom(ws) {
+  if (ws.turnRoomId) {
+    const existing = getTurnRoom(ws);
+    if (existing) {
+      sendJson(ws, {
+        type: 'turnJoined',
+        roomId: existing.id,
+        playerId: ws.turnPlayerId,
+        camp: ws.turnCamp,
+        playerCount: existing.players.length,
+        maxPlayers: TURN_MAX_PLAYERS,
+        config: TURN_CONFIG,
+      });
+      return;
+    }
+  }
+
+  removeFromLegacyWaitingRoom(ws);
+  const roomState = findJoinableTurnRoom();
+  const camp = TURN_CAMPS[roomState.players.length];
+  const player = createTurnPlayer(ws, camp, roomState.players.length);
+  roomState.players.push(player);
+  ws.turnRoomId = roomState.id;
+  ws.turnPlayerId = player.playerId;
+  ws.turnCamp = player.camp;
+
+  sendJson(ws, {
+    type: 'turnJoined',
+    roomId: roomState.id,
+    playerId: player.playerId,
+    camp: player.camp,
+    playerCount: roomState.players.length,
+    maxPlayers: TURN_MAX_PLAYERS,
+    config: TURN_CONFIG,
+  });
+  broadcastTurn(roomState, {
+    type: 'turnPlayerCount',
+    roomId: roomState.id,
+    count: roomState.players.length,
+    max: TURN_MAX_PLAYERS,
+  });
+  logTurn(roomState, `player joined camp=${player.camp}`);
+
+  if (roomState.players.length >= TURN_MAX_PLAYERS) {
+    startTurnRoom(roomState);
+  }
+}
+
+function sanitizeTurnPoint(payload, prefix = '') {
+  const x = Number(payload && payload[`${prefix}x`]);
+  const y = Number(payload && payload[`${prefix}y`]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return {
+    x: clamp(x, -TURN_MAP_BOUNDS.halfWidth, TURN_MAP_BOUNDS.halfWidth),
+    y: clamp(y, -TURN_MAP_BOUNDS.halfHeight, TURN_MAP_BOUNDS.halfHeight),
+  };
+}
+
+function getTurnActionPayload(msg) {
+  if (msg && msg.payload && typeof msg.payload === 'object') {
+    return msg.payload;
+  }
+  return msg || {};
+}
+
+function isTurnObstaclePositionFree(roomState, x, y, ignoreId) {
+  const gridX = Math.round(x / 40);
+  const gridY = Math.round(y / 40);
+  return !Object.keys(roomState.obstacles).some((id) => {
+    if (id === ignoreId) {
+      return false;
+    }
+    const obstacle = roomState.obstacles[id];
+    return Math.round(obstacle.x / 40) === gridX && Math.round(obstacle.y / 40) === gridY;
+  });
+}
+
+function handleTurnBuildAction(ws, msg) {
+  const roomState = getTurnRoom(ws);
+  const player = getTurnPlayer(roomState, ws);
+  if (!roomState || !player || roomState.phase !== TURN_PHASE.BUILD) {
+    sendTurnError(ws, '当前不是改造期', 'invalidPhase');
+    return;
+  }
+  const payload = getTurnActionPayload(msg);
+  const op = payload.op === 'move' || payload.op === 'remove' ? payload.op : 'place';
+  const point = sanitizeTurnPoint(payload);
+  const obstacleId = String(payload.obstacleId || '');
+
+  if (op === 'place') {
+    if (!point) {
+      sendTurnError(ws, '建造坐标无效', 'invalidPoint');
+      return;
+    }
+    if (player.inventory.obstacles <= 0) {
+      sendTurnError(ws, '掩体库存不足', 'noInventory');
+      return;
+    }
+    if (!isTurnObstaclePositionFree(roomState, point.x, point.y)) {
+      sendTurnError(ws, '该位置已有掩体', 'occupied');
+      return;
+    }
+    const id = obstacleId || `${player.camp}_${roomState.nextObstacleId++}`;
+    roomState.obstacles[id] = {
+      id,
+      camp: player.camp,
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+      hp: 1,
+    };
+    player.inventory.obstacles -= 1;
+  } else if (op === 'move') {
+    if (!point || !obstacleId || !roomState.obstacles[obstacleId]) {
+      sendTurnError(ws, '移动掩体参数无效', 'invalidObstacle');
+      return;
+    }
+    const obstacle = roomState.obstacles[obstacleId];
+    if (obstacle.camp !== player.camp) {
+      sendTurnError(ws, '不能移动对方掩体', 'notOwner');
+      return;
+    }
+    if (!isTurnObstaclePositionFree(roomState, point.x, point.y, obstacleId)) {
+      sendTurnError(ws, '目标位置已有掩体', 'occupied');
+      return;
+    }
+    obstacle.x = Math.round(point.x);
+    obstacle.y = Math.round(point.y);
+  } else if (op === 'remove') {
+    if (!obstacleId || !roomState.obstacles[obstacleId]) {
+      sendTurnError(ws, '移除掩体参数无效', 'invalidObstacle');
+      return;
+    }
+    const obstacle = roomState.obstacles[obstacleId];
+    if (obstacle.camp !== player.camp) {
+      sendTurnError(ws, '不能移除对方掩体', 'notOwner');
+      return;
+    }
+    delete roomState.obstacles[obstacleId];
+    player.inventory.obstacles += 1;
+  }
+
+  broadcastTurn(roomState, {
+    type: 'buildAction',
+    roomId: roomState.id,
+    camp: player.camp,
+    playerId: player.playerId,
+    action: {
+      op,
+      obstacleId: obstacleId || undefined,
+      x: point ? Math.round(point.x) : undefined,
+      y: point ? Math.round(point.y) : undefined,
+    },
+  });
+  broadcastTurnSnapshot(roomState);
+}
+
+function handleTurnZoneAction(ws, msg) {
+  const roomState = getTurnRoom(ws);
+  const player = getTurnPlayer(roomState, ws);
+  if (!roomState || !player || roomState.phase !== TURN_PHASE.ZONE || roomState.roundIndex <= 0) {
+    sendTurnError(ws, '当前不能放置辅助区域', 'invalidPhase');
+    return;
+  }
+  if (roomState.actedCampsInZone[player.camp]) {
+    sendTurnError(ws, '本阶段已放置辅助区域', 'alreadyActed');
+    return;
+  }
+  const payload = getTurnActionPayload(msg);
+  const zoneType = String(payload.zoneType || '');
+  const point = sanitizeTurnPoint(payload);
+  if (!point || !zoneType) {
+    sendTurnError(ws, '辅助区域参数无效', 'invalidZone');
+    return;
+  }
+  if (player.upgrades.zones.indexOf(zoneType) < 0) {
+    sendTurnError(ws, '尚未拥有该辅助区域', 'zoneLocked');
+    return;
+  }
+  const zone = {
+    id: payload.zoneId ? String(payload.zoneId) : `${player.camp}_zone_${roomState.nextZoneId++}`,
+    camp: player.camp,
+    zoneType,
+    x: Math.round(point.x),
+    y: Math.round(point.y),
+    extra: payload.extra && typeof payload.extra === 'object' ? payload.extra : {},
+  };
+  roomState.zones.push(zone);
+  roomState.actedCampsInZone[player.camp] = true;
+  broadcastTurn(roomState, {
+    type: 'zoneAction',
+    roomId: roomState.id,
+    camp: player.camp,
+    playerId: player.playerId,
+    zone,
+  });
+  broadcastTurnSnapshot(roomState);
+}
+
+function handleTurnAttackAction(ws, msg) {
+  const roomState = getTurnRoom(ws);
+  const player = getTurnPlayer(roomState, ws);
+  if (!roomState || !player || roomState.phase !== TURN_PHASE.ATTACK || roomState.actionCamp !== player.camp) {
+    sendTurnError(ws, '当前不能攻击', 'invalidPhase');
+    return;
+  }
+  if (roomState.actionSubmitted) {
+    sendTurnError(ws, '本行动已提交攻击', 'alreadyActed');
+    return;
+  }
+  const payload = getTurnActionPayload(msg);
+  const fromX = Number(payload.fromX);
+  const aimX = Number(payload.aimX);
+  const aimY = Number(payload.aimY);
+  if (!Number.isFinite(fromX) || !Number.isFinite(aimX) || !Number.isFinite(aimY)) {
+    sendTurnError(ws, '攻击参数无效', 'invalidAttack');
+    return;
+  }
+  const maxShotIndex = 1 + Math.max(0, player.upgrades.multiShot);
+  const shotIndex = clamp(Math.floor(Number(payload.shotIndex) || 0), 0, maxShotIndex - 1);
+  roomState.actionSubmitted = true;
+  broadcastTurn(roomState, {
+    type: 'attackAction',
+    roomId: roomState.id,
+    camp: player.camp,
+    playerId: player.playerId,
+    attackRoundIndex: roomState.attackRoundIndex,
+    action: {
+      fromX: clamp(fromX, -TURN_MAP_BOUNDS.halfWidth, TURN_MAP_BOUNDS.halfWidth),
+      aimX,
+      aimY,
+      bulletType: String(payload.bulletType || 'normal'),
+      shotIndex,
+      damageAdd: player.upgrades.damageAdd,
+      bulletBounce: player.upgrades.bulletBounce,
+      multiShot: player.upgrades.multiShot,
+    },
+  });
+  startTurnWaitBulletPhase(roomState, player.camp);
+}
+
+function getEnemyCamp(camp) {
+  return camp === 'A' ? 'B' : 'A';
+}
+
+function finishTurnRoom(roomState, winnerCamp) {
+  if (!roomState || roomState.finished) {
+    return;
+  }
+  roomState.finished = true;
+  clearTurnTimers(roomState);
+  roomState.phase = TURN_PHASE.FINISH;
+  roomState.actionCamp = '';
+  broadcastTurnSnapshot(roomState);
+  broadcastTurn(roomState, {
+    type: 'turnGameEnded',
+    roomId: roomState.id,
+    winnerCamp,
+    crystals: roomState.crystals,
+  });
+  logTurn(roomState, `game ended winner=${winnerCamp}`);
+}
+
+function evaluateTurnGameEnd(roomState) {
+  const aDead = roomState.crystals.A.hp <= 0;
+  const bDead = roomState.crystals.B.hp <= 0;
+  if (!aDead && !bDead) {
+    return false;
+  }
+  let winnerCamp = '';
+  if (aDead && !bDead) {
+    winnerCamp = 'B';
+  } else if (bDead && !aDead) {
+    winnerCamp = 'A';
+  }
+  finishTurnRoom(roomState, winnerCamp);
+  return true;
+}
+
+function handleTurnBulletResult(ws, msg) {
+  const roomState = getTurnRoom(ws);
+  const player = getTurnPlayer(roomState, ws);
+  if (!roomState || !player || roomState.phase !== TURN_PHASE.WAIT_BULLET || roomState.waitingForBulletCamp !== player.camp) {
+    sendTurnError(ws, '当前不能提交弹道结果', 'invalidPhase');
+    return;
+  }
+  const payload = getTurnActionPayload(msg);
+  const destroyedIds = Array.isArray(payload.destroyedIds) ? payload.destroyedIds.slice(0, 20).map(String) : [];
+  destroyedIds.forEach((id) => {
+    if (roomState.obstacles[id]) {
+      delete roomState.obstacles[id];
+      player.exp += TURN_CONFIG.obstacleHitExp;
+    }
+  });
+
+  const hitType = String(payload.hitType || '');
+  const targetCamp = TURN_CAMPS.indexOf(payload.targetCamp) >= 0 ? payload.targetCamp : getEnemyCamp(player.camp);
+  let damage = clamp(Math.floor(Number(payload.damage) || 0), 0, TURN_CONFIG.maxBulletResultDamage + player.upgrades.damageAdd);
+  if (hitType === 'crystal' && targetCamp !== player.camp && roomState.crystals[targetCamp]) {
+    const crystal = roomState.crystals[targetCamp];
+    crystal.hp = Math.max(0, crystal.hp - damage);
+    player.exp += TURN_CONFIG.crystalHitExp;
+  } else {
+    damage = 0;
+  }
+  const expGain = clamp(Math.floor(Number(payload.expGain) || 0), 0, 100);
+  player.exp += expGain;
+
+  broadcastTurn(roomState, {
+    type: 'bulletResult',
+    roomId: roomState.id,
+    camp: player.camp,
+    playerId: player.playerId,
+    result: {
+      hitType,
+      targetId: payload.targetId == null ? '' : String(payload.targetId),
+      targetCamp,
+      damage,
+      expGain,
+      destroyedIds,
+    },
+  });
+  broadcastTurnSnapshot(roomState);
+  if (!evaluateTurnGameEnd(roomState)) {
+    advanceTurnAttack(roomState);
+  }
+}
+
+function applyTurnUpgrade(player, option) {
+  if (!option) {
+    return;
+  }
+  if (option.id === 'bulletBounce') {
+    player.upgrades.bulletBounce += option.value || 1;
+  } else if (option.id === 'multiShot') {
+    player.upgrades.multiShot += option.value || 1;
+  } else if (option.id === 'damageUp') {
+    player.upgrades.damageAdd += option.value || 10;
+  } else if (option.id === 'crystalHp') {
+    const roomState = getTurnRoom(player.socket);
+    const crystal = roomState && roomState.crystals[player.camp];
+    if (crystal) {
+      crystal.maxHp += option.value || 20;
+      crystal.hp += option.value || 20;
+    }
+  } else if (option.id === 'unlockBlackHole') {
+    const zoneType = option.value || 'blackHole';
+    if (player.upgrades.zones.indexOf(zoneType) < 0) {
+      player.upgrades.zones.push(zoneType);
+    }
+  }
+}
+
+function handleTurnUpgradePick(ws, msg) {
+  const roomState = getTurnRoom(ws);
+  const player = getTurnPlayer(roomState, ws);
+  if (!roomState || !player || roomState.phase !== TURN_PHASE.UPGRADE) {
+    sendTurnError(ws, '当前不能选择升级', 'invalidPhase');
+    return;
+  }
+  if (player.exp < player.expNeed) {
+    sendTurnError(ws, '经验不足', 'notEnoughExp');
+    return;
+  }
+  const payload = getTurnActionPayload(msg);
+  const optionId = String(payload.optionId || msg.optionId || '');
+  const options = getTurnUpgradeOptions(roomState, player);
+  const option = options.find((item) => item.id === optionId);
+  if (!option) {
+    sendTurnError(ws, '升级选项无效', 'invalidUpgrade');
+    return;
+  }
+  player.exp -= player.expNeed;
+  player.expNeed += 20;
+  player.pendingUpgradeOptions = [];
+  applyTurnUpgrade(player, option);
+  broadcastTurn(roomState, {
+    type: 'upgradePick',
+    roomId: roomState.id,
+    camp: player.camp,
+    playerId: player.playerId,
+    option,
+  });
+  broadcastTurnSnapshot(roomState);
+}
+
+function handleTurnDisconnect(ws) {
+  const roomState = getTurnRoom(ws);
+  if (!roomState) {
+    return false;
+  }
+  const player = getTurnPlayer(roomState, ws);
+  if (player) {
+    player.disconnected = true;
+  }
+  ws.turnRoomId = '';
+  ws.turnCamp = '';
+  ws.turnPlayerId = -1;
+
+  if (roomState.phase === TURN_PHASE.WAITING) {
+    roomState.players = roomState.players.filter((item) => item.socket !== ws);
+    broadcastTurn(roomState, {
+      type: 'turnPlayerCount',
+      roomId: roomState.id,
+      count: roomState.players.length,
+      max: TURN_MAX_PLAYERS,
+    });
+  } else if (!roomState.finished && player) {
+    finishTurnRoom(roomState, getEnemyCamp(player.camp));
+  }
+
+  if (roomState.players.filter((item) => isSocketOpen(item.socket)).length <= 0) {
+    clearTurnTimers(roomState);
+    delete turnRooms[roomState.id];
+    logTurn(roomState, 'removed empty room');
+  }
+  return true;
 }
 
 function getConnectedPlayers() {
@@ -4508,6 +5319,11 @@ wss.on('connection', (ws) => {
     console.log(`[Server] Player ${ws.playerId} disconnected`);
     ws.disconnected = true;
 
+    if (handleTurnDisconnect(ws)) {
+      maybeResetRoomWhenEmpty();
+      return;
+    }
+
     if (room.state === ROOM_STATE.WAITING || room.state === ROOM_STATE.COUNTDOWN) {
       removeWaitingPlayer(ws);
       maybeResetRoomWhenEmpty();
@@ -4524,13 +5340,13 @@ wss.on('connection', (ws) => {
 
   if (room.state === ROOM_STATE.RUNNING || room.state === ROOM_STATE.ENDED) {
     ws.send(JSON.stringify({ type: 'error', message: 'Room is not joinable right now' }));
-    ws.close();
+    // Keep the socket alive so a client can still opt into the independent turn-based room.
     return;
   }
 
   if (room.players.length >= MAX_PLAYERS) {
     ws.send(JSON.stringify({ type: 'error', message: 'Room full' }));
-    ws.close();
+    // Turn-based matchmaking is separate from the legacy realtime room capacity.
     return;
   }
 
@@ -4554,6 +5370,30 @@ wss.on('connection', (ws) => {
 
 function handleMessage(ws, msg) {
   switch (msg.type) {
+    case 'joinTurnRoom': {
+      handleJoinTurnRoom(ws);
+      break;
+    }
+    case 'buildAction': {
+      handleTurnBuildAction(ws, msg);
+      break;
+    }
+    case 'zoneAction': {
+      handleTurnZoneAction(ws, msg);
+      break;
+    }
+    case 'attackAction': {
+      handleTurnAttackAction(ws, msg);
+      break;
+    }
+    case 'bulletResult': {
+      handleTurnBulletResult(ws, msg);
+      break;
+    }
+    case 'upgradePick': {
+      handleTurnUpgradePick(ws, msg);
+      break;
+    }
     case 'input': {
       if (room.state !== ROOM_STATE.RUNNING || ws.dead || ws.disconnected) {
         return;

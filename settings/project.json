@@ -37,8 +37,8 @@
     "player",
     "ground"
   ],
-  "design-resolution-width": 1280,
-  "design-resolution-height": 700,
+  "design-resolution-width": 640,
+  "design-resolution-height": 960,
   "fit-width": false,
   "fit-height": true,
   "use-project-simulator-setting": false,

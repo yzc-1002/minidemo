@@ -265,16 +265,56 @@ export class GameMap extends BaseComponent {
     //初始化变量
     _initVariable() {
         this._tiledMap = this.node["$TiledMap"];
-        this._tmGroup = this._fire._tmLayerGroup.$TiledLayer;
+        let tmLayerGroupNode = this._getTiledLayerNode("_tmLayerGroup");
+        let tmLayerObstacleNode = this._getTiledObjectGroupNode("_tmLayerObstacle");
+        let tmLayerBornNode = this._getTiledObjectGroupNode("_tmLayerBorn");
+
+        this._tmGroup = tmLayerGroupNode ? (tmLayerGroupNode["$TiledLayer"] || tmLayerGroupNode.getComponent(cc.TiledLayer)) : null;
         // this._fire._tmLayerGroup.active = false;
-        this._tmObj = this._fire._tmLayerObstacle.$TiledObjectGroup;
-        this._tmBorn = this._fire._tmLayerBorn.$TiledObjectGroup;
+        this._tmObj = tmLayerObstacleNode ? (tmLayerObstacleNode["$TiledObjectGroup"] || tmLayerObstacleNode.getComponent(cc.TiledObjectGroup)) : null;
+        this._tmBorn = tmLayerBornNode ? (tmLayerBornNode["$TiledObjectGroup"] || tmLayerBornNode.getComponent(cc.TiledObjectGroup)) : null;
         this._tmDecal = this._ensureDecalLayer();
         this._tmSize = this.node.getContentSize();
         // this._tmSize = new cc.Size(this._tiledMap.getMapSize().width * this._tiledMap.getTileSize().width, this._tiledMap.getMapSize().height * this._tiledMap.getTileSize().height);
         this._tileSize = this._tiledMap.getTileSize();
         this._mapGrassBushTiles = [];
         this._mapGrassBushes = [];
+
+        if (!this._tmGroup) {
+            cc.warn("[GameMap] _tmLayerGroup not found or missing cc.TiledLayer");
+        }
+        if (!this._tmObj) {
+            cc.warn("[GameMap] _tmLayerObstacle not found or missing cc.TiledObjectGroup");
+        }
+        if (!this._tmBorn) {
+            cc.warn("[GameMap] _tmLayerBorn not found or missing cc.TiledObjectGroup");
+        }
+    }
+
+    _getTiledLayerNode(layerName: string) {
+        let fireNode = this._fire && this._fire[layerName];
+        if (fireNode && cc.isValid(fireNode)) {
+            return fireNode;
+        }
+        return this._findChildByTrimmedName(layerName);
+    }
+
+    _getTiledObjectGroupNode(layerName: string) {
+        let fireNode = this._fire && this._fire[layerName];
+        if (fireNode && cc.isValid(fireNode)) {
+            return fireNode;
+        }
+        return this._findChildByTrimmedName(layerName);
+    }
+
+    _findChildByTrimmedName(name: string) {
+        for (let i = 0; i < this.node.childrenCount; i++) {
+            let child = this.node.children[i];
+            if (child && child.name && child.name.trim() === name) {
+                return child;
+            }
+        }
+        return null;
     }
 
     _ensureDecalLayer() {
@@ -306,6 +346,9 @@ export class GameMap extends BaseComponent {
 
     //初始化tiled map 的对象(障碍物)
     _initTmObstacle(){
+        if (!this._tmObj) {
+            return;
+        }
         let _startTime = (new Date()).valueOf();
         let objects = this._tmObj.getObjects();
         console.log("objects11",objects)
@@ -319,7 +362,7 @@ export class GameMap extends BaseComponent {
             let offset = this._tilePosToGamePos(tiledPos);
 
             if (obj.name != "") {
-                let obstacle;
+                let obstacle = null;
                 if (obj.name == "tree01") {
                     obstacle = cc.instantiate(this.tree01Prefab);
                 }
@@ -338,27 +381,37 @@ export class GameMap extends BaseComponent {
                 else if (obj.name == "mountain") {
                     obstacle = cc.instantiate(this.mountainPrefab);
                 }
+                else if (obj.name == "qiang") {
+                    obstacle = cc.instantiate(this.mountainPrefab);
+                }
                 else if (obj.name == "grass") {
                     obstacle = cc.instantiate(this.grassPrefab);
                 }
-                
-                obstacle.parent = this._fire._tmLayerObstacle;
-                obstacle.position = cc.v3(offset);
-                obstacle.zIndex = this.judgezIndex(offset.y);
-                if (obj.name == "grass") {
-                    let grassTile = this._buildMapGrassBushTileData(obj, offset, obstacle);
-                    if (grassTile) {
-                        this._mapGrassBushTiles.push(grassTile);
+
+                if (obstacle) {
+                    obstacle.parent = this._fire._tmLayerObstacle;
+                    obstacle.position = cc.v3(offset);
+                    obstacle.zIndex = this.judgezIndex(offset.y);
+                    if (obj.name == "grass") {
+                        let grassTile = this._buildMapGrassBushTileData(obj, offset, obstacle);
+                        if (grassTile) {
+                            this._mapGrassBushTiles.push(grassTile);
+                        }
                     }
+                }
+                else {
+                    cc.warn("[GameMap] unknown obstacle object name:", obj.name);
                 }
             }
 
             if (obj.name == "grass") {
                 continue;
             }
-            for (let j = 0; j < obj.polylinePoints.length - 1; j++) {
-                let start = obj.polylinePoints[j];
-                let end = obj.polylinePoints[j+1];
+
+            let colliderPoints = this._getObstacleColliderPoints(obj);
+            for (let j = 0; j < colliderPoints.length - 1; j++) {
+                let start = colliderPoints[j];
+                let end = colliderPoints[j + 1];
                 
                 //创建collider line
                 let collider = this.node.addComponent(cc.PolygonCollider);
@@ -413,8 +466,45 @@ export class GameMap extends BaseComponent {
 
     }
 
+    _getObstacleColliderPoints(obj) {
+        if (!obj) {
+            return [];
+        }
+
+        if (obj.polylinePoints && obj.polylinePoints.length > 1) {
+            return obj.polylinePoints;
+        }
+
+        if (obj.polygonPoints && obj.polygonPoints.length > 1) {
+            let points = obj.polygonPoints.slice();
+            let first = points[0];
+            let last = points[points.length - 1];
+            if (!first || !last || first.x !== last.x || first.y !== last.y) {
+                points.push(cc.v2(first.x, first.y));
+            }
+            return points;
+        }
+
+        let width = obj.width || 0;
+        let height = obj.height || 0;
+        if (width <= 0 || height <= 0) {
+            return [];
+        }
+
+        return [
+            cc.v2(-width / 2, -height / 2),
+            cc.v2(width / 2, -height / 2),
+            cc.v2(width / 2, height / 2),
+            cc.v2(-width / 2, height / 2),
+            cc.v2(-width / 2, -height / 2),
+        ];
+    }
+
     //初始化tiled map 的对象(出生点)
     _initTmBorn(){
+        if (!this._tmBorn) {
+            return;
+        }
         let objects = this._tmBorn.getObjects();
         for (let i = 0; i < objects.length; i++) {
             let obj = objects[i];
