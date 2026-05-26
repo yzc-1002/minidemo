@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.10.2" orientation="orthogonal" renderorder="right-down" width="80" height="60" tilewidth="32" tileheight="32" infinite="0" nextlayerid="3" nextobjectid="152">
+ <tileset firstgid="1" source="tankSprite.tsx"/>
+ <layer id="1" name="_tmLayerGroup" width="80" height="60">
+  <data encoding="base64" compression="zlib">
+   eJzNWktyWzEMi7PscXoDx9texPVpHN+wJ2k7E81gEICkKL3EC07iPD19IAKEFJ9PLy/nJ4i3f3H5iO+ei5uXiusTBM7zVmj73YFzvRdxxrhvDB77kcz9WfY5mytizFHFeTZG/9Eadu5dZ38v9LdVjkQ4z0ZlnPdCGxWrmnczz3bowC5NeRZdw3yI8My4UtGAlRrEfX2Vbu2MFS0Ye7CqJ51+qn2rcXZGd2/+v/v4iJVawfxRuLzDWI9TH6fHAaHyaUXnZ0NxbDwb+DkOruIUvavq/S7t36lNins7PPPoazaflCZEe72y5lWtQn7inLjtjjrBOP0pBOeK0thd2lwN3EvUNjWvgevs+BXN+fGaB+cKek/H38ocV3SSczjyw0d6vJ+vebi9d/ztasuMTqq6ultTM45Ha7rQZ7Umfn6Ut5yJo86qHU/1ZvpSGhjtxRF+c6f/dO/O8qiqVarW7fAKVa5HPJndrwizI9bh1pVp4g6tUb5XYTfj0zI8v0JH38Raq3me6VCUW5yLjF2EjTrPVd6JdHJFSzOP2tEPpaG8Vub28Kwz2LjzMb/T1dFKjLFdLs16AcfJrO3wrKghGTZqz9Q72F6ddzv6e8RdgOKk2zfGjz2r8teMjcoxVS+x/Win8O3cv+zWU8QuwlZxHLEYa1f3Ly7HnHfB9tW8GWP9ev08PnuKI/Iua6/O+wMLxijqg7Fx9Zcx5zZOAyvr2J132bzGetRZiPcjmqM6CyJ3o7vYKF9ncmbXeWlgF9V/tTauQwrLDAvF6SqXV/Omo5mRf2PcuNapu8oKjyqh8svlbeY7qmfs7nzxvYfpizF7N22jfIzqTFR3BoZZ7rqxslDn9+653/WDHOE5qzFHPnQ8POLFPOZagG1czmfrV3xb4W7Uj7q3UPnJvO56eLc/iueufRUDxSPl+TPsnPaP/XZzdNzBuUR61Dl3Kh/1lYF5dhV/z3Rj7EX1uyTOs0S1uVpHZ9qu7pWqPTMan+lwBTOsQa5mR7geEV2v7PyzC4cn48WYjVyb4STWrJm62vEhXe4q7JTHcZrq7qNw3S4nqxwa+fFb7N+O6J7VHJ6O63y2Uvcooy2f72ZyTs05q4kr0fXeissR111uOBwrOcd8z7jszh18nov4jncws5x1v/N8VO5FnFM4Oh2MdNHhynWHI3rOfGX8Zuuz+7+xw9zVXeQqaj3zIvt+QlRzuM9II7O7MpdXs3UNsangF+kink/PJ8/BKmaMQXbWreCX1e2Z+nEP+nXaxz65WwcyzBRXonNalb+Zp+16xZm8ncGqMocon67w0+GiMOD71+jeTd0pVfwu4j2Tt5U8Ymw4r1zNUBrE2GX7mPmbCM+Vu8rVcHuufEYVC8Yu87KqdmUx1p/Vloj7yg/yu3x30skHpdeRBjD2SvOy3ON1qXp5N+PPen7GLNuPildi/Nh/RxpQ2SOHdzZ35l+lPmeeTWG4sifVNVfx6tRvhwmejxi/mTPzETV5xbN0a1SWa65uoA7M3t0rfdhRk6u1plujZvbSYYLnqRu1zWoj9s375ProrHP87vKum7+Z5irOjjsv/NsDfnKtjPIMx2Heu/sFrgW302e/Nu4HuT3jWjm7dCLiq/IA6lwarR9zC/HDZ+odVd/GXHjfsQ4p/7Erz6KcU+eMDD/OJZdvjB8/U+/gWYFzkH2Yauvw6uqD4yj/LzCbc4af4hR+Vs8uNDbe2fNc+J6UfW2kf9164DjbeSfCz3GKsVH5eT15/DAf3fcfo3vCar2oaJzysZ36gpo8cGQdxzMK6x/jyTxhHmJdcGdN5zczP7+7jkSBfEdfghih7jOWb9SW8VGfVX/c9+w9UDdvM9yysbi24Pru9Lta75naKnwc/u/mGXu/Mb8M1wzfLq+Roxzs9xgvzgdcL3sShbf7rO6jKvhhf7z+DN8ZPmb3plgzEL+/mjIjKg==
+  </data>
+ </layer>
+ <objectgroup id="2" name="_tmLayerObstacle">
+  <object id="11" name="grass" x="576.864" y="1117.76" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="12" name="grass" x="480.455" y="1117.67" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="13" name="mountain" x="673.152" y="1117.94" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="14" name="mountain" x="672.667" y="1213.85" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="15" name="mountain" x="672.125" y="1310.24" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="16" name="grass" x="576.5" y="1214" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="17" name="mountain" x="1120.67" y="1248" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="18" name="grass" x="1120.5" y="1151.75" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="19" name="grass" x="1023.67" y="1152.25" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="20" name="grass" x="1023" y="1247" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="21" name="mountain" x="1504.33" y="1248.38" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="22" name="grass" x="1600.66" y="1151.88" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="23" name="grass" x="1504.83" y="1151.38" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="24" name="grass" x="1600.54" y="1247.63" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="26" name="grass" x="1120" y="1597.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="27" name="grass" x="1217" y="1597.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="28" name="grass" x="1024" y="1597.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="29" name="grass" x="1217" y="1500.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="30" name="grass" x="1313" y="1501.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="31" name="grass" x="1408.67" y="1501.67" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="32" name="grass" x="1408" y="1597.67" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="33" name="grass" x="1504.33" y="1598" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="34" name="grass" x="1601" y="1596.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="35" name="mountain" x="1122.67" y="765.958" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="36" name="grass" x="1122.34" y="862.208" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="37" name="grass" x="1025.84" y="765.708" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="38" name="grass" x="1025.17" y="862.458" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="39" name="mountain" x="1505.5" y="765.833" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="40" name="grass" x="1601.83" y="766.333" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="41" name="grass" x="1505" y="861.833" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="42" name="grass" x="1601.71" y="862.083" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="85" name="mountain" x="1313.33" y="1597.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="105" name="grass" x="1023" y="417" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="106" name="grass" x="1119" y="417" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="107" name="grass" x="1216" y="417" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="108" name="grass" x="1408" y="417" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="109" name="grass" x="1504" y="417" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="110" name="grass" x="1601" y="417" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="111" name="grass" x="1216" y="513" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="112" name="grass" x="1312" y="513" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="113" name="grass" x="1408" y="513" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="114" name="mountain" x="1312" y="417" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="115" name="grass" x="2109" y="318.667" width="128" height="128">
+   <polyline points="-0.536111,0.986111 -96.5,0.854167 -96.458,97.0517 -0.492297,97.003 -0.508333,0.995834"/>
+  </object>
+  <object id="116" name="grass" x="2205" y="318.667" width="128" height="128">
+   <polyline points="-0.536111,0.986111 -96.5,0.854167 -96.458,97.0517 -0.492297,97.003 -0.508333,0.995834"/>
+  </object>
+  <object id="117" name="grass" x="2205.33" y="414.667" width="128" height="128">
+   <polyline points="-0.536111,0.986111 -96.5,0.854167 -96.458,97.0517 -0.492297,97.003 -0.508333,0.995834"/>
+  </object>
+  <object id="125" name="mountain" x="1919.67" y="1121.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="126" name="mountain" x="1919.79" y="1216.67" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="127" name="mountain" x="1919.33" y="1313.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="128" name="grass" x="2016.12" y="1121.09" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="129" name="grass" x="2111.86" y="1121.27" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="130" name="grass" x="2015.45" y="1216.73" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="131" name="grass" x="2111" y="1505" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="132" name="grass" x="2111" y="1600.5" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="133" name="grass" x="2016" y="1599.5" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="134" name="grass" x="445.667" y="1504.33" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="135" name="grass" x="445.75" y="1601.08" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="136" name="grass" x="542" y="1601" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="137" name="grass" x="447.834" y="417.292" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="138" name="grass" x="447.917" y="514.042" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="139" name="grass" x="544.5" y="416.962" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="140" name="mountain" x="1919.74" y="703.787" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="141" name="mountain" x="1919.86" y="800.127" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="142" name="mountain" x="1919.4" y="896.787" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="143" name="grass" x="2016.19" y="800.547" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="144" name="grass" x="2111.93" y="896.727" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="145" name="grass" x="2015.52" y="897.187" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="146" name="mountain" x="672.742" y="704.863" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="147" name="mountain" x="672.862" y="801.203" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="148" name="mountain" x="672.402" y="896.863" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="149" name="grass" x="576.192" y="801.623" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="150" name="grass" x="478.932" y="896.803" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+  <object id="151" name="grass" x="575.522" y="897.263" width="128" height="128">
+   <polyline points="0.536111,-0.986111 96.5,-0.854167 96.458,-97.0517 0.492297,-97.003 0.508333,-0.995834"/>
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="_tmLayerBorn">
+  <object id="12" name="player" x="291.545" y="1666.33" width="14.6667" height="25.3333">
+   <ellipse/>
+  </object>
+  <object id="14" x="775.33" y="1662.66" width="17.3333" height="17.3333">
+   <ellipse/>
+  </object>
+ </objectgroup>
+</map>

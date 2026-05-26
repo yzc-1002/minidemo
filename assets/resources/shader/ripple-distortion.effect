@@ -1,0 +1,115 @@
+CCEffect %{
+  techniques:
+  - passes:
+    - vert: vs
+      frag: fs
+      blendState:
+        targets:
+        - blend: true
+      rasterizerState:
+        cullMode: none
+      properties:
+        texture: { value: white }
+        alphaThreshold: { value: 0.5 }
+        center: { value: [0.5, 0.5] }
+        progress: { value: 0.0 }
+        amplitude: { value: 0.024 }
+        bandWidth: { value: 0.09 }
+        aspect: { value: 1.7778 }
+        brightness: { value: 0.12 }
+}%
+
+CCProgram vs %{
+  precision highp float;
+
+  #include <cc-global>
+  #include <cc-local>
+
+  in vec3 a_position;
+  in vec4 a_color;
+  out vec4 v_color;
+
+  #if USE_TEXTURE
+  in vec2 a_uv0;
+  out vec2 v_uv0;
+  #endif
+
+  void main () {
+    vec4 pos = vec4(a_position, 1.0);
+
+    #if CC_USE_MODEL
+    pos = cc_matViewProj * cc_matWorld * pos;
+    #else
+    pos = cc_matViewProj * pos;
+    #endif
+
+    #if USE_TEXTURE
+    v_uv0 = a_uv0;
+    #endif
+
+    v_color = a_color;
+    gl_Position = pos;
+  }
+}%
+
+CCProgram fs %{
+  precision highp float;
+
+  #include <alpha-test>
+
+  in vec4 v_color;
+
+  #if USE_TEXTURE
+  in vec2 v_uv0;
+  uniform sampler2D texture;
+  #endif
+
+  uniform Ripple {
+    vec2 center;
+    float progress;
+    float amplitude;
+    float bandWidth;
+    float aspect;
+    float brightness;
+  };
+
+  void main () {
+    vec4 baseColor = vec4(1.0, 1.0, 1.0, 1.0);
+
+    #if USE_TEXTURE
+    baseColor *= texture(texture, v_uv0);
+      #if CC_USE_ALPHA_ATLAS_TEXTURE
+      baseColor.a *= texture2D(texture, v_uv0 + vec2(0, 0.5)).r;
+      #endif
+    #endif
+
+    baseColor *= v_color;
+    ALPHA_TEST(baseColor);
+
+    vec2 radial = v_uv0 - center;
+    radial.x *= aspect;
+    float dist = length(radial);
+    vec2 dir = dist > 0.0001 ? radial / dist : vec2(0.0, 1.0);
+
+    float waveFront = 0.06 + progress * 0.62;
+    float ring = 1.0 - smoothstep(bandWidth * 0.22, bandWidth, abs(dist - waveFront));
+    float falloff = 1.0 - smoothstep(0.0, 0.95, progress);
+    float phase = (dist - waveFront) * 92.0 - progress * 18.0;
+    float offsetAmount = sin(phase) * amplitude * ring * (0.45 + 0.55 * falloff);
+    vec2 offset = vec2(dir.x / max(aspect, 0.001), dir.y) * offsetAmount;
+
+    vec4 warped = baseColor;
+    #if USE_TEXTURE
+    warped = texture(texture, v_uv0 + offset);
+      #if CC_USE_ALPHA_ATLAS_TEXTURE
+      warped.a *= texture2D(texture, v_uv0 + offset + vec2(0, 0.5)).r;
+      #endif
+    #endif
+
+    float edgeGlow = ring * (brightness + falloff * 0.08);
+    vec3 finalColor = warped.rgb + vec3(edgeGlow);
+    float alpha = clamp(ring * (0.5 + falloff * 0.35), 0.0, 1.0);
+
+    gl_FragColor = vec4(finalColor, alpha);
+  }
+}%
