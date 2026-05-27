@@ -30,7 +30,7 @@ interface TurnCrystalState {
 }
 
 interface TurnObstacleState {
-    id: number;
+    id: string;
     camp: TurnCamp;
     node: cc.Node;
     radius: number;
@@ -56,7 +56,7 @@ interface TurnBulletState {
 }
 
 interface TurnAssistZoneState {
-    id: number;
+    id: string;
     camp: TurnCamp;
     type: TurnAssistZoneType;
     node: cc.Node;
@@ -85,6 +85,9 @@ export default class TurnBattleMap extends cc.Component {
     onAttackFired: () => void = null;
     onBulletsCleared: () => void = null;
     onGameFinished: (winnerCamp: TurnCamp) => void = null;
+    onBuildIntent: (action: { op: string; obstacleId?: string; x: number; y: number; }) => void = null;
+    onZoneIntent: (action: { zoneType: string; x: number; y: number; }) => void = null;
+    onAttackIntent: (action: { fromX: number; fromY: number; aimX: number; aimY: number; shotIndex: number; }) => void = null;
 
     private _config: TurnGameConfig = TURN_GAME_CONFIG;
     private _crystals: { [camp: string]: TurnCrystalState } = {};
@@ -105,6 +108,15 @@ export default class TurnBattleMap extends cc.Component {
     private _nextStaticObstacleId = 1;
     private _nextAssistZoneId = 1;
     private _gameFinished = false;
+    private _serverMode = false;
+    private _pendingBulletResult = {
+        hitType: "",
+        targetCamp: "",
+        targetId: "",
+        damage: 0,
+        destroyedIds: [] as string[],
+        expGain: 0,
+    };
 
     private _mapNode: cc.Node = null;
     private _tiledMap: cc.TiledMap = null;
@@ -160,6 +172,14 @@ export default class TurnBattleMap extends cc.Component {
         this._nextStaticObstacleId = 1;
         this._nextAssistZoneId = 1;
         this._gameFinished = false;
+        this._pendingBulletResult = {
+            hitType: "",
+            targetCamp: "",
+            targetId: "",
+            damage: 0,
+            destroyedIds: [],
+            expGain: 0,
+        };
         this._mapNode = null;
         this._tiledMap = null;
         this._mapPixelSize = cc.size(this._config.mapWidth, this._config.mapHeight);
@@ -195,6 +215,10 @@ export default class TurnBattleMap extends cc.Component {
         this.updateBullets(dt);
     }
 
+    setServerMode(enabled: boolean) {
+        this._serverMode = !!enabled;
+    }
+
     refreshForNewRound(roundIndex: number) {
         if (roundIndex > 1) {
             this._obstacleInventory.A += this._config.obstacleGainPerRound;
@@ -215,10 +239,95 @@ export default class TurnBattleMap extends cc.Component {
         if (snapshot.phase === "attack") {
             this._hasFiredInAction = false;
             this._shotsLeftInAction = 1 + this.getCampStats(this._actionCamp).extraShots;
+            if (this._serverMode && this._actionCamp === "A") {
+                this.resetPendingBulletResult();
+            }
         }
         else if (snapshot.phase === "waitBullet" && !this.hasActiveBullets()) {
             this.scheduleOnce(this.emitBulletsCleared, 0);
         }
+    }
+
+    applyServerState(snapshot: any) {
+        if (!snapshot) {
+            return;
+        }
+
+        let expA = snapshot.exp && snapshot.exp.A ? snapshot.exp.A : {};
+        let expB = snapshot.exp && snapshot.exp.B ? snapshot.exp.B : {};
+        let inventoriesA = snapshot.inventories && snapshot.inventories.A ? snapshot.inventories.A : {};
+        let inventoriesB = snapshot.inventories && snapshot.inventories.B ? snapshot.inventories.B : {};
+        let upgradesA = snapshot.upgrades && snapshot.upgrades.A ? snapshot.upgrades.A : {};
+        let upgradesB = snapshot.upgrades && snapshot.upgrades.B ? snapshot.upgrades.B : {};
+        let statsA = this.getCampStats("A");
+        let statsB = this.getCampStats("B");
+
+        this._obstacleInventory.A = Math.max(0, Number(inventoriesA.obstacles) || 0);
+        this._obstacleInventory.B = Math.max(0, Number(inventoriesB.obstacles) || 0);
+
+        statsA.exp = Math.max(0, Number(expA.exp) || 0);
+        statsB.exp = Math.max(0, Number(expB.exp) || 0);
+        statsA.level = Math.max(1, Number(expA.level) || 1);
+        statsB.level = Math.max(1, Number(expB.level) || 1);
+        statsA.damageBonus = Math.max(0, Number(upgradesA.damageAdd) || 0);
+        statsB.damageBonus = Math.max(0, Number(upgradesB.damageAdd) || 0);
+        statsA.extraShots = Math.max(0, Number(upgradesA.multiShot) || 0);
+        statsB.extraShots = Math.max(0, Number(upgradesB.multiShot) || 0);
+        statsA.bulletBounce = Math.max(0, Number(upgradesA.bulletBounce) || 0);
+        statsB.bulletBounce = Math.max(0, Number(upgradesB.bulletBounce) || 0);
+        statsA.blackHoleUnlocked = !!(upgradesA.zones && upgradesA.zones.indexOf("black_hole") >= 0);
+        statsB.blackHoleUnlocked = !!(upgradesB.zones && upgradesB.zones.indexOf("black_hole") >= 0);
+        statsA.zoneInventory.black_hole = Math.max(0, Number(inventoriesA.black_hole) || 0);
+        statsB.zoneInventory.black_hole = Math.max(0, Number(inventoriesB.black_hole) || 0);
+
+        this.syncCrystalState("A", snapshot.crystals && snapshot.crystals.A);
+        this.syncCrystalState("B", snapshot.crystals && snapshot.crystals.B);
+        this.syncObstacleState(snapshot.obstacles || []);
+        this.syncAssistZoneState(snapshot.zones || []);
+        this.emitStatsChanged();
+    }
+
+    applyServerAttackAction(payload: any) {
+        if (!payload || !payload.action) {
+            return;
+        }
+
+        let camp = (payload.camp || this._actionCamp || "A") as TurnCamp;
+        let action = payload.action;
+        let tank = this._tanks[camp];
+        if (!tank) {
+            return;
+        }
+
+        let fromX = Number(action.fromX);
+        let fromY = Number(action.fromY);
+        if (Number.isFinite(fromX)) {
+            tank.x = fromX;
+        }
+        if (Number.isFinite(fromY)) {
+            tank.y = fromY;
+        }
+
+        let startPosition = this.getNodePosition(tank);
+        let target = cc.v2(Number(action.aimX) || startPosition.x, Number(action.aimY) || startPosition.y);
+        let dir = target.sub(startPosition);
+        if (dir.magSqr() < 1) {
+            dir = camp === "A" ? cc.v2(0, 1) : cc.v2(0, -1);
+        }
+        this.createBullet(camp, startPosition.add(dir.normalize().mul(44)), dir.normalize());
+    }
+
+    consumePendingBulletResult() {
+        let result = {
+            hitType: this._pendingBulletResult.hitType,
+            targetCamp: this._pendingBulletResult.targetCamp,
+            targetId: this._pendingBulletResult.targetId,
+            damage: this._pendingBulletResult.damage,
+            destroyedIds: this._pendingBulletResult.destroyedIds.slice(),
+            expGain: this._pendingBulletResult.expGain,
+        };
+        this.resetPendingBulletResult();
+        return result;
     }
 
     setActionCamp(camp: TurnCamp) {
@@ -318,7 +427,7 @@ export default class TurnBattleMap extends cc.Component {
         );
     }
 
-    isBuildPositionValid(camp: TurnCamp, position: cc.Vec2, ignoreObstacleId?: number): boolean {
+    isBuildPositionValid(camp: TurnCamp, position: cc.Vec2, ignoreObstacleId?: string): boolean {
         let buildArea = this.getBuildArea(camp);
         let obstacleRect = this.getDynamicObstacleRectAt(position);
         if (!buildArea || !this.rectContainsRect(buildArea, obstacleRect) || !this.rectContainsRect(this.getMapRect(), obstacleRect)) {
@@ -430,6 +539,14 @@ export default class TurnBattleMap extends cc.Component {
             if (valid) {
                 obstacle.node.setPosition(position.x, position.y);
                 this.updateObstacleValidView(obstacle, true);
+                if (this._serverMode && this.onBuildIntent) {
+                    this.onBuildIntent({
+                        op: "move",
+                        obstacleId: obstacle.id,
+                        x: position.x,
+                        y: position.y,
+                    });
+                }
             }
             else {
                 obstacle.node.setPosition(this._dragStartPosition.x, this._dragStartPosition.y);
@@ -452,6 +569,17 @@ export default class TurnBattleMap extends cc.Component {
         }
         if (!this.isBuildPositionValid(camp, position)) {
             this.showFloatText("位置不可用", position, cc.Color.RED);
+            return;
+        }
+
+        if (this._serverMode) {
+            if (this.onBuildIntent) {
+                this.onBuildIntent({
+                    op: "place",
+                    x: position.x,
+                    y: position.y,
+                });
+            }
             return;
         }
 
@@ -478,6 +606,17 @@ export default class TurnBattleMap extends cc.Component {
         }
         if (!this.isZonePositionValid(camp, position)) {
             this.showFloatText("位置不可用", position, cc.Color.RED);
+            return;
+        }
+
+        if (this._serverMode) {
+            if (this.onZoneIntent) {
+                this.onZoneIntent({
+                    zoneType: "black_hole",
+                    x: position.x,
+                    y: position.y,
+                });
+            }
             return;
         }
 
@@ -514,6 +653,23 @@ export default class TurnBattleMap extends cc.Component {
 
         let tank = this._tanks[this._actionCamp];
         if (!tank) {
+            return;
+        }
+
+        if (this._serverMode) {
+            let startPosition = this.getNodePosition(tank);
+            let totalShots = 1 + this.getCampStats(this._actionCamp).extraShots;
+            let shotIndex = Math.max(0, totalShots - this._shotsLeftInAction);
+            this._shotsLeftInAction = Math.max(0, this._shotsLeftInAction - 1);
+            if (this.onAttackIntent) {
+                this.onAttackIntent({
+                    fromX: startPosition.x,
+                    fromY: startPosition.y,
+                    aimX: targetPosition.x,
+                    aimY: targetPosition.y,
+                    shotIndex: shotIndex,
+                });
+            }
             return;
         }
 
@@ -599,6 +755,10 @@ export default class TurnBattleMap extends cc.Component {
             obstacle.node.destroy();
             this._obstacles.splice(i, 1);
             this.addExp(bullet.camp, this._config.obstacleHitExp, this.getNodePosition(bullet.node));
+            if (this._serverMode && bullet.camp === "A" && this._pendingBulletResult.destroyedIds.indexOf(obstacle.id) < 0) {
+                this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
+                this._pendingBulletResult.destroyedIds.push(obstacle.id);
+            }
             this.emitTurnEvent("turn-obstacle-hit", {
                 camp: bullet.camp,
                 obstacleCamp: obstacle.camp,
@@ -640,6 +800,11 @@ export default class TurnBattleMap extends cc.Component {
         this.showFloatText("-" + bullet.damage, this.getNodePosition(crystal.node).add(cc.v2(0, 44)), cc.Color.RED);
         this.addExp(bullet.camp, this._config.crystalHitExp, this.getNodePosition(crystal.node).add(cc.v2(0, 76)));
         this.emitStatsChanged();
+        if (this._serverMode && bullet.camp === "A") {
+            this._pendingBulletResult.hitType = "crystal";
+            this._pendingBulletResult.targetCamp = targetCamp;
+            this._pendingBulletResult.damage += bullet.damage;
+        }
         this.emitTurnEvent("turn-crystal-hit", {
             camp: bullet.camp,
             targetCamp: targetCamp,
@@ -670,7 +835,7 @@ export default class TurnBattleMap extends cc.Component {
         }
     }
 
-    private createBuildObstacle(camp: TurnCamp, position: cc.Vec2) {
+    private createBuildObstacle(camp: TurnCamp, position: cc.Vec2, forcedId?: string) {
         let node = new cc.Node("BuildObstacle" + this._nextObstacleId);
         node.parent = this._obstacleLayer || this.contentRoot;
         node.setPosition(position.x, position.y);
@@ -683,7 +848,7 @@ export default class TurnBattleMap extends cc.Component {
         label.node.y = -8;
 
         this._obstacles.push({
-            id: this._nextObstacleId++,
+            id: forcedId || String(this._nextObstacleId++),
             camp: camp,
             node: node,
             radius: Math.max(this._dynamicObstacleSize.width, this._dynamicObstacleSize.height) * 0.5,
@@ -692,7 +857,7 @@ export default class TurnBattleMap extends cc.Component {
         });
     }
 
-    private createAssistZone(camp: TurnCamp, type: TurnAssistZoneType, position: cc.Vec2) {
+    private createAssistZone(camp: TurnCamp, type: TurnAssistZoneType, position: cc.Vec2, forcedId?: string) {
         let node = new cc.Node("AssistZone" + this._nextAssistZoneId);
         node.parent = this._zoneLayer || this.contentRoot;
         node.setPosition(position.x, position.y);
@@ -711,7 +876,7 @@ export default class TurnBattleMap extends cc.Component {
         label.node.color = new cc.Color(220, 230, 255, 255);
 
         this._assistZones.push({
-            id: this._nextAssistZoneId++,
+            id: forcedId || String(this._nextAssistZoneId++),
             camp: camp,
             type: type,
             node: node,
@@ -942,6 +1107,9 @@ export default class TurnBattleMap extends cc.Component {
     private addExp(camp: TurnCamp, amount: number, position: cc.Vec2) {
         let stats = this.getCampStats(camp);
         stats.exp += amount;
+        if (this._serverMode && camp === "A") {
+            this._pendingBulletResult.expGain += amount;
+        }
         this.showFloatText("+" + amount + " EXP", position, cc.Color.YELLOW);
         this.emitStatsChanged();
     }
@@ -1080,6 +1248,67 @@ export default class TurnBattleMap extends cc.Component {
         if (this.onBulletsCleared) {
             this.onBulletsCleared();
         }
+    }
+
+    private syncCrystalState(camp: TurnCamp, state: any) {
+        let crystal = this._crystals[camp];
+        if (!crystal || !state) {
+            return;
+        }
+        crystal.hp = Math.max(0, Number(state.hp) || 0);
+        crystal.maxHp = Math.max(crystal.hp, Number(state.maxHp) || crystal.hp);
+        this.refreshCrystalView(camp);
+    }
+
+    private syncObstacleState(obstacles: any[]) {
+        for (let i = 0; i < this._obstacles.length; i++) {
+            this._obstacles[i].node.destroy();
+        }
+        this._obstacles = [];
+        let maxId = this._nextObstacleId;
+        for (let j = 0; j < obstacles.length; j++) {
+            let obstacle = obstacles[j];
+            if (!obstacle) {
+                continue;
+            }
+            let id = String(obstacle.id);
+            this.createBuildObstacle(obstacle.camp, cc.v2(Number(obstacle.x) || 0, Number(obstacle.y) || 0), id);
+            let numericId = parseInt(id, 10);
+            if (Number.isFinite(numericId)) {
+                maxId = Math.max(maxId, numericId + 1);
+            }
+        }
+        this._nextObstacleId = maxId;
+    }
+
+    private syncAssistZoneState(zones: any[]) {
+        for (let i = 0; i < this._assistZones.length; i++) {
+            this._assistZones[i].node.destroy();
+        }
+        this._assistZones = [];
+        let maxId = this._nextAssistZoneId;
+        for (let j = 0; j < zones.length; j++) {
+            let zone = zones[j];
+            if (!zone) {
+                continue;
+            }
+            let id = String(zone.id);
+            this.createAssistZone(zone.camp, "black_hole", cc.v2(Number(zone.x) || 0, Number(zone.y) || 0), id);
+            let numericId = parseInt(id, 10);
+            if (Number.isFinite(numericId)) {
+                maxId = Math.max(maxId, numericId + 1);
+            }
+        }
+        this._nextAssistZoneId = maxId;
+    }
+
+    private resetPendingBulletResult() {
+        this._pendingBulletResult.hitType = "";
+        this._pendingBulletResult.targetCamp = "";
+        this._pendingBulletResult.targetId = "";
+        this._pendingBulletResult.damage = 0;
+        this._pendingBulletResult.destroyedIds = [];
+        this._pendingBulletResult.expGain = 0;
     }
 
     private emitTurnEvent(eventName: string, data: any) {

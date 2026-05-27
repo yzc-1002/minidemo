@@ -17,6 +17,8 @@ export class NetworkManager {
     private _countdownCallback: (seconds: number) => void = null;
     private _roomStateCallback: (payload: any) => void = null;
     private _gameEndedCallback: (payload: any) => void = null;
+    private _turnMessageCallback: (payload: any) => void = null;
+    private _turnConnectedCallback: () => void = null;
 
     connect(url: string) {
         if (this.ws) {
@@ -39,6 +41,9 @@ export class NetworkManager {
                 this.ws.send(JSON.stringify({ type: "join" }));
                 if (this._connectedCallback) {
                     this._connectedCallback();
+                }
+                if (this._turnConnectedCallback) {
+                    this._turnConnectedCallback();
                 }
             };
 
@@ -97,6 +102,14 @@ export class NetworkManager {
         }));
     }
 
+    sendMessage(type: string, payload?: any) {
+        if (!this._connected || !this.ws || !type) return;
+        this.ws.send(JSON.stringify({
+            type: type,
+            payload: payload || {},
+        }));
+    }
+
     get connected(): boolean { return this._connected; }
     get playerId(): number { return this._playerId; }
     get tickRate(): number { return this._tickRate; }
@@ -111,6 +124,8 @@ export class NetworkManager {
     set onCountdown(cb: (seconds: number) => void) { this._countdownCallback = cb; }
     set onRoomState(cb: (payload: any) => void) { this._roomStateCallback = cb; }
     set onGameEnded(cb: (payload: any) => void) { this._gameEndedCallback = cb; }
+    set onTurnMessage(cb: (payload: any) => void) { this._turnMessageCallback = cb; }
+    set onTurnConnected(cb: () => void) { this._turnConnectedCallback = cb; }
 
     private _normalizeInputs(inputs: any) {
         const source = inputs || {};
@@ -235,6 +250,24 @@ export class NetworkManager {
                 break;
 
             case "pong":
+                break;
+            case "turnJoined":
+            case "turnPlayerCount":
+            case "turnGameStart":
+            case "phaseChanged":
+            case "timerSync":
+            case "stateSnapshot":
+            case "buildAction":
+            case "zoneAction":
+            case "attackAction":
+            case "bulletResult":
+            case "upgradeOptions":
+            case "upgradePick":
+            case "turnGameEnded":
+            case "turnError":
+                if (this._turnMessageCallback) {
+                    this._turnMessageCallback(msg);
+                }
                 break;
         }
     }

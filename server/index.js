@@ -325,6 +325,212 @@ function isSocketOpen(ws) {
   return ws && ws.readyState === WebSocket.OPEN;
 }
 
+function getTurnViewCamp(player, camp) {
+  if (!player || !camp) {
+    return camp || '';
+  }
+  return camp === player.camp ? 'A' : 'B';
+}
+
+function toCanonicalCamp(player, camp) {
+  if (!player || !camp) {
+    return camp || '';
+  }
+  return camp === 'A' ? player.camp : getEnemyCamp(player.camp);
+}
+
+function toPlayerViewPoint(player, point) {
+  if (!point) {
+    return point;
+  }
+  if (!player || player.camp === 'A') {
+    return {
+      x: point.x,
+      y: point.y,
+    };
+  }
+  return {
+    x: point.x,
+    y: -point.y,
+  };
+}
+
+function toCanonicalPoint(player, point) {
+  if (!point) {
+    return point;
+  }
+  if (!player || player.camp === 'A') {
+    return {
+      x: point.x,
+      y: point.y,
+    };
+  }
+  return {
+    x: point.x,
+    y: -point.y,
+  };
+}
+
+function mapZoneTypeToClient(zoneType) {
+  return zoneType === 'blackHole' ? 'black_hole' : zoneType;
+}
+
+function mapZoneTypeFromClient(zoneType) {
+  return zoneType === 'black_hole' ? 'blackHole' : zoneType;
+}
+
+function mapUpgradeIdFromClient(optionId) {
+  if (optionId === 'bullet_bounce') return 'bulletBounce';
+  if (optionId === 'extra_shot') return 'multiShot';
+  if (optionId === 'damage_up') return 'damageUp';
+  if (optionId === 'crystal_hp_up') return 'crystalHp';
+  if (optionId === 'unlock_black_hole') return 'unlockBlackHole';
+  return optionId;
+}
+
+function buildTurnViewPayload(player, payload) {
+  if (!payload || !player) {
+    return payload;
+  }
+  const next = JSON.parse(JSON.stringify(payload));
+  if (next.camp) {
+    next.camp = getTurnViewCamp(player, next.camp);
+  }
+  if (next.actionCamp) {
+    next.actionCamp = getTurnViewCamp(player, next.actionCamp);
+  }
+  if (next.winnerCamp) {
+    next.winnerCamp = getTurnViewCamp(player, next.winnerCamp);
+  }
+  if (next.targetCamp) {
+    next.targetCamp = getTurnViewCamp(player, next.targetCamp);
+  }
+  if (next.crystals) {
+    const crystals = {};
+    Object.keys(next.crystals).forEach((camp) => {
+      crystals[getTurnViewCamp(player, camp)] = {
+        ...next.crystals[camp],
+        camp: getTurnViewCamp(player, camp),
+      };
+    });
+    next.crystals = crystals;
+  }
+  if (next.exp) {
+    const exp = {};
+    Object.keys(next.exp).forEach((camp) => {
+      exp[getTurnViewCamp(player, camp)] = { ...next.exp[camp] };
+    });
+    next.exp = exp;
+  }
+  if (next.inventories) {
+    const inventories = {};
+    Object.keys(next.inventories).forEach((camp) => {
+      inventories[getTurnViewCamp(player, camp)] = {
+        ...next.inventories[camp],
+        black_hole: next.inventories[camp].blackHole || next.inventories[camp].black_hole || 0,
+      };
+    });
+    next.inventories = inventories;
+  }
+  if (next.upgrades) {
+    const upgrades = {};
+    Object.keys(next.upgrades).forEach((camp) => {
+      upgrades[getTurnViewCamp(player, camp)] = {
+        ...next.upgrades[camp],
+        zones: Array.isArray(next.upgrades[camp].zones)
+          ? next.upgrades[camp].zones.map(mapZoneTypeToClient)
+          : [],
+      };
+    });
+    next.upgrades = upgrades;
+  }
+  if (Array.isArray(next.obstacles)) {
+    next.obstacles = next.obstacles.map((obstacle) => {
+      const point = toPlayerViewPoint(player, obstacle);
+      return {
+        ...obstacle,
+        camp: getTurnViewCamp(player, obstacle.camp),
+        x: Math.round(point.x),
+        y: Math.round(point.y),
+      };
+    });
+  }
+  if (Array.isArray(next.zones)) {
+    next.zones = next.zones.map((zone) => {
+      const point = toPlayerViewPoint(player, zone);
+      return {
+        ...zone,
+        camp: getTurnViewCamp(player, zone.camp),
+        zoneType: mapZoneTypeToClient(zone.zoneType),
+        x: Math.round(point.x),
+        y: Math.round(point.y),
+      };
+    });
+  }
+  if (next.action) {
+    const action = { ...next.action };
+    if (Number.isFinite(action.x) || Number.isFinite(action.y)) {
+      const point = toPlayerViewPoint(player, { x: Number(action.x) || 0, y: Number(action.y) || 0 });
+      action.x = Math.round(point.x);
+      action.y = Math.round(point.y);
+    }
+    if (Number.isFinite(action.fromX) || Number.isFinite(action.fromY)) {
+      const point = toPlayerViewPoint(player, {
+        x: Number(action.fromX) || 0,
+        y: Number(action.fromY || (player.camp === 'A' ? -330 : -330)) || 0,
+      });
+      action.fromX = Math.round(point.x);
+      action.fromY = Math.round(point.y);
+    }
+    if (Number.isFinite(action.aimX) || Number.isFinite(action.aimY)) {
+      const point = toPlayerViewPoint(player, { x: Number(action.aimX) || 0, y: Number(action.aimY) || 0 });
+      action.aimX = Math.round(point.x);
+      action.aimY = Math.round(point.y);
+    }
+    next.action = action;
+  }
+  if (next.zone) {
+    const point = toPlayerViewPoint(player, next.zone);
+    next.zone = {
+      ...next.zone,
+      camp: getTurnViewCamp(player, next.zone.camp),
+      zoneType: mapZoneTypeToClient(next.zone.zoneType),
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+    };
+  }
+  if (next.result && next.result.targetCamp) {
+    next.result.targetCamp = getTurnViewCamp(player, next.result.targetCamp);
+  }
+  if (Array.isArray(next.options)) {
+    next.options = next.options.map((option) => ({
+      ...option,
+      id: option.id === 'unlockBlackHole' ? 'unlock_black_hole'
+        : option.id === 'bulletBounce' ? 'bullet_bounce'
+        : option.id === 'multiShot' ? 'extra_shot'
+        : option.id === 'damageUp' ? 'damage_up'
+        : option.id === 'crystalHp' ? 'crystal_hp_up'
+        : option.id,
+      desc: option.title || option.desc || '',
+      name: option.title || option.name || option.id,
+    }));
+  }
+  if (next.option) {
+    next.option = {
+      ...next.option,
+      id: next.option.id === 'unlockBlackHole' ? 'unlock_black_hole'
+        : next.option.id === 'bulletBounce' ? 'bullet_bounce'
+        : next.option.id === 'multiShot' ? 'extra_shot'
+        : next.option.id === 'damageUp' ? 'damage_up'
+        : next.option.id === 'crystalHp' ? 'crystal_hp_up'
+        : next.option.id,
+      desc: next.option.title || next.option.desc || '',
+      name: next.option.title || next.option.name || next.option.id,
+    };
+  }
+  return next;
+}
+
 function createTurnPlayer(ws, camp, index) {
   return {
     socket: ws,
@@ -335,6 +541,7 @@ function createTurnPlayer(ws, camp, index) {
     expNeed: TURN_CONFIG.expNeed,
     inventory: {
       obstacles: TURN_CONFIG.initialObstacles,
+      blackHole: 0,
     },
     upgrades: {
       bulletBounce: 0,
@@ -419,20 +626,22 @@ function broadcastTurn(roomState, payload) {
   if (!roomState) {
     return;
   }
-  const data = JSON.stringify(payload);
   roomState.players.forEach((player) => {
     if (isSocketOpen(player.socket)) {
-      player.socket.send(data);
+      player.socket.send(JSON.stringify(buildTurnViewPayload(player, payload)));
     }
   });
 }
 
 function sendTurnError(ws, message, code = 'turnError') {
-  sendJson(ws, {
+  const roomState = getTurnRoom(ws);
+  const player = roomState ? getTurnPlayer(roomState, ws) : null;
+  const payload = {
     type: 'turnError',
     code,
     message,
-  });
+  };
+  sendJson(ws, player ? buildTurnViewPayload(player, payload) : payload);
 }
 
 function getTurnStateSnapshot(roomState) {
@@ -454,11 +663,15 @@ function getTurnStateSnapshot(roomState) {
       result[player.camp] = {
         exp: player.exp,
         expNeed: player.expNeed,
+        level: Math.max(1, Math.floor((player.expNeed - TURN_CONFIG.expNeed) / 20) + 1),
       };
       return result;
     }, {}),
     inventories: roomState.players.reduce((result, player) => {
-      result[player.camp] = { ...player.inventory };
+      result[player.camp] = {
+        ...player.inventory,
+        blackHole: player.inventory.blackHole || 0,
+      };
       return result;
     }, {}),
     upgrades: roomState.players.reduce((result, player) => {
@@ -620,12 +833,12 @@ function startTurnUpgradePhase(roomState) {
   roomState.players.forEach((player) => {
     player.exp += TURN_CONFIG.baseExp;
     if (player.exp >= player.expNeed) {
-      sendJson(player.socket, {
+      sendJson(player.socket, buildTurnViewPayload(player, {
         type: 'upgradeOptions',
         roomId: roomState.id,
         camp: player.camp,
         options: getTurnUpgradeOptions(roomState, player),
-      });
+      }));
     }
   });
   logTurn(roomState, `phase upgrade round=${roomState.roundIndex}`);
@@ -641,14 +854,16 @@ function startTurnRoom(roomState) {
     const ws = player.socket;
     ws.turnPlayerId = player.playerId;
     ws.turnCamp = player.camp;
-    sendJson(ws, {
+    sendJson(ws, buildTurnViewPayload(player, {
       type: 'turnGameStart',
       roomId: roomState.id,
       playerId: player.playerId,
       camp: player.camp,
+      opponentCamp: getEnemyCamp(player.camp),
+      viewCamp: 'A',
       seed: roomState.seed,
       config: TURN_CONFIG,
-    });
+    }));
   });
   logTurn(roomState, 'game start');
   startTurnBuildPhase(roomState);
@@ -672,6 +887,7 @@ function handleJoinTurnRoom(ws) {
         roomId: existing.id,
         playerId: ws.turnPlayerId,
         camp: ws.turnCamp,
+        viewCamp: 'A',
         playerCount: existing.players.length,
         maxPlayers: TURN_MAX_PLAYERS,
         config: TURN_CONFIG,
@@ -694,6 +910,7 @@ function handleJoinTurnRoom(ws) {
     roomId: roomState.id,
     playerId: player.playerId,
     camp: player.camp,
+    viewCamp: 'A',
     playerCount: roomState.players.length,
     maxPlayers: TURN_MAX_PLAYERS,
     config: TURN_CONFIG,
@@ -721,6 +938,14 @@ function sanitizeTurnPoint(payload, prefix = '') {
     x: clamp(x, -TURN_MAP_BOUNDS.halfWidth, TURN_MAP_BOUNDS.halfWidth),
     y: clamp(y, -TURN_MAP_BOUNDS.halfHeight, TURN_MAP_BOUNDS.halfHeight),
   };
+}
+
+function sanitizeTurnPointForPlayer(player, payload, prefix = '') {
+  const point = sanitizeTurnPoint(payload, prefix);
+  if (!point) {
+    return null;
+  }
+  return toCanonicalPoint(player, point);
 }
 
 function getTurnActionPayload(msg) {
@@ -751,7 +976,7 @@ function handleTurnBuildAction(ws, msg) {
   }
   const payload = getTurnActionPayload(msg);
   const op = payload.op === 'move' || payload.op === 'remove' ? payload.op : 'place';
-  const point = sanitizeTurnPoint(payload);
+  const point = sanitizeTurnPointForPlayer(player, payload);
   const obstacleId = String(payload.obstacleId || '');
 
   if (op === 'place') {
@@ -834,19 +1059,20 @@ function handleTurnZoneAction(ws, msg) {
   }
   const payload = getTurnActionPayload(msg);
   const zoneType = String(payload.zoneType || '');
-  const point = sanitizeTurnPoint(payload);
+  const point = sanitizeTurnPointForPlayer(player, payload);
   if (!point || !zoneType) {
     sendTurnError(ws, '辅助区域参数无效', 'invalidZone');
     return;
   }
-  if (player.upgrades.zones.indexOf(zoneType) < 0) {
+  const canonicalZoneType = mapZoneTypeFromClient(zoneType);
+  if (player.upgrades.zones.indexOf(canonicalZoneType) < 0) {
     sendTurnError(ws, '尚未拥有该辅助区域', 'zoneLocked');
     return;
   }
   const zone = {
     id: payload.zoneId ? String(payload.zoneId) : `${player.camp}_zone_${roomState.nextZoneId++}`,
     camp: player.camp,
-    zoneType,
+    zoneType: canonicalZoneType,
     x: Math.round(point.x),
     y: Math.round(point.y),
     extra: payload.extra && typeof payload.extra === 'object' ? payload.extra : {},
@@ -875,10 +1101,9 @@ function handleTurnAttackAction(ws, msg) {
     return;
   }
   const payload = getTurnActionPayload(msg);
-  const fromX = Number(payload.fromX);
-  const aimX = Number(payload.aimX);
-  const aimY = Number(payload.aimY);
-  if (!Number.isFinite(fromX) || !Number.isFinite(aimX) || !Number.isFinite(aimY)) {
+  const fromPoint = sanitizeTurnPointForPlayer(player, payload, 'from');
+  const aimPoint = sanitizeTurnPointForPlayer(player, payload, 'aim');
+  if (!fromPoint || !aimPoint) {
     sendTurnError(ws, '攻击参数无效', 'invalidAttack');
     return;
   }
@@ -892,9 +1117,10 @@ function handleTurnAttackAction(ws, msg) {
     playerId: player.playerId,
     attackRoundIndex: roomState.attackRoundIndex,
     action: {
-      fromX: clamp(fromX, -TURN_MAP_BOUNDS.halfWidth, TURN_MAP_BOUNDS.halfWidth),
-      aimX,
-      aimY,
+      fromX: clamp(fromPoint.x, -TURN_MAP_BOUNDS.halfWidth, TURN_MAP_BOUNDS.halfWidth),
+      fromY: clamp(fromPoint.y, -TURN_MAP_BOUNDS.halfHeight, TURN_MAP_BOUNDS.halfHeight),
+      aimX: clamp(aimPoint.x, -TURN_MAP_BOUNDS.halfWidth, TURN_MAP_BOUNDS.halfWidth),
+      aimY: clamp(aimPoint.y, -TURN_MAP_BOUNDS.halfHeight, TURN_MAP_BOUNDS.halfHeight),
       bulletType: String(payload.bulletType || 'normal'),
       shotIndex,
       damageAdd: player.upgrades.damageAdd,
@@ -1029,7 +1255,7 @@ function handleTurnUpgradePick(ws, msg) {
     return;
   }
   const payload = getTurnActionPayload(msg);
-  const optionId = String(payload.optionId || msg.optionId || '');
+  const optionId = mapUpgradeIdFromClient(String(payload.optionId || msg.optionId || ''));
   const options = getTurnUpgradeOptions(roomState, player);
   const option = options.find((item) => item.id === optionId);
   if (!option) {
