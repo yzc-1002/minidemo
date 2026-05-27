@@ -26,17 +26,19 @@ export default class TurnHud extends cc.Component {
     private _lastPhase = "";
     private _upgradeRoot: cc.Node = null;
     private _upgradeHintRoot: cc.Node = null;
+    private _settlementRoot: cc.Node = null;
 
     initHud() {
         this.node.removeAllChildren();
         this.phaseLabel = this.createLabel("回合制塔防", 26, 0, 420);
         this.timerLabel = this.createLabel("倒计时 0.0", 22, 0, 386);
-        this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, 0, -410);
-        this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, 0, -442);
-        this.expLabel = this.createLabel("经验 A: 0  |  B: 0", 20, 0, -474);
-        this.zoneLabel = this.createLabel("黑洞区 A: 0  |  B: 0", 20, 0, -506);
+        this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -210, 40);
+        this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -245,10);
+        this.expLabel = this.createLabel("经验 A: 0  |  B: 0", 20, -240, -30);
+        this.zoneLabel = this.createLabel("黑洞区 A: 0  |  B: 0", 20, -230, -60);
         this._upgradeRoot = null;
         this._upgradeHintRoot = null;
+        this._settlementRoot = null;
     }
 
     refreshState(snapshot: TurnStateSnapshot) {
@@ -148,6 +150,54 @@ export default class TurnHud extends cc.Component {
         }
     }
 
+    showSettlement(winnerCamp: TurnCamp, onRestart: () => void) {
+        this.hideSettlement();
+        this.hideUpgradeOptions();
+
+        this._settlementRoot = new cc.Node("TurnSettlementPanel");
+        this._settlementRoot.parent = this.node;
+        this._settlementRoot.setPosition(0, 0);
+        this._settlementRoot.zIndex = 100;
+
+        let bg = this._settlementRoot.addComponent(cc.Graphics);
+        bg.fillColor = new cc.Color(10, 16, 24, 210);
+        bg.rect(-360, -640, 720, 1280);
+        bg.fill();
+
+        let panel = new cc.Node("Panel");
+        panel.parent = this._settlementRoot;
+        panel.setPosition(0, 20);
+
+        let panelGraphics = panel.addComponent(cc.Graphics);
+        panelGraphics.fillColor = new cc.Color(24, 30, 42, 240);
+        panelGraphics.roundRect(-220, -150, 440, 300, 16);
+        panelGraphics.fill();
+        panelGraphics.strokeColor = new cc.Color(235, 235, 235, 160);
+        panelGraphics.lineWidth = 2;
+        panelGraphics.roundRect(-220, -150, 440, 300, 16);
+        panelGraphics.stroke();
+
+        let title = this.createLabel("战斗结算", 30, 0, 88);
+        title.node.parent = panel;
+
+        let result = this.createLabel("阵营 " + winnerCamp + " 获胜", 28, 0, 28);
+        result.node.parent = panel;
+        result.node.color = winnerCamp === "A" ? new cc.Color(120, 230, 150, 255) : new cc.Color(255, 120, 140, 255);
+
+        let hint = this.createLabel("点击按钮重新开始新一局", 20, 0, -20);
+        hint.node.parent = panel;
+        hint.node.color = new cc.Color(220, 220, 220, 255);
+
+        this.createSettlementButton(panel, "重新开始", 0, -92, onRestart);
+    }
+
+    hideSettlement() {
+        if (this._settlementRoot) {
+            this._settlementRoot.destroy();
+            this._settlementRoot = null;
+        }
+    }
+
     private getPhaseText(snapshot: TurnStateSnapshot): string {
         if (snapshot.phase === "build") {
             return "第 " + snapshot.roundIndex + " 轮：改造期";
@@ -207,6 +257,30 @@ export default class TurnHud extends cc.Component {
         node.on(cc.Node.EventType.TOUCH_END, function (event: cc.Event.EventTouch) {
             event.stopPropagation();
             onPick(option.id);
+        }, this);
+    }
+
+    private createSettlementButton(parent: cc.Node, text: string, x: number, y: number, onClick: () => void) {
+        let node = new cc.Node("SettlementButton");
+        node.parent = parent;
+        node.setPosition(x, y);
+        node.setContentSize(220, 60);
+
+        let graphics = node.addComponent(cc.Graphics);
+        graphics.fillColor = new cc.Color(64, 110, 196, 255);
+        graphics.roundRect(-110, -30, 220, 60, 10);
+        graphics.fill();
+        graphics.strokeColor = new cc.Color(220, 235, 255, 220);
+        graphics.lineWidth = 2;
+        graphics.roundRect(-110, -30, 220, 60, 10);
+        graphics.stroke();
+
+        let label = this.createLabel(text, 24, 0, -2);
+        label.node.parent = node;
+
+        node.on(cc.Node.EventType.TOUCH_END, function (event: cc.Event.EventTouch) {
+            event.stopPropagation();
+            onClick();
         }, this);
     }
 }

@@ -80,6 +80,8 @@ export default class TurnGameMain extends cc.Component {
     startMatch() {
         this._lastRoundIndex = 0;
         this._upgradeHintToken += 1;
+        this._hud.hideSettlement();
+        this._hud.hideUpgradeOptions();
         this._stateMachine.startMatch();
     }
 
@@ -90,7 +92,24 @@ export default class TurnGameMain extends cc.Component {
     finishMatch(winnerCamp: TurnCamp) {
         this._stateMachine.finishMatch(winnerCamp);
         this.refreshHudNumbers();
+        this._hud.showSettlement(winnerCamp, this.restartMatch.bind(this));
         this.emitTurnEvent("turn-game-ended", { winnerCamp: winnerCamp });
+    }
+
+    restartMatch() {
+        this.unscheduleAllCallbacks();
+        this._upgradeHintToken += 1;
+        this._upgradeQueue = [];
+        this._currentUpgradeCamp = null;
+        this._stateMachine.init(this._config, {
+            onTurnPhaseChanged: this.onTurnPhaseChanged.bind(this),
+            onTurnTimer: this.onTurnTimer.bind(this),
+        });
+        this._hud.hideSettlement();
+        this._hud.hideUpgradeOptions();
+        this._battleMap.initMap(this._config);
+        this.refreshHudNumbers();
+        this.startMatch();
     }
 
     completeCurrentAttack() {
