@@ -828,18 +828,24 @@ function getTurnUpgradeOptions(roomState, player) {
   return options;
 }
 
+function sendTurnUpgradeOptions(roomState, player) {
+  if (!roomState || !player || player.exp < player.expNeed) {
+    return false;
+  }
+  sendJson(player.socket, buildTurnViewPayload(player, {
+    type: 'upgradeOptions',
+    roomId: roomState.id,
+    camp: player.camp,
+    options: getTurnUpgradeOptions(roomState, player),
+  }));
+  return true;
+}
+
 function startTurnUpgradePhase(roomState) {
   roomState.actionCamp = '';
   roomState.players.forEach((player) => {
     player.exp += TURN_CONFIG.baseExp;
-    if (player.exp >= player.expNeed) {
-      sendJson(player.socket, buildTurnViewPayload(player, {
-        type: 'upgradeOptions',
-        roomId: roomState.id,
-        camp: player.camp,
-        options: getTurnUpgradeOptions(roomState, player),
-      }));
-    }
+    sendTurnUpgradeOptions(roomState, player);
   });
   logTurn(roomState, `phase upgrade round=${roomState.roundIndex}`);
   setTurnPhase(roomState, TURN_PHASE.UPGRADE, TURN_CONFIG.upgradeSeconds, () => {
@@ -1182,10 +1188,11 @@ function handleTurnBulletResult(ws, msg) {
   }
   const payload = getTurnActionPayload(msg);
   const destroyedIds = Array.isArray(payload.destroyedIds) ? payload.destroyedIds.slice(0, 20).map(String) : [];
+  let awardedExp = 0;
   destroyedIds.forEach((id) => {
     if (roomState.obstacles[id]) {
       delete roomState.obstacles[id];
-      player.exp += TURN_CONFIG.obstacleHitExp;
+      awardedExp += TURN_CONFIG.obstacleHitExp;
     }
   });
 
@@ -1195,12 +1202,11 @@ function handleTurnBulletResult(ws, msg) {
   if (hitType === 'crystal' && targetCamp !== player.camp && roomState.crystals[targetCamp]) {
     const crystal = roomState.crystals[targetCamp];
     crystal.hp = Math.max(0, crystal.hp - damage);
-    player.exp += TURN_CONFIG.crystalHitExp;
+    awardedExp += TURN_CONFIG.crystalHitExp;
   } else {
     damage = 0;
   }
-  const expGain = clamp(Math.floor(Number(payload.expGain) || 0), 0, 100);
-  player.exp += expGain;
+  player.exp += awardedExp;
 
   broadcastTurn(roomState, {
     type: 'bulletResult',
@@ -1212,7 +1218,7 @@ function handleTurnBulletResult(ws, msg) {
       targetId: payload.targetId == null ? '' : String(payload.targetId),
       targetCamp,
       damage,
-      expGain,
+      expGain: awardedExp,
       destroyedIds,
     },
   });
@@ -1278,6 +1284,7 @@ function handleTurnUpgradePick(ws, msg) {
     option,
   });
   broadcastTurnSnapshot(roomState);
+  sendTurnUpgradeOptions(roomState, player);
 }
 
 function handleTurnDisconnect(ws) {

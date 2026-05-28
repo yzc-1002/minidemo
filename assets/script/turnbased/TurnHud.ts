@@ -78,12 +78,12 @@ export default class TurnHud extends cc.Component {
         this.inventoryLabel.string = "掩体 A: " + aCount + "  |  B: " + bCount;
     }
 
-    refreshExp(aExp: number, aLevel: number, bExp: number, bLevel: number, levelUpExp: number) {
+    refreshExp(aExp: number, aLevel: number, aExpNeed: number, bExp: number, bLevel: number, bExpNeed: number) {
         if (!this.expLabel) {
             return;
         }
 
-        this.expLabel.string = "经验 A Lv." + aLevel + ": " + aExp + "/" + levelUpExp + "  |  B Lv." + bLevel + ": " + bExp + "/" + levelUpExp;
+        this.expLabel.string = "经验 A Lv." + aLevel + ": " + aExp + "/" + aExpNeed + "  |  B Lv." + bLevel + ": " + bExp + "/" + bExpNeed;
     }
 
     refreshZones(aBlackHole: number, bBlackHole: number) {

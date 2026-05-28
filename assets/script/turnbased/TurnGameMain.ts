@@ -37,6 +37,7 @@ export default class TurnGameMain extends cc.Component {
     private _serverCamp: TurnCamp = "A";
     private _upgradeOptions: TurnUpgradeConfig[] = [];
     private _serverConnected = false;
+    private _waitingForOwnUpgradeResult = false;
     private readonly _legacyNodeNames = [
         "_tiled",
         "_joystick",
@@ -98,6 +99,7 @@ export default class TurnGameMain extends cc.Component {
 
     startMatch() {
         if (this.useServer) {
+            this._waitingForOwnUpgradeResult = false;
             if (!this._serverConnected) {
                 this.connectTurnServer();
                 return;
@@ -134,6 +136,7 @@ export default class TurnGameMain extends cc.Component {
         this._upgradeHintToken += 1;
         this._upgradeQueue = [];
         this._currentUpgradeCamp = null;
+        this._waitingForOwnUpgradeResult = false;
         this._hud.hideSettlement();
         this._hud.hideUpgradeOptions();
         this._battleMap.initMap(this._config);
@@ -266,9 +269,10 @@ export default class TurnGameMain extends cc.Component {
         this._hud.refreshExp(
             this._battleMap.getCampExp("A"),
             this._battleMap.getCampLevel("A"),
+            this._battleMap.getCampExpNeed("A"),
             this._battleMap.getCampExp("B"),
             this._battleMap.getCampLevel("B"),
-            this._config.levelUpExp,
+            this._battleMap.getCampExpNeed("B"),
         );
         this._hud.refreshZones(this._battleMap.getBlackHoleInventory("A"), this._battleMap.getBlackHoleInventory("B"));
     }
@@ -277,10 +281,16 @@ export default class TurnGameMain extends cc.Component {
         if (this.useServer) {
             if (this._upgradeOptions.length <= 0) {
                 this._hud.hideUpgradeOptions();
-                this._hud.showUpgradeHint("等待服务端下发升级选项...");
+                if (this._waitingForOwnUpgradeResult) {
+                    this._hud.showUpgradeHint("已提交升级，等待服务端确认...");
+                }
+                else {
+                    this._hud.showUpgradeHint("等待服务端下发升级选项...");
+                }
                 return;
             }
             this._currentUpgradeCamp = "A";
+            this._waitingForOwnUpgradeResult = false;
             this._hud.hideUpgradeHint();
             this._hud.showUpgradeOptions("A", this._upgradeOptions, this.onUpgradePicked.bind(this));
             return;
@@ -335,6 +345,7 @@ export default class TurnGameMain extends cc.Component {
                 optionId: upgradeId,
             });
             this._upgradeOptions = [];
+            this._waitingForOwnUpgradeResult = true;
             this._currentUpgradeCamp = null;
             this._hud.hideUpgradeOptions();
             this._hud.showUpgradeHint("已提交升级，等待对手...");
@@ -373,6 +384,9 @@ export default class TurnGameMain extends cc.Component {
         this._netManager.onTurnMessage = this.handleTurnServerMessage.bind(this);
         this._netManager.onDisconnect = function () {
             this._serverConnected = false;
+            this._upgradeOptions = [];
+            this._waitingForOwnUpgradeResult = false;
+            this._currentUpgradeCamp = null;
             this._hud.hideUpgradeOptions();
             this._hud.showUpgradeHint("连接断开，请点击重新开始重连");
         }.bind(this);
@@ -396,6 +410,7 @@ export default class TurnGameMain extends cc.Component {
         if (msg.type === "turnGameStart") {
             this._serverCamp = (msg.camp || "A") as TurnCamp;
             this._upgradeOptions = [];
+            this._waitingForOwnUpgradeResult = false;
             this._hud.hideUpgradeHint();
             return;
         }
@@ -419,14 +434,23 @@ export default class TurnGameMain extends cc.Component {
         }
         if (msg.type === "upgradeOptions") {
             this._upgradeOptions = Array.isArray(msg.options) ? msg.options : [];
+            this._waitingForOwnUpgradeResult = false;
             if (this._serverSnapshot && this._serverSnapshot.phase === "upgrade") {
                 this.beginUpgradePhase();
             }
             return;
         }
         if (msg.type === "upgradePick") {
-            this._hud.hideUpgradeOptions();
-            this._hud.showUpgradeHint("升级已确认");
+            if ((msg.camp || "B") === "A") {
+                this._upgradeOptions = [];
+                this._waitingForOwnUpgradeResult = false;
+                this._currentUpgradeCamp = null;
+                this._hud.hideUpgradeOptions();
+                this._hud.showUpgradeHint("升级已确认");
+            }
+            else if (this._serverSnapshot && this._serverSnapshot.phase === "upgrade" && this._upgradeOptions.length <= 0) {
+                this._hud.showUpgradeHint("对手已确认升级");
+            }
             return;
         }
         if (msg.type === "turnGameEnded") {
@@ -446,6 +470,9 @@ export default class TurnGameMain extends cc.Component {
         this._battleMap.setTurnSnapshot(snapshot);
         this._hud.refreshState(snapshot);
         if (snapshot.phase !== "upgrade") {
+            this._upgradeOptions = [];
+            this._waitingForOwnUpgradeResult = false;
+            this._currentUpgradeCamp = null;
             this._hud.hideUpgradeOptions();
         }
         if (snapshot.phase === "upgrade") {

@@ -65,6 +65,7 @@ interface TurnAssistZoneState {
 
 interface TurnCampStats {
     exp: number;
+    expNeed: number;
     level: number;
     damageBonus: number;
     extraShots: number;
@@ -267,6 +268,8 @@ export default class TurnBattleMap extends cc.Component {
 
         statsA.exp = Math.max(0, Number(expA.exp) || 0);
         statsB.exp = Math.max(0, Number(expB.exp) || 0);
+        statsA.expNeed = Math.max(1, Number(expA.expNeed) || this._config.levelUpExp);
+        statsB.expNeed = Math.max(1, Number(expB.expNeed) || this._config.levelUpExp);
         statsA.level = Math.max(1, Number(expA.level) || 1);
         statsB.level = Math.max(1, Number(expB.level) || 1);
         statsA.damageBonus = Math.max(0, Number(upgradesA.damageAdd) || 0);
@@ -357,6 +360,10 @@ export default class TurnBattleMap extends cc.Component {
         return this.getCampStats(camp).level;
     }
 
+    getCampExpNeed(camp: TurnCamp): number {
+        return this.getCampStats(camp).expNeed;
+    }
+
     getBlackHoleInventory(camp: TurnCamp): number {
         return this.getCampStats(camp).zoneInventory.black_hole || 0;
     }
@@ -367,7 +374,8 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     canCampUpgrade(camp: TurnCamp): boolean {
-        return this.getCampStats(camp).exp >= this._config.levelUpExp && this.getUpgradeOptions(camp).length > 0;
+        let stats = this.getCampStats(camp);
+        return stats.exp >= stats.expNeed && this.getUpgradeOptions(camp).length > 0;
     }
 
     getUpgradeOptions(camp: TurnCamp): TurnUpgradeConfig[] {
@@ -391,11 +399,12 @@ export default class TurnBattleMap extends cc.Component {
 
     applyUpgrade(camp: TurnCamp, upgradeId: TurnUpgradeId) {
         let stats = this.getCampStats(camp);
-        if (stats.exp < this._config.levelUpExp) {
+        if (stats.exp < stats.expNeed) {
             return;
         }
 
-        stats.exp -= this._config.levelUpExp;
+        stats.exp -= stats.expNeed;
+        stats.expNeed += 20;
         stats.level += 1;
         if (upgradeId === "bullet_bounce") {
             stats.bulletBounce += 1;
@@ -1095,6 +1104,7 @@ export default class TurnBattleMap extends cc.Component {
     private createCampStats(): TurnCampStats {
         return {
             exp: 0,
+            expNeed: this._config.levelUpExp,
             level: 1,
             damageBonus: 0,
             extraShots: 0,
