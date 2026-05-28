@@ -66,6 +66,7 @@ export default class TurnGameMain extends cc.Component {
         this._battleMap.onBuildIntent = this.sendBuildIntent.bind(this);
         this._battleMap.onZoneIntent = this.sendZoneIntent.bind(this);
         this._battleMap.onAttackIntent = this.sendAttackIntent.bind(this);
+        this._battleMap.onTankPoseIntent = this.sendTankPoseIntent.bind(this);
         this._stateMachine.init(this._config, {
             onTurnPhaseChanged: this.onTurnPhaseChanged.bind(this),
             onTurnTimer: this.onTurnTimer.bind(this),
@@ -274,7 +275,8 @@ export default class TurnGameMain extends cc.Component {
             this._battleMap.getCampLevel("B"),
             this._battleMap.getCampExpNeed("B"),
         );
-        this._hud.refreshZones(this._battleMap.getBlackHoleInventory("A"), this._battleMap.getBlackHoleInventory("B"));
+        let activeZones = this._battleMap.getActiveAssistZoneCount();
+        this._hud.refreshZones(activeZones, activeZones);
     }
 
     private beginUpgradePhase() {
@@ -432,6 +434,10 @@ export default class TurnGameMain extends cc.Component {
             this._battleMap.applyServerAttackAction(msg);
             return;
         }
+        if (msg.type === "tankPose") {
+            this._battleMap.applyServerTankPose(msg);
+            return;
+        }
         if (msg.type === "upgradeOptions") {
             this._upgradeOptions = Array.isArray(msg.options) ? msg.options : [];
             this._waitingForOwnUpgradeResult = false;
@@ -518,6 +524,10 @@ export default class TurnGameMain extends cc.Component {
 
     private sendAttackIntent(action: { fromX: number; fromY: number; aimX: number; aimY: number; shotIndex: number; }) {
         this.sendNetMessage("attackAction", action);
+    }
+
+    private sendTankPoseIntent(action: { x: number; y: number; aimX: number; aimY: number; }) {
+        this.sendNetMessage("tankPose", action);
     }
 
     private sendNetMessage(type: string, payload: any) {

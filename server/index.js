@@ -270,15 +270,33 @@ const room = {
 
 const TURN_MAX_PLAYERS = 2;
 const TURN_MAP_BOUNDS = {
-  halfWidth: 1000,
-  halfHeight: 700,
+  halfWidth: 320,
+  halfHeight: 480,
+};
+const TURN_MAP_LAYOUT = {
+  roadY: {
+    A: -144,
+    B: 144,
+  },
+  roadMinX: -302,
+  roadMaxX: 302,
+  assistArea: {
+    // Keep server-side hit validation aligned with the current tiled map:
+    // roads are centered at y = -144 / 144 with height 32, so the assist band
+    // between them is roughly [-128, 128]. Horizontal bounds mirror the
+    // visible interior play area used by the client.
+    minX: -288,
+    maxX: 288,
+    minY: -128,
+    maxY: 128,
+  },
 };
 const TURN_CONFIG = {
   buildSeconds: 8,
   zoneSeconds: 5,
-  attackSeconds: 3,
+  attackSeconds: 8,
   waitBulletSeconds: 5,
-  upgradeSeconds: 8,
+  upgradeSeconds: 3,
   attackRounds: 3,
   crystalHp: 100,
   initialObstacles: 3,
@@ -288,6 +306,7 @@ const TURN_CONFIG = {
   crystalHitExp: 20,
   expNeed: 60,
   maxBulletResultDamage: 80,
+  assistZoneRadius: 74,
 };
 const TURN_PHASE = {
   WAITING: 'waiting',
@@ -304,7 +323,6 @@ const TURN_UPGRADE_POOL = [
   { id: 'multiShot', type: 'attack', title: '每次行动多发 +1', value: 1 },
   { id: 'damageUp', type: 'attr', title: '子弹伤害 +10', value: 10 },
   { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20 },
-  { id: 'unlockBlackHole', type: 'zone', title: '解锁黑洞区', value: 'blackHole' },
 ];
 
 const turnRooms = {};
@@ -467,6 +485,24 @@ function buildTurnViewPayload(player, payload) {
       };
     });
   }
+  if (next.tankPoses) {
+    const tankPoses = {};
+    Object.keys(next.tankPoses).forEach((camp) => {
+      const pose = next.tankPoses[camp];
+      const from = toPlayerViewPoint(player, pose);
+      const aim = toPlayerViewPoint(player, {
+        x: pose.aimX,
+        y: pose.aimY,
+      });
+      tankPoses[getTurnViewCamp(player, camp)] = {
+        x: Math.round(from.x),
+        y: Math.round(from.y),
+        aimX: Math.round(aim.x),
+        aimY: Math.round(aim.y),
+      };
+    });
+    next.tankPoses = tankPoses;
+  }
   if (next.action) {
     const action = { ...next.action };
     if (Number.isFinite(action.x) || Number.isFinite(action.y)) {
@@ -532,10 +568,13 @@ function buildTurnViewPayload(player, payload) {
 }
 
 function createTurnPlayer(ws, camp, index) {
+  const canonicalCamp = camp || 'A';
+  const roadY = TURN_MAP_LAYOUT.roadY[canonicalCamp] || TURN_MAP_LAYOUT.roadY.A;
+  const defaultAimY = canonicalCamp === 'A' ? roadY + 120 : roadY - 120;
   return {
     socket: ws,
     playerId: index,
-    camp,
+    camp: canonicalCamp,
     disconnected: false,
     exp: 0,
     expNeed: TURN_CONFIG.expNeed,
@@ -550,6 +589,12 @@ function createTurnPlayer(ws, camp, index) {
       zones: [],
     },
     pendingUpgradeOptions: [],
+    tankPose: {
+      x: 0,
+      y: roadY,
+      aimX: 0,
+      aimY: defaultAimY,
+    },
   };
 }
 
@@ -575,6 +620,20 @@ function createTurnRoom() {
     },
     obstacles: {},
     zones: [],
+    tankPoses: {
+      A: {
+        x: 0,
+        y: TURN_MAP_LAYOUT.roadY.A,
+        aimX: 0,
+        aimY: TURN_MAP_LAYOUT.roadY.A + 120,
+      },
+      B: {
+        x: 0,
+        y: TURN_MAP_LAYOUT.roadY.B,
+        aimX: 0,
+        aimY: TURN_MAP_LAYOUT.roadY.B - 120,
+      },
+    },
     nextObstacleId: 1,
     nextZoneId: 1,
     finished: false,
@@ -659,6 +718,10 @@ function getTurnStateSnapshot(roomState) {
     },
     obstacles: Object.keys(roomState.obstacles).map((id) => ({ ...roomState.obstacles[id] })),
     zones: roomState.zones.map((zone) => ({ ...zone })),
+    tankPoses: {
+      A: { ...roomState.tankPoses.A },
+      B: { ...roomState.tankPoses.B },
+    },
     exp: roomState.players.reduce((result, player) => {
       result[player.camp] = {
         exp: player.exp,
@@ -753,6 +816,7 @@ function startTurnBuildPhase(roomState) {
   roomState.waitingForBulletCamp = '';
   roomState.actionSubmitted = false;
   roomState.actedCampsInZone = {};
+  roomState.zones = [];
   if (roomState.roundIndex > 0) {
     roomState.players.forEach((player) => {
       player.inventory.obstacles += TURN_CONFIG.obstacleGainPerRound;
@@ -771,6 +835,8 @@ function startTurnBuildPhase(roomState) {
 function startTurnZonePhase(roomState) {
   roomState.actionCamp = '';
   roomState.actedCampsInZone = {};
+  roomState.zones = [];
+  spawnTurnBlackHoleZone(roomState);
   logTurn(roomState, `phase zone round=${roomState.roundIndex}`);
   setTurnPhase(roomState, TURN_PHASE.ZONE, TURN_CONFIG.zoneSeconds, () => {
     startTurnAttackPhase(roomState, 'A');
@@ -814,6 +880,105 @@ function advanceTurnAttack(roomState) {
   startTurnUpgradePhase(roomState);
 }
 
+function spawnTurnBlackHoleZone(roomState) {
+  if (!roomState) {
+    return null;
+  }
+  const marginX = TURN_CONFIG.assistZoneRadius + 8;
+  const marginY = TURN_CONFIG.assistZoneRadius + 8;
+  const minX = TURN_MAP_LAYOUT.assistArea.minX + marginX;
+  const maxX = TURN_MAP_LAYOUT.assistArea.maxX - marginX;
+  const minY = TURN_MAP_LAYOUT.assistArea.minY + marginY;
+  const maxY = TURN_MAP_LAYOUT.assistArea.maxY - marginY;
+  const zone = {
+    id: `system_zone_${roomState.nextZoneId++}`,
+    camp: 'A',
+    zoneType: 'blackHole',
+    x: Math.round(randomBetween(minX, maxX)),
+    y: Math.round(randomBetween(minY, maxY)),
+    extra: {
+      source: 'system',
+      roundIndex: roomState.roundIndex,
+    },
+  };
+  roomState.zones = [zone];
+  broadcastTurn(roomState, {
+    type: 'zoneAction',
+    roomId: roomState.id,
+    camp: zone.camp,
+    playerId: 0,
+    zone,
+  });
+  broadcastTurnSnapshot(roomState);
+  return zone;
+}
+
+function clampTurnTankAim(camp, fromPoint, aimPoint) {
+  const canonicalCamp = camp === 'B' ? 'B' : 'A';
+  const fallbackY = canonicalCamp === 'A' ? fromPoint.y + 120 : fromPoint.y - 120;
+  const nextAim = {
+    x: clamp(Number(aimPoint && aimPoint.x), -TURN_MAP_BOUNDS.halfWidth, TURN_MAP_BOUNDS.halfWidth),
+    y: clamp(Number(aimPoint && aimPoint.y), -TURN_MAP_BOUNDS.halfHeight, TURN_MAP_BOUNDS.halfHeight),
+  };
+  if (!Number.isFinite(nextAim.x)) {
+    nextAim.x = fromPoint.x;
+  }
+  if (!Number.isFinite(nextAim.y)) {
+    nextAim.y = fallbackY;
+  }
+  if (canonicalCamp === 'A') {
+    nextAim.y = Math.max(fromPoint.y, nextAim.y);
+  } else {
+    nextAim.y = Math.min(fromPoint.y, nextAim.y);
+  }
+  if (Math.abs(nextAim.x - fromPoint.x) < 1 && Math.abs(nextAim.y - fromPoint.y) < 1) {
+    nextAim.y = canonicalCamp === 'A' ? fromPoint.y + 60 : fromPoint.y - 60;
+  }
+  return nextAim;
+}
+
+function translateTurnTankAimWithMove(prevPose, nextPose) {
+  if (!prevPose || !nextPose) {
+    return {
+      x: nextPose ? nextPose.x : 0,
+      y: nextPose ? nextPose.y : 0,
+    };
+  }
+  const dx = (nextPose.x || 0) - (prevPose.x || 0);
+  const dy = (nextPose.y || 0) - (prevPose.y || 0);
+  return {
+    x: (prevPose.aimX || nextPose.x || 0) + dx,
+    y: (prevPose.aimY || nextPose.y || 0) + dy,
+  };
+}
+
+function updateTurnTankPose(roomState, camp, x, aimX, aimY) {
+  const canonicalCamp = camp === 'B' ? 'B' : 'A';
+  const roadY = TURN_MAP_LAYOUT.roadY[canonicalCamp] || 0;
+  const clampedX = clamp(Number(x) || 0, TURN_MAP_LAYOUT.roadMinX, TURN_MAP_LAYOUT.roadMaxX);
+  const pose = roomState.tankPoses[canonicalCamp] || {
+    x: 0,
+    y: roadY,
+    aimX: 0,
+    aimY: canonicalCamp === 'A' ? roadY + 120 : roadY - 120,
+  };
+  const prevPose = {
+    x: pose.x,
+    y: pose.y,
+    aimX: pose.aimX,
+    aimY: pose.aimY,
+  };
+  pose.x = Math.round(clampedX);
+  pose.y = roadY;
+  const fallbackAim = translateTurnTankAimWithMove(prevPose, pose);
+  const hasExplicitAim = Number.isFinite(Number(aimX)) && Number.isFinite(Number(aimY));
+  const nextAim = clampTurnTankAim(canonicalCamp, pose, hasExplicitAim ? { x: aimX, y: aimY } : fallbackAim);
+  pose.aimX = Math.round(nextAim.x);
+  pose.aimY = Math.round(nextAim.y);
+  roomState.tankPoses[canonicalCamp] = pose;
+  return pose;
+}
+
 function getTurnUpgradeOptions(roomState, player) {
   if (player.pendingUpgradeOptions.length > 0) {
     return player.pendingUpgradeOptions;
@@ -843,6 +1008,7 @@ function sendTurnUpgradeOptions(roomState, player) {
 
 function startTurnUpgradePhase(roomState) {
   roomState.actionCamp = '';
+  roomState.zones = [];
   roomState.players.forEach((player) => {
     player.exp += TURN_CONFIG.baseExp;
     sendTurnUpgradeOptions(roomState, player);
@@ -1057,46 +1223,33 @@ function handleTurnBuildAction(ws, msg) {
 }
 
 function handleTurnZoneAction(ws, msg) {
+  sendTurnError(ws, '辅助区域由系统自动生成', 'zoneAutoManaged');
+}
+
+function handleTurnTankPose(ws, msg) {
   const roomState = getTurnRoom(ws);
   const player = getTurnPlayer(roomState, ws);
-  if (!roomState || !player || roomState.phase !== TURN_PHASE.ZONE || roomState.roundIndex <= 0) {
-    sendTurnError(ws, '当前不能放置辅助区域', 'invalidPhase');
-    return;
-  }
-  if (roomState.actedCampsInZone[player.camp]) {
-    sendTurnError(ws, '本阶段已放置辅助区域', 'alreadyActed');
+  if (!roomState || !player || roomState.phase !== TURN_PHASE.ATTACK || roomState.actionCamp !== player.camp) {
     return;
   }
   const payload = getTurnActionPayload(msg);
-  const zoneType = String(payload.zoneType || '');
-  const point = sanitizeTurnPointForPlayer(player, payload);
-  if (!point || !zoneType) {
-    sendTurnError(ws, '辅助区域参数无效', 'invalidZone');
-    return;
-  }
-  const canonicalZoneType = mapZoneTypeFromClient(zoneType);
-  if (player.upgrades.zones.indexOf(canonicalZoneType) < 0) {
-    sendTurnError(ws, '尚未拥有该辅助区域', 'zoneLocked');
-    return;
-  }
-  const zone = {
-    id: payload.zoneId ? String(payload.zoneId) : `${player.camp}_zone_${roomState.nextZoneId++}`,
-    camp: player.camp,
-    zoneType: canonicalZoneType,
-    x: Math.round(point.x),
-    y: Math.round(point.y),
-    extra: payload.extra && typeof payload.extra === 'object' ? payload.extra : {},
-  };
-  roomState.zones.push(zone);
-  roomState.actedCampsInZone[player.camp] = true;
+  const posePoint = sanitizeTurnPointForPlayer(player, { x: payload.x, y: payload.y });
+  const aimPoint = sanitizeTurnPointForPlayer(player, { x: payload.aimX, y: payload.aimY });
+  const pose = updateTurnTankPose(
+    roomState,
+    player.camp,
+    posePoint ? posePoint.x : roomState.tankPoses[player.camp].x,
+    aimPoint ? aimPoint.x : roomState.tankPoses[player.camp].aimX,
+    aimPoint ? aimPoint.y : roomState.tankPoses[player.camp].aimY,
+  );
+  broadcastTurnSnapshot(roomState);
   broadcastTurn(roomState, {
-    type: 'zoneAction',
+    type: 'tankPose',
     roomId: roomState.id,
     camp: player.camp,
     playerId: player.playerId,
-    zone,
+    pose,
   });
-  broadcastTurnSnapshot(roomState);
 }
 
 function handleTurnAttackAction(ws, msg) {
@@ -1117,6 +1270,16 @@ function handleTurnAttackAction(ws, msg) {
     sendTurnError(ws, '攻击参数无效', 'invalidAttack');
     return;
   }
+  if (
+    aimPoint.x < TURN_MAP_LAYOUT.assistArea.minX
+    || aimPoint.x > TURN_MAP_LAYOUT.assistArea.maxX
+    || aimPoint.y < TURN_MAP_LAYOUT.assistArea.minY
+    || aimPoint.y > TURN_MAP_LAYOUT.assistArea.maxY
+  ) {
+    sendTurnError(ws, '只能点击中间辅助区发射', 'attackOutOfAssistArea');
+    return;
+  }
+  const pose = updateTurnTankPose(roomState, player.camp, fromPoint.x, aimPoint.x, aimPoint.y);
   const maxShotIndex = 1 + Math.max(0, player.upgrades.multiShot);
   const shotIndex = clamp(Math.floor(Number(payload.shotIndex) || 0), 0, maxShotIndex - 1);
   roomState.actionSubmitted = true;
@@ -1127,10 +1290,10 @@ function handleTurnAttackAction(ws, msg) {
     playerId: player.playerId,
     attackRoundIndex: roomState.attackRoundIndex,
     action: {
-      fromX: clamp(fromPoint.x, -TURN_MAP_BOUNDS.halfWidth, TURN_MAP_BOUNDS.halfWidth),
-      fromY: clamp(fromPoint.y, -TURN_MAP_BOUNDS.halfHeight, TURN_MAP_BOUNDS.halfHeight),
-      aimX: clamp(aimPoint.x, -TURN_MAP_BOUNDS.halfWidth, TURN_MAP_BOUNDS.halfWidth),
-      aimY: clamp(aimPoint.y, -TURN_MAP_BOUNDS.halfHeight, TURN_MAP_BOUNDS.halfHeight),
+      fromX: pose.x,
+      fromY: pose.y,
+      aimX: pose.aimX,
+      aimY: pose.aimY,
       bulletType: String(payload.bulletType || 'normal'),
       shotIndex,
       damageAdd: player.upgrades.damageAdd,
@@ -1197,7 +1360,11 @@ function handleTurnBulletResult(ws, msg) {
   });
 
   const hitType = String(payload.hitType || '');
-  const targetCamp = TURN_CAMPS.indexOf(payload.targetCamp) >= 0 ? payload.targetCamp : getEnemyCamp(player.camp);
+  // `bulletResult` comes from the client in the sender's local A/B view.
+  // Convert it back to canonical server camps before applying damage.
+  const targetCamp = TURN_CAMPS.indexOf(payload.targetCamp) >= 0
+    ? toCanonicalCamp(player, payload.targetCamp)
+    : getEnemyCamp(player.camp);
   let damage = clamp(Math.floor(Number(payload.damage) || 0), 0, TURN_CONFIG.maxBulletResultDamage + player.upgrades.damageAdd);
   if (hitType === 'crystal' && targetCamp !== player.camp && roomState.crystals[targetCamp]) {
     const crystal = roomState.crystals[targetCamp];
@@ -5617,6 +5784,10 @@ function handleMessage(ws, msg) {
     }
     case 'zoneAction': {
       handleTurnZoneAction(ws, msg);
+      break;
+    }
+    case 'tankPose': {
+      handleTurnTankPose(ws, msg);
       break;
     }
     case 'attackAction': {

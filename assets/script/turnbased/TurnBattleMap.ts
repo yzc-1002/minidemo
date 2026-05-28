@@ -20,6 +20,8 @@ const TURN_POINT_ALIAS: { [name: string]: string } = {
 };
 
 const STATIC_OBSTACLE_NAME_RE = /qiang|mountain|tree|wall/i;
+const KEY_LEFT_SET = [cc.macro.KEY.left, cc.macro.KEY.a];
+const KEY_RIGHT_SET = [cc.macro.KEY.right, cc.macro.KEY.d];
 
 interface TurnCrystalState {
     node: cc.Node;
@@ -27,6 +29,14 @@ interface TurnCrystalState {
     maxHp: number;
     hpLabel: cc.Label;
     radius: number;
+}
+
+interface TurnTankState {
+    root: cc.Node;
+    body: cc.Node;
+    turret: cc.Node;
+    preview: cc.Node;
+    aim: cc.Vec2;
 }
 
 interface TurnObstacleState {
@@ -89,10 +99,11 @@ export default class TurnBattleMap extends cc.Component {
     onBuildIntent: (action: { op: string; obstacleId?: string; x: number; y: number; }) => void = null;
     onZoneIntent: (action: { zoneType: string; x: number; y: number; }) => void = null;
     onAttackIntent: (action: { fromX: number; fromY: number; aimX: number; aimY: number; shotIndex: number; }) => void = null;
+    onTankPoseIntent: (action: { x: number; y: number; aimX: number; aimY: number; }) => void = null;
 
     private _config: TurnGameConfig = TURN_GAME_CONFIG;
     private _crystals: { [camp: string]: TurnCrystalState } = {};
-    private _tanks: { [camp: string]: cc.Node } = {};
+    private _tanks: { [camp: string]: TurnTankState } = {};
     private _obstacleInventory: { [camp: string]: number } = { A: 0, B: 0 };
     private _obstacles: TurnObstacleState[] = [];
     private _staticObstacles: TurnStaticObstacleState[] = [];
@@ -125,6 +136,7 @@ export default class TurnBattleMap extends cc.Component {
     private _tileSize: cc.Size = cc.size(1, 1);
     private _mapTileSize: cc.Size = cc.size(1, 1);
 
+    private _staticObstacleLayer: cc.Node = null;
     private _obstacleLayer: cc.Node = null;
     private _bulletLayer: cc.Node = null;
     private _zoneLayer: cc.Node = null;
@@ -132,13 +144,31 @@ export default class TurnBattleMap extends cc.Component {
 
     private _roads: { [camp: string]: cc.Rect } = { A: null, B: null };
     private _buildAreas: { [camp: string]: cc.Rect } = { A: null, B: null };
+    private _assistArea: cc.Rect = null;
     private _noBuildAreas: cc.Rect[] = [];
     private _spawnPoints: { [name: string]: cc.Vec2 } = {};
     private _pointSource = "fallback";
     private _roadSource = "fallback";
     private _buildSource = "fallback";
+    private _moveLeftPressed = false;
+    private _moveRightPressed = false;
+    private _pointerAim: cc.Vec2 = null;
+    private _attackTouchActive = false;
+    private _lastSentTankPoseAt = 0;
 
     private readonly _dynamicObstacleSize = cc.size(56, 44);
+
+    onEnable() {
+        cc.systemEvent.on(cc.SystemEvent.EventType.KEY_DOWN, this.onKeyDown, this);
+        cc.systemEvent.on(cc.SystemEvent.EventType.KEY_UP, this.onKeyUp, this);
+    }
+
+    onDisable() {
+        cc.systemEvent.off(cc.SystemEvent.EventType.KEY_DOWN, this.onKeyDown, this);
+        cc.systemEvent.off(cc.SystemEvent.EventType.KEY_UP, this.onKeyUp, this);
+        this._moveLeftPressed = false;
+        this._moveRightPressed = false;
+    }
 
     initMap(config?: TurnGameConfig) {
         this._config = config || TURN_GAME_CONFIG;
@@ -154,6 +184,7 @@ export default class TurnBattleMap extends cc.Component {
         this._assistZones = [];
         this._roads = { A: null, B: null };
         this._buildAreas = { A: null, B: null };
+        this._assistArea = null;
         this._noBuildAreas = [];
         this._spawnPoints = {};
         this._pointSource = "fallback";
@@ -172,6 +203,9 @@ export default class TurnBattleMap extends cc.Component {
         this._nextObstacleId = 1;
         this._nextStaticObstacleId = 1;
         this._nextAssistZoneId = 1;
+        this._pointerAim = null;
+        this._attackTouchActive = false;
+        this._lastSentTankPoseAt = 0;
         this._gameFinished = false;
         this._pendingBulletResult = {
             hitType: "",
@@ -186,10 +220,16 @@ export default class TurnBattleMap extends cc.Component {
         this._mapPixelSize = cc.size(this._config.mapWidth, this._config.mapHeight);
         this._tileSize = cc.size(1, 1);
         this._mapTileSize = cc.size(1, 1);
+        this._staticObstacleLayer = null;
         this._obstacleLayer = null;
         this._bulletLayer = null;
         this._zoneLayer = null;
         this._effectLayer = null;
+        this._moveLeftPressed = false;
+        this._moveRightPressed = false;
+        this._pointerAim = null;
+        this._attackTouchActive = false;
+        this._lastSentTankPoseAt = 0;
         this._obstacleInventory = {
             A: this._config.initialObstacles,
             B: this._config.initialObstacles,
@@ -213,6 +253,7 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     update(dt: number) {
+        this.updateKeyboardTankMove(dt);
         this.updateBullets(dt);
     }
 
@@ -224,18 +265,20 @@ export default class TurnBattleMap extends cc.Component {
         if (roundIndex > 1) {
             this._obstacleInventory.A += this._config.obstacleGainPerRound;
             this._obstacleInventory.B += this._config.obstacleGainPerRound;
-            if (this.getCampStats("A").blackHoleUnlocked) {
+            if (this._serverMode && this.getCampStats("A").blackHoleUnlocked) {
                 this.getCampStats("A").zoneInventory.black_hole += 1;
             }
-            if (this.getCampStats("B").blackHoleUnlocked) {
+            if (this._serverMode && this.getCampStats("B").blackHoleUnlocked) {
                 this.getCampStats("B").zoneInventory.black_hole += 1;
             }
         }
     }
 
     setTurnSnapshot(snapshot: TurnStateSnapshot) {
+        let previousPhase = this._phase;
         this._phase = snapshot.phase;
         this.setActionCamp(snapshot.actionCamp);
+        this.handlePhaseChanged(previousPhase, snapshot.phase);
 
         if (snapshot.phase === "attack") {
             this._hasFiredInAction = false;
@@ -287,6 +330,7 @@ export default class TurnBattleMap extends cc.Component {
         this.syncCrystalState("B", snapshot.crystals && snapshot.crystals.B);
         this.syncObstacleState(snapshot.obstacles || []);
         this.syncAssistZoneState(snapshot.zones || []);
+        this.syncTankPoseState(snapshot.tankPoses || {});
         this.emitStatsChanged();
     }
 
@@ -297,26 +341,24 @@ export default class TurnBattleMap extends cc.Component {
 
         let camp = (payload.camp || this._actionCamp || "A") as TurnCamp;
         let action = payload.action;
-        let tank = this._tanks[camp];
-        if (!tank) {
+        let tankState = this._tanks[camp];
+        if (!tankState) {
             return;
         }
 
         let fromX = Number(action.fromX);
         let fromY = Number(action.fromY);
         if (Number.isFinite(fromX)) {
-            tank.x = fromX;
+            tankState.root.x = fromX;
         }
         if (Number.isFinite(fromY)) {
-            tank.y = fromY;
+            tankState.root.y = fromY;
         }
 
-        let startPosition = this.getNodePosition(tank);
+        let startPosition = this.getNodePosition(tankState.root);
         let target = cc.v2(Number(action.aimX) || startPosition.x, Number(action.aimY) || startPosition.y);
-        let dir = target.sub(startPosition);
-        if (dir.magSqr() < 1) {
-            dir = camp === "A" ? cc.v2(0, 1) : cc.v2(0, -1);
-        }
+        let dir = this.clampAimDirection(camp, startPosition, target);
+        this.applyTankAim(camp, startPosition.add(dir.mul(120)), false);
         this.createBullet(camp, startPosition.add(dir.normalize().mul(44)), dir.normalize());
     }
 
@@ -337,6 +379,27 @@ export default class TurnBattleMap extends cc.Component {
         this._actionCamp = camp || "A";
         this.updateTankState("A", this._phase === "attack" && this._actionCamp === "A");
         this.updateTankState("B", this._phase === "attack" && this._actionCamp === "B");
+    }
+
+    applyServerTankPose(payload: any) {
+        if (!payload || !payload.pose) {
+            return;
+        }
+        let camp = (payload.camp || this._actionCamp || "A") as TurnCamp;
+        let tankState = this._tanks[camp];
+        if (!tankState) {
+            return;
+        }
+        let pose = payload.pose;
+        if (Number.isFinite(Number(pose.x))) {
+            tankState.root.x = Number(pose.x);
+        }
+        if (Number.isFinite(Number(pose.y))) {
+            tankState.root.y = Number(pose.y);
+        }
+        if (Number.isFinite(Number(pose.aimX)) && Number.isFinite(Number(pose.aimY))) {
+            this.applyTankAim(camp, cc.v2(Number(pose.aimX), Number(pose.aimY)), false);
+        }
     }
 
     hasActiveBullets(): boolean {
@@ -368,6 +431,10 @@ export default class TurnBattleMap extends cc.Component {
         return this.getCampStats(camp).zoneInventory.black_hole || 0;
     }
 
+    getActiveAssistZoneCount(): number {
+        return this._assistZones.length;
+    }
+
     grantRoundBaseExp() {
         this.addExp("A", this._config.baseExpPerRound, cc.v2(-160, 0));
         this.addExp("B", this._config.baseExpPerRound, cc.v2(160, 0));
@@ -383,7 +450,7 @@ export default class TurnBattleMap extends cc.Component {
         let pool: TurnUpgradeConfig[] = [];
         for (let i = 0; i < this._config.upgradePool.length; i++) {
             let option = this._config.upgradePool[i];
-            if (option.id === "unlock_black_hole" && stats.blackHoleUnlocked) {
+            if (option.id === "unlock_black_hole") {
                 continue;
             }
             pool.push(option);
@@ -485,7 +552,7 @@ export default class TurnBattleMap extends cc.Component {
         let position = this.getLocalTouchPosition(event);
         if (this._phase === "build") {
             this._dragObstacle = this.findObstacleAt(position);
-            if (this._dragObstacle && this._dragObstacle.camp !== "A") {
+            if (this._dragObstacle && !this.canControlCamp(this._dragObstacle.camp)) {
                 this._dragObstacle = null;
             }
             if (this._dragObstacle) {
@@ -496,10 +563,13 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         if (this._phase === "attack") {
-            if (this._actionCamp !== "A") {
+            if (!this.canControlCamp(this._actionCamp)) {
                 return;
             }
-            this.moveActionTank(position);
+            this._attackTouchActive = this.isPointInAssistArea(position);
+            if (this._attackTouchActive) {
+                this.updateAimPreview(position, true);
+            }
         }
     }
 
@@ -512,10 +582,12 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         if (this._phase === "attack") {
-            if (this._actionCamp !== "A") {
+            if (!this.canControlCamp(this._actionCamp)) {
                 return;
             }
-            this.moveActionTank(position);
+            if (this._attackTouchActive && this.isPointInAssistArea(position)) {
+                this.updateAimPreview(position, true);
+            }
         }
     }
 
@@ -532,15 +604,22 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         if (this._phase === "attack") {
-            if (this._actionCamp !== "A") {
+            if (!this.canControlCamp(this._actionCamp)) {
                 return;
             }
-            this.moveActionTank(position);
+            if (!this.isPointInAssistArea(position)) {
+                this._attackTouchActive = false;
+                this.showFloatText("只能点击中间辅助区发射", position, cc.Color.RED);
+                return;
+            }
+            this.updateAimPreview(position, true);
+            this._attackTouchActive = false;
             this.fireActionTank(position);
         }
     }
 
     private onTouchCancel() {
+        this._attackTouchActive = false;
         if (!this._dragObstacle) {
             return;
         }
@@ -580,8 +659,8 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         let camp = this.getBuildCampAt(position);
-        if (!camp || camp !== "A") {
-            this.showFloatText("只能放在己方建造区", position, cc.Color.RED);
+        if (!camp || !this.canControlCamp(camp)) {
+            this.showFloatText("只能放在可操作阵营建造区", position, cc.Color.RED);
             return;
         }
         if (this.getObstacleInventory(camp) <= 0) {
@@ -610,40 +689,7 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private finishZoneTouch(position: cc.Vec2) {
-        let camp = this.getBuildCampAt(position);
-        if (!camp || camp !== "A") {
-            this.showFloatText("只能放在己方区域", position, cc.Color.RED);
-            return;
-        }
-
-        let stats = this.getCampStats(camp);
-        if (!stats.blackHoleUnlocked) {
-            this.showFloatText("尚未解锁黑洞区", position, cc.Color.RED);
-            return;
-        }
-        if (this.getBlackHoleInventory(camp) <= 0) {
-            this.showFloatText("黑洞区库存不足", position, cc.Color.RED);
-            return;
-        }
-        if (!this.isZonePositionValid(camp, position)) {
-            this.showFloatText("位置不可用", position, cc.Color.RED);
-            return;
-        }
-
-        if (this._serverMode) {
-            if (this.onZoneIntent) {
-                this.onZoneIntent({
-                    zoneType: "black_hole",
-                    x: position.x,
-                    y: position.y,
-                });
-            }
-            return;
-        }
-
-        this.createAssistZone(camp, "black_hole", position);
-        stats.zoneInventory.black_hole -= 1;
-        this.emitStatsChanged();
+        this.showFloatText("黑洞区域会在辅助期自动生成", position, cc.Color.YELLOW);
     }
 
     private moveActionTank(position: cc.Vec2) {
@@ -656,15 +702,15 @@ export default class TurnBattleMap extends cc.Component {
         if (road) {
             let minX = road.x + 18;
             let maxX = road.x + road.width - 18;
-            tank.x = Math.max(minX, Math.min(maxX, position.x));
-            tank.y = road.y + road.height / 2;
+            tank.root.x = Math.max(minX, Math.min(maxX, position.x));
+            tank.root.y = road.y + road.height / 2;
             return;
         }
 
         let halfWidth = this._config.mapWidth / 2 - 40;
         let x = Math.max(-halfWidth, Math.min(halfWidth, position.x));
-        tank.x = x;
-        tank.y = this._config.roadY[this._actionCamp];
+        tank.root.x = x;
+        tank.root.y = this._config.roadY[this._actionCamp];
     }
 
     private fireActionTank(targetPosition: cc.Vec2) {
@@ -676,9 +722,12 @@ export default class TurnBattleMap extends cc.Component {
         if (!tank) {
             return;
         }
+        if (this.isPointInAssistArea(targetPosition)) {
+            this.applyTankAim(this._actionCamp, targetPosition, true);
+        }
 
         if (this._serverMode) {
-            let startPosition = this.getNodePosition(tank);
+            let startPosition = this.getNodePosition(tank.root);
             let totalShots = 1 + this.getCampStats(this._actionCamp).extraShots;
             let shotIndex = Math.max(0, totalShots - this._shotsLeftInAction);
             this._shotsLeftInAction = Math.max(0, this._shotsLeftInAction - 1);
@@ -686,20 +735,16 @@ export default class TurnBattleMap extends cc.Component {
                 this.onAttackIntent({
                     fromX: startPosition.x,
                     fromY: startPosition.y,
-                    aimX: targetPosition.x,
-                    aimY: targetPosition.y,
+                    aimX: tank.aim.x,
+                    aimY: tank.aim.y,
                     shotIndex: shotIndex,
                 });
             }
             return;
         }
 
-        let startPosition = this.getNodePosition(tank);
-        let dir = targetPosition.sub(startPosition);
-        if (dir.magSqr() < 1) {
-            dir = this._actionCamp === "A" ? cc.v2(0, 1) : cc.v2(0, -1);
-        }
-        dir = dir.normalize();
+        let startPosition = this.getNodePosition(tank.root);
+        let dir = this.clampAimDirection(this._actionCamp, startPosition, tank.aim);
 
         this._hasFiredInAction = true;
         this._shotsLeftInAction -= 1;
@@ -903,18 +948,16 @@ export default class TurnBattleMap extends cc.Component {
             node: node,
             radius: this._config.assistZoneRadius,
         });
-        this.showFloatText("放置黑洞区", position.add(cc.v2(0, this._config.assistZoneRadius + 18)), new cc.Color(255, 255, 255, 255));
     }
 
     private isZonePositionValid(camp: TurnCamp, position: cc.Vec2): boolean {
-        let buildArea = this.getBuildArea(camp);
         let zoneRect = cc.rect(
             position.x - this._config.assistZoneRadius,
             position.y - this._config.assistZoneRadius,
             this._config.assistZoneRadius * 2,
             this._config.assistZoneRadius * 2,
         );
-        if (!buildArea || !this.rectContainsRect(buildArea, zoneRect) || !this.rectContainsRect(this.getMapRect(), zoneRect)) {
+        if (!this._assistArea || !this.rectContainsRect(this._assistArea, zoneRect) || !this.rectContainsRect(this.getMapRect(), zoneRect)) {
             return false;
         }
 
@@ -1031,7 +1074,7 @@ export default class TurnBattleMap extends cc.Component {
 
     private createCampView(camp: TurnCamp) {
         let crystalPosition = this.getSpawnPosition("crystal" + camp, cc.v2(0, this._config.crystalY[camp]));
-        let tankPosition = this.getSpawnPosition("tank" + camp, cc.v2(0, this.getRoadCenterY(camp)));
+        let tankPosition = this.getRoadCenterPosition(camp);
         let crystal = this.createCrystal(camp, crystalPosition);
         let tank = this.createTank(camp, tankPosition);
         this._crystals[camp] = {
@@ -1062,24 +1105,41 @@ export default class TurnBattleMap extends cc.Component {
         return { node: node, label: label };
     }
 
-    private createTank(camp: TurnCamp, position: cc.Vec2): cc.Node {
-        let node = new cc.Node("TurnTank" + camp);
-        node.parent = this._obstacleLayer || this.contentRoot;
-        node.setPosition(position.x, position.y);
+    private createTank(camp: TurnCamp, position: cc.Vec2): TurnTankState {
+        let root = new cc.Node("TurnTank" + camp);
+        root.parent = this._obstacleLayer || this.contentRoot;
+        root.setPosition(position.x, position.y);
 
-        let graphics = node.addComponent(cc.Graphics);
-        graphics.fillColor = camp === "A" ? new cc.Color(92, 214, 124, 255) : new cc.Color(224, 96, 112, 255);
-        graphics.roundRect(-34, -18, 68, 36, 8);
-        graphics.fill();
-        graphics.fillColor = new cc.Color(235, 235, 235, 255);
-        graphics.rect(-6, camp === "A" ? 0 : -36, 12, 36);
-        graphics.fill();
+        let body = new cc.Node("Body");
+        body.parent = root;
+        let bodyGraphics = body.addComponent(cc.Graphics);
+        bodyGraphics.fillColor = camp === "A" ? new cc.Color(92, 214, 124, 255) : new cc.Color(224, 96, 112, 255);
+        bodyGraphics.roundRect(-34, -18, 68, 36, 8);
+        bodyGraphics.fill();
 
+        let turret = new cc.Node("Turret");
+        turret.parent = root;
+        let turretGraphics = turret.addComponent(cc.Graphics);
+        turretGraphics.fillColor = new cc.Color(235, 235, 235, 255);
+        turretGraphics.rect(-4, 0, 8, 42);
+        turretGraphics.fill();
+
+        let preview = new cc.Node("Preview");
+        preview.parent = root;
         let label = this.createLabel(camp, 18);
-        label.node.parent = node;
+        label.node.parent = root;
         label.node.y = -2;
+
+        let tankState: TurnTankState = {
+            root: root,
+            body: body,
+            turret: turret,
+            preview: preview,
+            aim: cc.v2(position.x, position.y + (camp === "A" ? 120 : -120)),
+        };
+        this.applyTankAim(camp, tankState.aim, false);
         this.updateTankState(camp, false);
-        return node;
+        return tankState;
     }
 
     private refreshCrystalView(camp: TurnCamp) {
@@ -1097,8 +1157,16 @@ export default class TurnBattleMap extends cc.Component {
             return;
         }
 
-        tank.opacity = active ? 255 : 100;
-        tank.scale = active ? 1.08 : 1;
+        let shouldHide = this._phase === "attack" && this._actionCamp !== camp;
+        tank.root.active = !shouldHide;
+        tank.preview.active = !shouldHide;
+        if (shouldHide) {
+            return;
+        }
+
+        tank.root.opacity = active ? 255 : 100;
+        tank.root.scale = active ? 1.08 : 1;
+        tank.preview.opacity = active ? 210 : 90;
     }
 
     private createCampStats(): TurnCampStats {
@@ -1324,6 +1392,24 @@ export default class TurnBattleMap extends cc.Component {
         this._nextAssistZoneId = maxId;
     }
 
+    private syncTankPoseState(tankPoses: any) {
+        if (!tankPoses) {
+            return;
+        }
+        let camps: TurnCamp[] = ["A", "B"];
+        for (let i = 0; i < camps.length; i++) {
+            let camp = camps[i];
+            let pose = tankPoses[camp];
+            if (!pose) {
+                continue;
+            }
+            this.applyServerTankPose({
+                camp: camp,
+                pose: pose,
+            });
+        }
+    }
+
     private resetPendingBulletResult() {
         this._pendingBulletResult.hitType = "";
         this._pendingBulletResult.targetCamp = "";
@@ -1377,6 +1463,7 @@ export default class TurnBattleMap extends cc.Component {
         this.parseStaticObstacles();
         this.parseTurnAreas();
         this.ensureRuntimeLayers();
+        this.renderStaticObstacles();
         this.fitMapToView();
         this.logMapInitResult();
         return true;
@@ -1390,10 +1477,12 @@ export default class TurnBattleMap extends cc.Component {
         this.node.scale = 1;
         this.ensureRuntimeLayers();
         this.drawBoard();
+        this.renderStaticObstacles();
         this.fitMapToView();
     }
 
     private ensureRuntimeLayers() {
+        this._staticObstacleLayer = this.ensureLayerNode("TurnStaticObstacleLayer", 5);
         this._obstacleLayer = this.ensureLayerNode("TurnObstacleLayer", 10);
         this._bulletLayer = this.ensureLayerNode("TurnBulletLayer", 20);
         this._zoneLayer = this.ensureLayerNode("TurnZoneLayer", 30);
@@ -1409,6 +1498,28 @@ export default class TurnBattleMap extends cc.Component {
         node.zIndex = zIndex;
         node.setPosition(0, 0);
         return node;
+    }
+
+    private renderStaticObstacles() {
+        if (!this._staticObstacleLayer) {
+            return;
+        }
+        this._staticObstacleLayer.removeAllChildren();
+        for (let i = 0; i < this._staticObstacles.length; i++) {
+            let obstacle = this._staticObstacles[i];
+            let node = new cc.Node("StaticObstacle" + obstacle.id);
+            node.parent = this._staticObstacleLayer;
+            node.setPosition(obstacle.rect.x + obstacle.rect.width / 2, obstacle.rect.y + obstacle.rect.height / 2);
+
+            let graphics = node.addComponent(cc.Graphics);
+            graphics.fillColor = new cc.Color(84, 92, 104, 255);
+            graphics.rect(-obstacle.rect.width / 2, -obstacle.rect.height / 2, obstacle.rect.width, obstacle.rect.height);
+            graphics.fill();
+            graphics.strokeColor = new cc.Color(190, 198, 214, 180);
+            graphics.lineWidth = 2;
+            graphics.rect(-obstacle.rect.width / 2, -obstacle.rect.height / 2, obstacle.rect.width, obstacle.rect.height);
+            graphics.stroke();
+        }
     }
 
     private findTiledMapComponent(root: cc.Node): cc.TiledMap {
@@ -1485,24 +1596,27 @@ export default class TurnBattleMap extends cc.Component {
             }
         }
 
-        let tankA = this.getSpawnPosition("tankA", cc.v2(0, this._config.roadY.A));
-        let tankB = this.getSpawnPosition("tankB", cc.v2(0, this._config.roadY.B));
-        let crystalA = this.getSpawnPosition("crystalA", cc.v2(0, this._config.crystalY.A));
-        let crystalB = this.getSpawnPosition("crystalB", cc.v2(0, this._config.crystalY.B));
-        this._roads.A = this.pickClosestRect(areaRects.roadA.concat(areaRects.roadB), tankA.y) || this.deriveRoadRect("A");
-        this._roads.B = this.pickClosestRect(areaRects.roadA.concat(areaRects.roadB), tankB.y, this._roads.A) || this.deriveRoadRect("B");
-        this._buildAreas.A = this.pickClosestRect(areaRects.buildA.concat(areaRects.buildB), crystalA.y) || this.deriveBuildRect("A");
-        this._buildAreas.B = this.pickClosestRect(areaRects.buildA.concat(areaRects.buildB), crystalB.y, this._buildAreas.A) || this.deriveBuildRect("B");
+        let explicitRoadA = areaRects.roadA.length > 0 ? this.pickClosestRect(areaRects.roadA, this._config.roadY.A) : null;
+        let explicitRoadB = areaRects.roadB.length > 0 ? this.pickClosestRect(areaRects.roadB, this._config.roadY.B) : null;
+        let roadRects = areaRects.roadA.concat(areaRects.roadB);
+        this._roads.A = explicitRoadA || this.pickClosestRect(roadRects, this._config.roadY.A) || this.deriveRoadRect("A");
+        this._roads.B = explicitRoadB || this.pickClosestRect(roadRects, this._config.roadY.B, this._roads.A) || this.deriveRoadRect("B");
+        this.normalizeRoadOrder();
+        this.deriveLayerAreas();
+
+        if (areaRects.buildA.length > 0) {
+            this._buildAreas.A = this.pickClosestRect(areaRects.buildA, this._buildAreas.A ? this._buildAreas.A.y : this._config.crystalY.A) || this._buildAreas.A;
+        }
+        if (areaRects.buildB.length > 0) {
+            this._buildAreas.B = this.pickClosestRect(areaRects.buildB, this._buildAreas.B ? this._buildAreas.B.y : this._config.crystalY.B) || this._buildAreas.B;
+        }
 
         let hasRoadObjects = areaRects.roadA.length + areaRects.roadB.length > 0;
         let hasBuildObjects = areaRects.buildA.length + areaRects.buildB.length > 0;
         this._roadSource = hasRoadObjects ? "_tmLayerTurnAreas" : "derived";
-        this._buildSource = hasBuildObjects ? "_tmLayerTurnAreas" : "derived";
+        this._buildSource = hasBuildObjects ? "_tmLayerTurnAreas override + derived bands" : "derived bands";
         if (hasRoadObjects && (!this._roads.A || !this._roads.B)) {
             this._roadSource = "partial _tmLayerTurnAreas + derived";
-        }
-        if (hasBuildObjects && (!this._buildAreas.A || !this._buildAreas.B)) {
-            this._buildSource = "partial _tmLayerTurnAreas + derived";
         }
     }
 
@@ -1574,6 +1688,11 @@ export default class TurnBattleMap extends cc.Component {
     private getRoadCenterY(camp: TurnCamp): number {
         let road = this.getRoadRect(camp);
         return road.y + road.height / 2;
+    }
+
+    private getRoadCenterPosition(camp: TurnCamp): cc.Vec2 {
+        let road = this.getRoadRect(camp);
+        return cc.v2(road.x + road.width / 2, road.y + road.height / 2);
     }
 
     private getDynamicObstacleRectAt(position: cc.Vec2): cc.Rect {
@@ -1672,11 +1791,11 @@ export default class TurnBattleMap extends cc.Component {
         if (!item) {
             return cc.v2();
         }
-        if (item.x != null && item.y != null) {
-            return cc.v2(item.x, item.y);
-        }
         if (item.offset) {
             return cc.v2(item.offset.x || 0, item.offset.y || 0);
+        }
+        if (item.x != null && item.y != null) {
+            return cc.v2(Number(item.x) || 0, Number(item.y) || 0);
         }
         return cc.v2();
     }
@@ -1836,6 +1955,39 @@ export default class TurnBattleMap extends cc.Component {
         return cc.rect(bounds.minX, minY, bounds.maxX - bounds.minX, Math.max(24, maxY - minY));
     }
 
+    private normalizeRoadOrder() {
+        if (!this._roads.A || !this._roads.B) {
+            return;
+        }
+        let centerYA = this._roads.A.y + this._roads.A.height / 2;
+        let centerYB = this._roads.B.y + this._roads.B.height / 2;
+        if (centerYA > centerYB) {
+            let tmp = this._roads.A;
+            this._roads.A = this._roads.B;
+            this._roads.B = tmp;
+        }
+    }
+
+    private deriveLayerAreas() {
+        let mapRect = this.getMapRect();
+        let bounds = this.getInteriorHorizontalBounds();
+        let roadA = this.getRoadRect("A");
+        let roadB = this.getRoadRect("B");
+        let assistMinY = roadA.y + roadA.height;
+        let assistMaxY = roadB.y;
+        if (assistMaxY <= assistMinY) {
+            let thirdHeight = mapRect.height / 3;
+            this._buildAreas.A = cc.rect(bounds.minX, mapRect.y, bounds.maxX - bounds.minX, thirdHeight);
+            this._assistArea = cc.rect(bounds.minX, mapRect.y + thirdHeight, bounds.maxX - bounds.minX, thirdHeight);
+            this._buildAreas.B = cc.rect(bounds.minX, mapRect.y + thirdHeight * 2, bounds.maxX - bounds.minX, thirdHeight);
+            return;
+        }
+
+        this._buildAreas.A = cc.rect(bounds.minX, mapRect.y, bounds.maxX - bounds.minX, Math.max(24, roadA.y - mapRect.y));
+        this._assistArea = cc.rect(bounds.minX, assistMinY, bounds.maxX - bounds.minX, Math.max(24, assistMaxY - assistMinY));
+        this._buildAreas.B = cc.rect(bounds.minX, roadB.y + roadB.height, bounds.maxX - bounds.minX, Math.max(24, mapRect.y + mapRect.height - (roadB.y + roadB.height)));
+    }
+
     private getInteriorHorizontalBounds(): { minX: number; maxX: number } {
         let mapRect = this.getMapRect();
         let inset = Math.max(this._tileSize.width, 24);
@@ -1889,7 +2041,7 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private logMapInitResult() {
-        let runtimeLayerReady = !!(this._obstacleLayer && this._bulletLayer && this._zoneLayer && this._effectLayer);
+        let runtimeLayerReady = !!(this._staticObstacleLayer && this._obstacleLayer && this._bulletLayer && this._zoneLayer && this._effectLayer);
         let prefabName = this.tiledMapPrefab ? (this.tiledMapPrefab.name || "unknown") : "null";
         let isGameMapPrefab = prefabName === "GameMap";
         cc.log(
@@ -1917,5 +2069,188 @@ export default class TurnBattleMap extends cc.Component {
             return "null";
         }
         return "(" + value.x.toFixed(1) + ", " + value.y.toFixed(1) + ")";
+    }
+
+    private handlePhaseChanged(previousPhase: TurnPhase, nextPhase: TurnPhase) {
+        if (previousPhase === nextPhase) {
+            return;
+        }
+        if (!this._serverMode) {
+            if (nextPhase === "zone") {
+                this.spawnRoundAssistZone();
+            }
+            else if (nextPhase === "upgrade" || nextPhase === "build" || nextPhase === "finish" || nextPhase === "init") {
+                this.clearAssistZones();
+            }
+        }
+    }
+
+    private spawnRoundAssistZone() {
+        this.clearAssistZones();
+        let point = this.findAssistZoneSpawnPoint();
+        if (!point) {
+            cc.warn("[TurnBattleMap] failed to find assist zone spawn point");
+            return;
+        }
+        this.createAssistZone("A", "black_hole", point);
+        this.showFloatText("放置黑洞区", point.add(cc.v2(0, this._config.assistZoneRadius + 18)), new cc.Color(255, 255, 255, 255));
+    }
+
+    private clearAssistZones() {
+        for (let i = 0; i < this._assistZones.length; i++) {
+            this._assistZones[i].node.destroy();
+        }
+        this._assistZones = [];
+    }
+
+    private findAssistZoneSpawnPoint(): cc.Vec2 {
+        if (!this._assistArea) {
+            return null;
+        }
+        let center = cc.v2(this._assistArea.x + this._assistArea.width / 2, this._assistArea.y + this._assistArea.height / 2);
+        if (this.isZonePositionValid("A", center)) {
+            return center;
+        }
+        let samples = [
+            cc.v2(this._assistArea.x + this._assistArea.width * 0.25, center.y),
+            cc.v2(this._assistArea.x + this._assistArea.width * 0.75, center.y),
+            cc.v2(center.x, this._assistArea.y + this._assistArea.height * 0.3),
+            cc.v2(center.x, this._assistArea.y + this._assistArea.height * 0.7),
+        ];
+        for (let i = 0; i < samples.length; i++) {
+            if (this.isZonePositionValid("A", samples[i])) {
+                return samples[i];
+            }
+        }
+        return null;
+    }
+
+    private updateKeyboardTankMove(dt: number) {
+        if (this._phase !== "attack" || !this.canControlCamp(this._actionCamp)) {
+            return;
+        }
+        let tank = this._tanks[this._actionCamp];
+        if (!tank) {
+            return;
+        }
+        let moveDir = 0;
+        if (this._moveLeftPressed) {
+            moveDir -= 1;
+        }
+        if (this._moveRightPressed) {
+            moveDir += 1;
+        }
+        if (moveDir === 0) {
+            return;
+        }
+        let previousPosition = this.getNodePosition(tank.root);
+        let currentDir = tank.aim.sub(previousPosition);
+        if (currentDir.magSqr() < 1) {
+            currentDir = this._actionCamp === "A" ? cc.v2(0, 1) : cc.v2(0, -1);
+        }
+        currentDir = currentDir.normalize();
+        let road = this.getRoadRect(this._actionCamp);
+        let minX = road.x + 18;
+        let maxX = road.x + road.width - 18;
+        tank.root.x = Math.max(minX, Math.min(maxX, tank.root.x + moveDir * this._config.tankMoveSpeed * dt));
+        tank.root.y = road.y + road.height / 2;
+        let nextPosition = this.getNodePosition(tank.root);
+        tank.aim = nextPosition.add(currentDir.mul(120));
+        this.drawPreviewLine(tank.preview, currentDir);
+        this.sendTankPoseIfNeeded(false, false);
+    }
+
+    private updateAimPreview(position: cc.Vec2, notifyServer: boolean) {
+        this._pointerAim = cc.v2(position);
+        this.applyTankAim(this._actionCamp, this._pointerAim, notifyServer);
+    }
+
+    private applyTankAim(camp: TurnCamp, target: cc.Vec2, notifyServer: boolean) {
+        let tank = this._tanks[camp];
+        if (!tank) {
+            return;
+        }
+        let start = this.getNodePosition(tank.root);
+        let dir = this.clampAimDirection(camp, start, target);
+        tank.aim = start.add(dir.mul(120));
+        tank.turret.angle = this.vectorToAngle(dir) - 90;
+        this.drawPreviewLine(tank.preview, dir);
+        if (notifyServer) {
+            this.sendTankPoseIfNeeded(true, true);
+        }
+    }
+
+    private clampAimDirection(camp: TurnCamp, start: cc.Vec2, target: cc.Vec2): cc.Vec2 {
+        let dir = target.sub(start);
+        if (dir.magSqr() < 1) {
+            dir = camp === "A" ? cc.v2(0, 1) : cc.v2(0, -1);
+        }
+        if (camp === "A") {
+            dir.y = Math.max(0.0001, dir.y);
+        }
+        else {
+            dir.y = Math.min(-0.0001, dir.y);
+        }
+        return dir.normalize();
+    }
+
+    private drawPreviewLine(node: cc.Node, dir: cc.Vec2) {
+        let graphics = node.getComponent(cc.Graphics);
+        if (!graphics) {
+            graphics = node.addComponent(cc.Graphics);
+        }
+        graphics.clear();
+        graphics.strokeColor = new cc.Color(255, 240, 160, 210);
+        graphics.lineWidth = 2;
+        graphics.moveTo(0, 0);
+        graphics.lineTo(dir.x * 94, dir.y * 94);
+        graphics.stroke();
+    }
+
+    private sendTankPoseIfNeeded(force: boolean, includeAim: boolean) {
+        if (!this._serverMode || !this.canControlCamp(this._actionCamp) || !this.onTankPoseIntent) {
+            return;
+        }
+        let now = Date.now();
+        if (!force && now - this._lastSentTankPoseAt < 50) {
+            return;
+        }
+        let tank = this._tanks[this._actionCamp];
+        if (!tank) {
+            return;
+        }
+        this._lastSentTankPoseAt = now;
+        this.onTankPoseIntent({
+            x: tank.root.x,
+            y: tank.root.y,
+            aimX: includeAim ? tank.aim.x : undefined,
+            aimY: includeAim ? tank.aim.y : undefined,
+        });
+    }
+
+    private isPointInAssistArea(position: cc.Vec2): boolean {
+        return !!(position && this._assistArea && this._assistArea.contains(position));
+    }
+
+    private onKeyDown(event: cc.Event.EventKeyboard) {
+        if (KEY_LEFT_SET.indexOf(event.keyCode) >= 0) {
+            this._moveLeftPressed = true;
+        }
+        else if (KEY_RIGHT_SET.indexOf(event.keyCode) >= 0) {
+            this._moveRightPressed = true;
+        }
+    }
+
+    private onKeyUp(event: cc.Event.EventKeyboard) {
+        if (KEY_LEFT_SET.indexOf(event.keyCode) >= 0) {
+            this._moveLeftPressed = false;
+        }
+        else if (KEY_RIGHT_SET.indexOf(event.keyCode) >= 0) {
+            this._moveRightPressed = false;
+        }
+    }
+
+    private canControlCamp(camp: TurnCamp): boolean {
+        return !this._serverMode || camp === "A";
     }
 }

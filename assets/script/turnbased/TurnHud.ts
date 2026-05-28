@@ -30,12 +30,12 @@ export default class TurnHud extends cc.Component {
 
     initHud() {
         this.node.removeAllChildren();
-        this.phaseLabel = this.createLabel("回合制塔防", 26, 0, 420);
-        this.timerLabel = this.createLabel("倒计时 0.0", 22, 0, 386);
-        this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -210, 40);
-        this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -245,10);
-        this.expLabel = this.createLabel("经验 A: 0  |  B: 0", 20, -240, -30);
-        this.zoneLabel = this.createLabel("黑洞区 A: 0  |  B: 0", 20, -230, -60);
+        this.phaseLabel = this.createLabel("回合制塔防", 26, 0, 20);
+        this.timerLabel = this.createLabel("倒计时 0.0", 22, 0, -20);
+        this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -210, 130);
+        this.expLabel = this.createLabel("A: 0  |  B: 0", 20, -210, 100);
+        this.zoneLabel = this.createLabel("场上黑洞区: 0", 20, -210, -125);
+        this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -210, -155);
         this._upgradeRoot = null;
         this._upgradeHintRoot = null;
         this._settlementRoot = null;
@@ -83,7 +83,7 @@ export default class TurnHud extends cc.Component {
             return;
         }
 
-        this.expLabel.string = "经验 A Lv." + aLevel + ": " + aExp + "/" + aExpNeed + "  |  B Lv." + bLevel + ": " + bExp + "/" + bExpNeed;
+        this.expLabel.string = "A Lv." + aLevel + ": " + aExp + "/" + aExpNeed + "  |  B Lv." + bLevel + ": " + bExp + "/" + bExpNeed;
     }
 
     refreshZones(aBlackHole: number, bBlackHole: number) {
@@ -91,7 +91,7 @@ export default class TurnHud extends cc.Component {
             return;
         }
 
-        this.zoneLabel.string = "黑洞区 A: " + aBlackHole + "  |  B: " + bBlackHole;
+        this.zoneLabel.string = "场上黑洞区: " + Math.max(aBlackHole, bBlackHole);
     }
 
     showUpgradeOptions(camp: TurnCamp, options: TurnUpgradeConfig[], onPick: (id: TurnUpgradeId) => void) {
