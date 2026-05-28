@@ -476,6 +476,9 @@ export default class TurnBattleMap extends cc.Component {
         let position = this.getLocalTouchPosition(event);
         if (this._phase === "build") {
             this._dragObstacle = this.findObstacleAt(position);
+            if (this._dragObstacle && this._dragObstacle.camp !== "A") {
+                this._dragObstacle = null;
+            }
             if (this._dragObstacle) {
                 this._dragStartPosition = this.getNodePosition(this._dragObstacle.node);
                 this._dragObstacle.node.opacity = 180;
@@ -484,6 +487,9 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         if (this._phase === "attack") {
+            if (this._actionCamp !== "A") {
+                return;
+            }
             this.moveActionTank(position);
         }
     }
@@ -497,6 +503,9 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         if (this._phase === "attack") {
+            if (this._actionCamp !== "A") {
+                return;
+            }
             this.moveActionTank(position);
         }
     }
@@ -514,6 +523,9 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         if (this._phase === "attack") {
+            if (this._actionCamp !== "A") {
+                return;
+            }
             this.moveActionTank(position);
             this.fireActionTank(position);
         }
@@ -559,7 +571,7 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         let camp = this.getBuildCampAt(position);
-        if (!camp) {
+        if (!camp || camp !== "A") {
             this.showFloatText("只能放在己方建造区", position, cc.Color.RED);
             return;
         }
@@ -590,7 +602,7 @@ export default class TurnBattleMap extends cc.Component {
 
     private finishZoneTouch(position: cc.Vec2) {
         let camp = this.getBuildCampAt(position);
-        if (!camp) {
+        if (!camp || camp !== "A") {
             this.showFloatText("只能放在己方区域", position, cc.Color.RED);
             return;
         }

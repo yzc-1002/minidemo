@@ -929,8 +929,12 @@ function handleJoinTurnRoom(ws) {
 }
 
 function sanitizeTurnPoint(payload, prefix = '') {
-  const x = Number(payload && payload[`${prefix}x`]);
-  const y = Number(payload && payload[`${prefix}y`]);
+  const xKey = prefix ? `${prefix}X` : 'x';
+  const yKey = prefix ? `${prefix}Y` : 'y';
+  const fallbackXKey = prefix ? `${prefix}x` : 'x';
+  const fallbackYKey = prefix ? `${prefix}y` : 'y';
+  const x = Number(payload && (payload[xKey] != null ? payload[xKey] : payload[fallbackXKey]));
+  const y = Number(payload && (payload[yKey] != null ? payload[yKey] : payload[fallbackYKey]));
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     return null;
   }
