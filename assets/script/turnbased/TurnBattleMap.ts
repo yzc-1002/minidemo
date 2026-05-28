@@ -48,6 +48,14 @@ interface TurnObstacleState {
     height: number;
 }
 
+interface TurnBuildPreviewState {
+    camp: TurnCamp;
+    node: cc.Node;
+    tile: cc.Vec2;
+    snappedPosition: cc.Vec2;
+    valid: boolean;
+}
+
 interface TurnStaticObstacleState {
     id: number;
     name: string;
@@ -116,6 +124,7 @@ export default class TurnBattleMap extends cc.Component {
     private _shotsLeftInAction = 0;
     private _dragObstacle: TurnObstacleState = null;
     private _dragStartPosition: cc.Vec2 = null;
+    private _palettePreview: TurnBuildPreviewState = null;
     private _nextObstacleId = 1;
     private _nextStaticObstacleId = 1;
     private _nextAssistZoneId = 1;
@@ -141,6 +150,9 @@ export default class TurnBattleMap extends cc.Component {
     private _bulletLayer: cc.Node = null;
     private _zoneLayer: cc.Node = null;
     private _effectLayer: cc.Node = null;
+    private _buildOverlayLayer: cc.Node = null;
+    private _buildHighlightLayer: cc.Node = null;
+    private _buildPreviewLayer: cc.Node = null;
 
     private _roads: { [camp: string]: cc.Rect } = { A: null, B: null };
     private _buildAreas: { [camp: string]: cc.Rect } = { A: null, B: null };
@@ -155,8 +167,9 @@ export default class TurnBattleMap extends cc.Component {
     private _pointerAim: cc.Vec2 = null;
     private _attackTouchActive = false;
     private _lastSentTankPoseAt = 0;
+    private _localCamp: TurnCamp = "A";
 
-    private readonly _dynamicObstacleSize = cc.size(56, 44);
+    private readonly _dynamicObstacleSize = cc.size(32, 32);
 
     onEnable() {
         cc.systemEvent.on(cc.SystemEvent.EventType.KEY_DOWN, this.onKeyDown, this);
@@ -200,6 +213,7 @@ export default class TurnBattleMap extends cc.Component {
         this._shotsLeftInAction = 0;
         this._dragObstacle = null;
         this._dragStartPosition = null;
+        this._palettePreview = null;
         this._nextObstacleId = 1;
         this._nextStaticObstacleId = 1;
         this._nextAssistZoneId = 1;
@@ -225,6 +239,9 @@ export default class TurnBattleMap extends cc.Component {
         this._bulletLayer = null;
         this._zoneLayer = null;
         this._effectLayer = null;
+        this._buildOverlayLayer = null;
+        this._buildHighlightLayer = null;
+        this._buildPreviewLayer = null;
         this._moveLeftPressed = false;
         this._moveRightPressed = false;
         this._pointerAim = null;
@@ -250,6 +267,7 @@ export default class TurnBattleMap extends cc.Component {
 
         this.createCampView("A");
         this.createCampView("B");
+        this.refreshBuildInteractionView();
     }
 
     update(dt: number) {
@@ -259,6 +277,12 @@ export default class TurnBattleMap extends cc.Component {
 
     setServerMode(enabled: boolean) {
         this._serverMode = !!enabled;
+        this.refreshBuildInteractionView();
+    }
+
+    setLocalCamp(camp: TurnCamp) {
+        this._localCamp = camp || "A";
+        this.refreshBuildInteractionView();
     }
 
     refreshForNewRound(roundIndex: number) {
@@ -279,6 +303,7 @@ export default class TurnBattleMap extends cc.Component {
         this._phase = snapshot.phase;
         this.setActionCamp(snapshot.actionCamp);
         this.handlePhaseChanged(previousPhase, snapshot.phase);
+        this.refreshBuildInteractionView();
 
         if (snapshot.phase === "attack") {
             this._hasFiredInAction = false;
@@ -435,6 +460,15 @@ export default class TurnBattleMap extends cc.Component {
         return this._assistZones.length;
     }
 
+    screenToMapPosition(screenPos: cc.Vec2): cc.Vec2 {
+        let root = this.contentRoot || this.node;
+        return root.convertToNodeSpaceAR(screenPos);
+    }
+
+    isBuildPhaseActiveForCamp(camp: TurnCamp): boolean {
+        return this._phase === "build" && this.canControlCamp(camp);
+    }
+
     grantRoundBaseExp() {
         this.addExp("A", this._config.baseExpPerRound, cc.v2(-160, 0));
         this.addExp("B", this._config.baseExpPerRound, cc.v2(160, 0));
@@ -548,6 +582,62 @@ export default class TurnBattleMap extends cc.Component {
         return true;
     }
 
+    beginPaletteBuildDrag(camp: TurnCamp, position: cc.Vec2): boolean {
+        if (!this.isBuildPhaseActiveForCamp(camp) || this.getObstacleInventory(camp) <= 0) {
+            return false;
+        }
+        this.cancelPaletteBuildDrag(camp);
+        this.ensureBuildOverlayLayers();
+        this._palettePreview = {
+            camp: camp,
+            node: this.createBuildPreviewNode(camp),
+            tile: null,
+            snappedPosition: cc.v2(position),
+            valid: false,
+        };
+        this._palettePreview.node.parent = this._buildPreviewLayer || this._effectLayer || this.contentRoot;
+        this.updatePaletteBuildDrag(camp, position);
+        this.refreshBuildInteractionView();
+        return true;
+    }
+
+    updatePaletteBuildDrag(camp: TurnCamp, position: cc.Vec2) {
+        if (!this._palettePreview || this._palettePreview.camp !== camp) {
+            return;
+        }
+
+        let snappedPosition = this.snapBuildPosition(position);
+        let tile = this.worldToTile(snappedPosition);
+        let valid = !!tile && this.isBuildPositionValid(camp, snappedPosition);
+        this._palettePreview.tile = tile;
+        this._palettePreview.snappedPosition = snappedPosition;
+        this._palettePreview.valid = valid;
+        this._palettePreview.node.setPosition(snappedPosition.x, snappedPosition.y);
+        this._palettePreview.node.opacity = valid ? 228 : 168;
+        this.updatePreviewNodeView(this._palettePreview.node, camp, valid);
+        this.refreshBuildInteractionView();
+    }
+
+    finishPaletteBuildDrag(camp: TurnCamp, position: cc.Vec2) {
+        this.cancelPaletteBuildDrag(camp);
+        this.finishBuildTouch(position);
+    }
+
+    cancelPaletteBuildDrag(camp?: TurnCamp) {
+        if (!this._palettePreview) {
+            this.refreshBuildInteractionView();
+            return;
+        }
+        if (camp && this._palettePreview.camp !== camp) {
+            return;
+        }
+        if (this._palettePreview.node) {
+            this._palettePreview.node.destroy();
+        }
+        this._palettePreview = null;
+        this.refreshBuildInteractionView();
+    }
+
     private onTouchStart(event: cc.Event.EventTouch) {
         let position = this.getLocalTouchPosition(event);
         if (this._phase === "build") {
@@ -576,8 +666,10 @@ export default class TurnBattleMap extends cc.Component {
     private onTouchMove(event: cc.Event.EventTouch) {
         let position = this.getLocalTouchPosition(event);
         if (this._phase === "build" && this._dragObstacle) {
-            this._dragObstacle.node.setPosition(position.x, position.y);
-            this.updateObstacleValidView(this._dragObstacle, this.isBuildPositionValid(this._dragObstacle.camp, position, this._dragObstacle.id));
+            let snappedPosition = this.snapBuildPosition(position);
+            this._dragObstacle.node.setPosition(snappedPosition.x, snappedPosition.y);
+            this.updateObstacleValidView(this._dragObstacle, this.isBuildPositionValid(this._dragObstacle.camp, snappedPosition, this._dragObstacle.id));
+            this.refreshBuildInteractionView();
             return;
         }
 
@@ -629,22 +721,24 @@ export default class TurnBattleMap extends cc.Component {
         this.updateObstacleValidView(this._dragObstacle, true);
         this._dragObstacle = null;
         this._dragStartPosition = null;
+        this.refreshBuildInteractionView();
     }
 
     private finishBuildTouch(position: cc.Vec2) {
         if (this._dragObstacle) {
             let obstacle = this._dragObstacle;
-            let valid = this.isBuildPositionValid(obstacle.camp, position, obstacle.id);
+            let snappedPosition = this.snapBuildPosition(position);
+            let valid = this.isBuildPositionValid(obstacle.camp, snappedPosition, obstacle.id);
             obstacle.node.opacity = 255;
             if (valid) {
-                obstacle.node.setPosition(position.x, position.y);
+                obstacle.node.setPosition(snappedPosition.x, snappedPosition.y);
                 this.updateObstacleValidView(obstacle, true);
                 if (this._serverMode && this.onBuildIntent) {
                     this.onBuildIntent({
                         op: "move",
                         obstacleId: obstacle.id,
-                        x: position.x,
-                        y: position.y,
+                        x: snappedPosition.x,
+                        y: snappedPosition.y,
                     });
                 }
             }
@@ -655,6 +749,7 @@ export default class TurnBattleMap extends cc.Component {
             }
             this._dragObstacle = null;
             this._dragStartPosition = null;
+            this.refreshBuildInteractionView();
             return;
         }
 
@@ -667,7 +762,8 @@ export default class TurnBattleMap extends cc.Component {
             this.showFloatText("掩体库存不足", position, cc.Color.RED);
             return;
         }
-        if (!this.isBuildPositionValid(camp, position)) {
+        let snappedPosition = this.snapBuildPosition(position);
+        if (!this.isBuildPositionValid(camp, snappedPosition)) {
             this.showFloatText("位置不可用", position, cc.Color.RED);
             return;
         }
@@ -676,16 +772,17 @@ export default class TurnBattleMap extends cc.Component {
             if (this.onBuildIntent) {
                 this.onBuildIntent({
                     op: "place",
-                    x: position.x,
-                    y: position.y,
+                    x: snappedPosition.x,
+                    y: snappedPosition.y,
                 });
             }
             return;
         }
 
-        this.createBuildObstacle(camp, position);
+        this.createBuildObstacle(camp, snappedPosition);
         this._obstacleInventory[camp] -= 1;
         this.emitStatsChanged();
+        this.refreshBuildInteractionView();
     }
 
     private finishZoneTouch(position: cc.Vec2) {
@@ -921,6 +1018,7 @@ export default class TurnBattleMap extends cc.Component {
             width: this._dynamicObstacleSize.width,
             height: this._dynamicObstacleSize.height,
         });
+        this.refreshBuildInteractionView();
     }
 
     private createAssistZone(camp: TurnCamp, type: TurnAssistZoneType, position: cc.Vec2, forcedId?: string) {
@@ -1025,6 +1123,23 @@ export default class TurnBattleMap extends cc.Component {
             this._dynamicObstacleSize.height,
             8,
         );
+        graphics.stroke();
+    }
+
+    private updatePreviewNodeView(node: cc.Node, camp: TurnCamp, valid: boolean) {
+        let graphics = node.getComponent(cc.Graphics);
+        if (!graphics) {
+            graphics = node.addComponent(cc.Graphics);
+        }
+        graphics.clear();
+        graphics.fillColor = valid
+            ? (camp === "A" ? new cc.Color(110, 200, 120, 170) : new cc.Color(205, 120, 135, 170))
+            : new cc.Color(220, 86, 86, 150);
+        graphics.rect(-16, -16, 32, 32);
+        graphics.fill();
+        graphics.strokeColor = valid ? new cc.Color(255, 248, 210, 255) : new cc.Color(255, 210, 210, 220);
+        graphics.lineWidth = 2;
+        graphics.rect(-16, -16, 32, 32);
         graphics.stroke();
     }
 
@@ -1487,6 +1602,27 @@ export default class TurnBattleMap extends cc.Component {
         this._bulletLayer = this.ensureLayerNode("TurnBulletLayer", 20);
         this._zoneLayer = this.ensureLayerNode("TurnZoneLayer", 30);
         this._effectLayer = this.ensureLayerNode("TurnEffectLayer", 40);
+        this.ensureBuildOverlayLayers();
+    }
+
+    private ensureBuildOverlayLayers() {
+        this._buildOverlayLayer = this.ensureLayerNode("TurnBuildOverlayLayer", 12);
+        this._buildHighlightLayer = this.ensureChildLayer(this._buildOverlayLayer, "TurnBuildHighlightLayer", 0);
+        this._buildPreviewLayer = this.ensureChildLayer(this._buildOverlayLayer, "TurnBuildPreviewLayer", 5);
+    }
+
+    private ensureChildLayer(parent: cc.Node, name: string, zIndex: number): cc.Node {
+        if (!parent) {
+            return null;
+        }
+        let node = parent.getChildByName(name);
+        if (!node) {
+            node = new cc.Node(name);
+            node.parent = parent;
+        }
+        node.zIndex = zIndex;
+        node.setPosition(0, 0);
+        return node;
     }
 
     private ensureLayerNode(name: string, zIndex: number): cc.Node {
@@ -1695,6 +1831,14 @@ export default class TurnBattleMap extends cc.Component {
         return cc.v2(road.x + road.width / 2, road.y + road.height / 2);
     }
 
+    private snapBuildPosition(position: cc.Vec2): cc.Vec2 {
+        let tile = this.worldToTile(position);
+        if (!tile) {
+            return cc.v2(position);
+        }
+        return this.tileToGamePos(tile);
+    }
+
     private getDynamicObstacleRectAt(position: cc.Vec2): cc.Rect {
         return cc.rect(
             position.x - this._dynamicObstacleSize.width / 2,
@@ -1746,6 +1890,19 @@ export default class TurnBattleMap extends cc.Component {
         let x = tile.x * this._tileSize.width + this._tileSize.width / 2;
         let y = tile.y * this._tileSize.height + this._tileSize.height / 2;
         return this.tiledTopLeftToGamePos(cc.v2(x, y));
+    }
+
+    private worldToTile(position: cc.Vec2): cc.Vec2 {
+        if (!position || this._tileSize.width <= 0 || this._tileSize.height <= 0 || this._mapTileSize.width <= 0 || this._mapTileSize.height <= 0) {
+            return null;
+        }
+        let topLeftX = position.x + this._mapPixelSize.width / 2;
+        let topLeftY = this._mapPixelSize.height / 2 - position.y;
+        let tileX = Math.floor(topLeftX / this._tileSize.width);
+        let tileY = Math.floor(topLeftY / this._tileSize.height);
+        tileX = Math.max(0, Math.min(this._mapTileSize.width - 1, tileX));
+        tileY = Math.max(0, Math.min(this._mapTileSize.height - 1, tileY));
+        return cc.v2(tileX, tileY);
     }
 
     private tiledObjectToGameCenter(item: any): cc.Vec2 {
@@ -2075,6 +2232,8 @@ export default class TurnBattleMap extends cc.Component {
         if (previousPhase === nextPhase) {
             return;
         }
+        this.cancelPaletteBuildDrag();
+        this.refreshBuildInteractionView();
         if (!this._serverMode) {
             if (nextPhase === "zone") {
                 this.spawnRoundAssistZone();
@@ -2251,6 +2410,84 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private canControlCamp(camp: TurnCamp): boolean {
-        return !this._serverMode || camp === "A";
+        return !this._serverMode || camp === this._localCamp;
+    }
+
+    private refreshBuildInteractionView() {
+        this.ensureBuildOverlayLayers();
+        if (!this._buildHighlightLayer) {
+            return;
+        }
+
+        this._buildHighlightLayer.removeAllChildren();
+        if (this._phase !== "build") {
+            if (this._buildOverlayLayer) {
+                this._buildOverlayLayer.active = false;
+            }
+            return;
+        }
+
+        this._buildOverlayLayer.active = true;
+        let camp = this._palettePreview ? this._palettePreview.camp : this._localCamp;
+        if (!this.canControlCamp(camp)) {
+            return;
+        }
+
+        let buildArea = this.getBuildArea(camp);
+        if (!buildArea || this._tileSize.width <= 0 || this._tileSize.height <= 0) {
+            return;
+        }
+
+        let activeTileKey = this._palettePreview && this._palettePreview.tile
+            ? this._palettePreview.tile.x + ":" + this._palettePreview.tile.y
+            : null;
+        let mapSize = this._mapTileSize.width > 0 && this._mapTileSize.height > 0
+            ? this._mapTileSize
+            : cc.size(
+                Math.max(1, Math.round(this._mapPixelSize.width / this._tileSize.width)),
+                Math.max(1, Math.round(this._mapPixelSize.height / this._tileSize.height)),
+            );
+
+        for (let tx = 0; tx < mapSize.width; tx++) {
+            for (let ty = 0; ty < mapSize.height; ty++) {
+                let tile = cc.v2(tx, ty);
+                let center = this.tileToGamePos(tile);
+                let tileRect = cc.rect(
+                    center.x - this._tileSize.width / 2,
+                    center.y - this._tileSize.height / 2,
+                    this._tileSize.width,
+                    this._tileSize.height,
+                );
+                if (!this.rectContainsRect(buildArea, tileRect)) {
+                    continue;
+                }
+                let valid = this.isBuildPositionValid(camp, center, this._dragObstacle ? this._dragObstacle.id : undefined);
+                if (!valid) {
+                    continue;
+                }
+                let node = new cc.Node("BuildTile" + tx + "_" + ty);
+                node.parent = this._buildHighlightLayer;
+                node.setPosition(center.x, center.y);
+                let graphics = node.addComponent(cc.Graphics);
+                let isActive = activeTileKey === tx + ":" + ty;
+                graphics.fillColor = isActive
+                    ? new cc.Color(255, 238, 120, 145)
+                    : new cc.Color(120, 230, 140, 72);
+                graphics.rect(-this._tileSize.width / 2, -this._tileSize.height / 2, this._tileSize.width, this._tileSize.height);
+                graphics.fill();
+                graphics.strokeColor = isActive
+                    ? new cc.Color(255, 248, 190, 220)
+                    : new cc.Color(175, 255, 190, 84);
+                graphics.lineWidth = isActive ? 2 : 1;
+                graphics.rect(-this._tileSize.width / 2, -this._tileSize.height / 2, this._tileSize.width, this._tileSize.height);
+                graphics.stroke();
+            }
+        }
+    }
+
+    private createBuildPreviewNode(camp: TurnCamp): cc.Node {
+        let node = new cc.Node("BuildPreview" + camp);
+        this.updatePreviewNodeView(node, camp, false);
+        return node;
     }
 }

@@ -4930,6 +4930,7 @@
     "mapRoot": null,
     "hudRoot": null,
     "autoStart": true,
+    "useServer": true,
     "_id": ""
   },
   {

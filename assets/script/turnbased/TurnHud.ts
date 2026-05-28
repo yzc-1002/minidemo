@@ -27,6 +27,20 @@ export default class TurnHud extends cc.Component {
     private _upgradeRoot: cc.Node = null;
     private _upgradeHintRoot: cc.Node = null;
     private _settlementRoot: cc.Node = null;
+    private _buildPaletteRoot: cc.Node = null;
+    private _buildPaletteBlock: cc.Node = null;
+    private _buildPaletteCountLabel: cc.Label = null;
+    private _buildPaletteHintLabel: cc.Label = null;
+    private _buildPaletteCamp: TurnCamp = "A";
+    private _buildPaletteCount = 0;
+    private _buildPaletteEnabled = false;
+    private _buildDragNode: cc.Node = null;
+    private _lastBuildDragWorldPos: cc.Vec2 = null;
+
+    onBuildDragStart: (camp: TurnCamp, worldPos: cc.Vec2) => boolean = null;
+    onBuildDragMove: (camp: TurnCamp, worldPos: cc.Vec2) => void = null;
+    onBuildDragEnd: (camp: TurnCamp, worldPos: cc.Vec2) => void = null;
+    onBuildDragCancel: (camp: TurnCamp) => void = null;
 
     initHud() {
         this.node.removeAllChildren();
@@ -39,6 +53,14 @@ export default class TurnHud extends cc.Component {
         this._upgradeRoot = null;
         this._upgradeHintRoot = null;
         this._settlementRoot = null;
+        this._buildPaletteRoot = null;
+        this._buildPaletteBlock = null;
+        this._buildPaletteCountLabel = null;
+        this._buildPaletteHintLabel = null;
+        this._buildDragNode = null;
+        this._lastBuildDragWorldPos = null;
+        this.ensureBuildPalette();
+        this.refreshBuildPalette("A", 0, false);
     }
 
     refreshState(snapshot: TurnStateSnapshot) {
@@ -76,6 +98,17 @@ export default class TurnHud extends cc.Component {
         }
 
         this.inventoryLabel.string = "掩体 A: " + aCount + "  |  B: " + bCount;
+    }
+
+    refreshBuildPalette(camp: TurnCamp, count: number, enabled: boolean) {
+        this.ensureBuildPalette();
+        this._buildPaletteCamp = camp || "A";
+        this._buildPaletteCount = Math.max(0, count || 0);
+        this._buildPaletteEnabled = !!enabled;
+        this.refreshBuildPaletteView();
+        if (!this._buildPaletteEnabled) {
+            this.cancelBuildDrag();
+        }
     }
 
     refreshExp(aExp: number, aLevel: number, aExpNeed: number, bExp: number, bLevel: number, bExpNeed: number) {
@@ -198,6 +231,15 @@ export default class TurnHud extends cc.Component {
         }
     }
 
+    cancelBuildDrag() {
+        if (!this._buildDragNode) {
+            return;
+        }
+        this._buildDragNode.destroy();
+        this._buildDragNode = null;
+        this._lastBuildDragWorldPos = null;
+    }
+
     private getPhaseText(snapshot: TurnStateSnapshot): string {
         if (snapshot.phase === "build") {
             return "第 " + snapshot.roundIndex + " 轮：改造期";
@@ -235,6 +277,162 @@ export default class TurnHud extends cc.Component {
         label.lineHeight = size + 6;
         label.horizontalAlign = cc.Label.HorizontalAlign.CENTER;
         return label;
+    }
+
+    private ensureBuildPalette() {
+        if (this._buildPaletteRoot) {
+            return;
+        }
+
+        this._buildPaletteRoot = new cc.Node("TurnBuildPalette");
+        this._buildPaletteRoot.parent = this.node;
+        this._buildPaletteRoot.setPosition(-220, -235);
+        this._buildPaletteRoot.setContentSize(180, 104);
+        this._buildPaletteRoot.zIndex = 20;
+
+        let bg = this._buildPaletteRoot.addComponent(cc.Graphics);
+        bg.fillColor = new cc.Color(24, 30, 42, 220);
+        bg.roundRect(-90, -52, 180, 104, 12);
+        bg.fill();
+        bg.strokeColor = new cc.Color(215, 225, 240, 140);
+        bg.lineWidth = 2;
+        bg.roundRect(-90, -52, 180, 104, 12);
+        bg.stroke();
+
+        let title = this.createLabel("己方掩体", 20, 0, 30);
+        title.node.parent = this._buildPaletteRoot;
+
+        this._buildPaletteBlock = new cc.Node("BuildPaletteBlock");
+        this._buildPaletteBlock.parent = this._buildPaletteRoot;
+        this._buildPaletteBlock.setPosition(-40, -4);
+
+        this._buildPaletteCountLabel = this.createLabel("x0", 22, 30, -3);
+        this._buildPaletteCountLabel.node.parent = this._buildPaletteRoot;
+        this._buildPaletteHintLabel = this.createLabel("等待改造期", 15, 0, -34);
+        this._buildPaletteHintLabel.node.parent = this._buildPaletteRoot;
+        this._buildPaletteHintLabel.node.color = new cc.Color(190, 200, 220, 255);
+
+        this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_START, this.onBuildPaletteTouchStart, this);
+        this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_MOVE, this.onBuildPaletteTouchMove, this);
+        this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_END, this.onBuildPaletteTouchEnd, this);
+        this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_CANCEL, this.onBuildPaletteTouchCancel, this);
+    }
+
+    private refreshBuildPaletteView() {
+        if (!this._buildPaletteBlock || !this._buildPaletteCountLabel || !this._buildPaletteHintLabel || !this._buildPaletteRoot) {
+            return;
+        }
+
+        this.drawBuildBlock(this._buildPaletteBlock, this._buildPaletteCamp, this.isBuildPaletteAvailable());
+        this._buildPaletteCountLabel.string = "x" + this._buildPaletteCount;
+        this._buildPaletteCountLabel.node.color = this.isBuildPaletteAvailable()
+            ? new cc.Color(245, 245, 245, 255)
+            : new cc.Color(150, 160, 178, 255);
+        if (this.isBuildPaletteAvailable()) {
+            this._buildPaletteHintLabel.string = "拖到己方建造区";
+        }
+        else if (this._buildPaletteCount <= 0) {
+            this._buildPaletteHintLabel.string = "掩体库存不足";
+        }
+        else {
+            this._buildPaletteHintLabel.string = "等待改造期";
+        }
+        this._buildPaletteRoot.opacity = this.isBuildPaletteAvailable() ? 255 : 170;
+    }
+
+    private drawBuildBlock(target: cc.Node, camp: TurnCamp, enabled: boolean) {
+        let graphics = target.getComponent(cc.Graphics);
+        if (!graphics) {
+            graphics = target.addComponent(cc.Graphics);
+        }
+        graphics.clear();
+        graphics.fillColor = enabled
+            ? (camp === "A" ? new cc.Color(98, 158, 110, 255) : new cc.Color(168, 96, 112, 255))
+            : new cc.Color(96, 104, 120, 210);
+        graphics.rect(-16, -16, 32, 32);
+        graphics.fill();
+        graphics.strokeColor = new cc.Color(232, 236, 242, 210);
+        graphics.lineWidth = 2;
+        graphics.rect(-16, -16, 32, 32);
+        graphics.stroke();
+    }
+
+    private isBuildPaletteAvailable(): boolean {
+        return this._buildPaletteEnabled && this._buildPaletteCount > 0;
+    }
+
+    private createBuildDragNode(worldPos: cc.Vec2) {
+        this.cancelBuildDrag();
+        this._buildDragNode = new cc.Node("TurnBuildDragNode");
+        this._buildDragNode.parent = this.node;
+        this._buildDragNode.zIndex = 999;
+        let localPos = this.node.convertToNodeSpaceAR(worldPos);
+        this._buildDragNode.setPosition(localPos);
+        this._buildDragNode.opacity = 220;
+        this.drawBuildBlock(this._buildDragNode, this._buildPaletteCamp, true);
+    }
+
+    private updateBuildDragNode(worldPos: cc.Vec2) {
+        if (!this._buildDragNode) {
+            return;
+        }
+        let localPos = this.node.convertToNodeSpaceAR(worldPos);
+        this._buildDragNode.setPosition(localPos);
+    }
+
+    private onBuildPaletteTouchStart(event: cc.Event.EventTouch) {
+        event.stopPropagation();
+        if (!this.isBuildPaletteAvailable()) {
+            return;
+        }
+        let worldPos = cc.v2(event.getLocation());
+        this._lastBuildDragWorldPos = cc.v2(worldPos);
+        if (this.onBuildDragStart && this.onBuildDragStart(this._buildPaletteCamp, worldPos) === false) {
+            this._lastBuildDragWorldPos = null;
+            return;
+        }
+        this.createBuildDragNode(worldPos);
+    }
+
+    private onBuildPaletteTouchMove(event: cc.Event.EventTouch) {
+        if (!this._buildDragNode) {
+            return;
+        }
+        event.stopPropagation();
+        let worldPos = cc.v2(event.getLocation());
+        this._lastBuildDragWorldPos = cc.v2(worldPos);
+        this.updateBuildDragNode(worldPos);
+        if (this.onBuildDragMove) {
+            this.onBuildDragMove(this._buildPaletteCamp, worldPos);
+        }
+    }
+
+    private onBuildPaletteTouchEnd(event: cc.Event.EventTouch) {
+        if (!this._buildDragNode) {
+            return;
+        }
+        event.stopPropagation();
+        let worldPos = cc.v2(event.getLocation());
+        this._lastBuildDragWorldPos = cc.v2(worldPos);
+        if (this.onBuildDragEnd) {
+            this.onBuildDragEnd(this._buildPaletteCamp, worldPos);
+        }
+        this.cancelBuildDrag();
+    }
+
+    private onBuildPaletteTouchCancel(event: cc.Event.EventTouch) {
+        if (!this._buildDragNode) {
+            return;
+        }
+        event.stopPropagation();
+        let worldPos = event && event.getLocation ? cc.v2(event.getLocation()) : this._lastBuildDragWorldPos;
+        if (worldPos && this.onBuildDragEnd) {
+            this.onBuildDragEnd(this._buildPaletteCamp, worldPos);
+        }
+        else if (this.onBuildDragCancel) {
+            this.onBuildDragCancel(this._buildPaletteCamp);
+        }
+        this.cancelBuildDrag();
     }
 
     private createUpgradeButton(option: TurnUpgradeConfig, index: number, onPick: (id: TurnUpgradeId) => void) {

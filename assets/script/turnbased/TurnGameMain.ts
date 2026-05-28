@@ -67,6 +67,10 @@ export default class TurnGameMain extends cc.Component {
         this._battleMap.onZoneIntent = this.sendZoneIntent.bind(this);
         this._battleMap.onAttackIntent = this.sendAttackIntent.bind(this);
         this._battleMap.onTankPoseIntent = this.sendTankPoseIntent.bind(this);
+        this._hud.onBuildDragStart = this.onHudBuildDragStart.bind(this);
+        this._hud.onBuildDragMove = this.onHudBuildDragMove.bind(this);
+        this._hud.onBuildDragEnd = this.onHudBuildDragEnd.bind(this);
+        this._hud.onBuildDragCancel = this.onHudBuildDragCancel.bind(this);
         this._stateMachine.init(this._config, {
             onTurnPhaseChanged: this.onTurnPhaseChanged.bind(this),
             onTurnTimer: this.onTurnTimer.bind(this),
@@ -88,6 +92,7 @@ export default class TurnGameMain extends cc.Component {
             this.connectTurnServer();
         }
         else if (this.autoStart) {
+            this._battleMap.setLocalCamp("A");
             this.startMatch();
         }
     }
@@ -142,6 +147,7 @@ export default class TurnGameMain extends cc.Component {
         this._hud.hideUpgradeOptions();
         this._battleMap.initMap(this._config);
         this._battleMap.setServerMode(this.useServer);
+        this._battleMap.setLocalCamp(this.getLocalCamp());
         this.refreshHudNumbers();
         if (this.useServer) {
             this._serverSnapshot = null;
@@ -277,6 +283,12 @@ export default class TurnGameMain extends cc.Component {
         );
         let activeZones = this._battleMap.getActiveAssistZoneCount();
         this._hud.refreshZones(activeZones, activeZones);
+        let localCamp = this.getLocalCamp();
+        this._hud.refreshBuildPalette(
+            localCamp,
+            this._battleMap.getObstacleInventory(localCamp),
+            this._battleMap.isBuildPhaseActiveForCamp(localCamp),
+        );
     }
 
     private beginUpgradePhase() {
@@ -402,6 +414,8 @@ export default class TurnGameMain extends cc.Component {
 
         if (msg.type === "turnJoined") {
             this._serverCamp = (msg.camp || "A") as TurnCamp;
+            this._battleMap.setLocalCamp(this._serverCamp);
+            this.refreshHudNumbers();
             this._hud.showUpgradeHint("已进入房间，等待另一名玩家...");
             return;
         }
@@ -411,9 +425,11 @@ export default class TurnGameMain extends cc.Component {
         }
         if (msg.type === "turnGameStart") {
             this._serverCamp = (msg.camp || "A") as TurnCamp;
+            this._battleMap.setLocalCamp(this._serverCamp);
             this._upgradeOptions = [];
             this._waitingForOwnUpgradeResult = false;
             this._hud.hideUpgradeHint();
+            this.refreshHudNumbers();
             return;
         }
         if (msg.type === "phaseChanged") {
@@ -535,5 +551,30 @@ export default class TurnGameMain extends cc.Component {
             return;
         }
         this._netManager.sendMessage(type, payload || {});
+    }
+
+    private getLocalCamp(): TurnCamp {
+        return this.useServer ? this._serverCamp : "A";
+    }
+
+    private onHudBuildDragStart(camp: TurnCamp, worldPos: cc.Vec2): boolean {
+        return this._battleMap.beginPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos));
+    }
+
+    private onHudBuildDragMove(camp: TurnCamp, worldPos: cc.Vec2) {
+        this._battleMap.updatePaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos));
+    }
+
+    private onHudBuildDragEnd(camp: TurnCamp, worldPos: cc.Vec2) {
+        this._battleMap.finishPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos));
+        this.refreshHudNumbers();
+    }
+
+    private onHudBuildDragCancel(camp: TurnCamp) {
+        this._battleMap.cancelPaletteBuildDrag(camp);
+    }
+
+    private convertHudWorldToMapLocal(worldPos: cc.Vec2): cc.Vec2 {
+        return this._battleMap.screenToMapPosition(worldPos);
     }
 }
