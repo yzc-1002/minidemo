@@ -86,7 +86,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     },
     upgradePool: [
         { id: "bullet_bounce", name: "反弹 +1", desc: "子弹可以额外反弹一次" },
-        { id: "extra_shot", name: "多发 +1", desc: "每次行动可多开一炮" },
+        // { id: "extra_shot", name: "多发 +1", desc: "每次行动可多开一炮" },
         { id: "damage_up", name: "伤害 +10", desc: "提高命中水晶时的伤害" },
         { id: "crystal_hp_up", name: "水晶 HP +20", desc: "提高己方水晶上限和当前 HP" },
         { id: "unlock_black_hole", name: "解锁黑洞区", desc: "后续辅助期可以放置黑洞区" },
