@@ -292,15 +292,17 @@ const TURN_MAP_LAYOUT = {
   },
 };
 const TURN_CONFIG = {
-  buildSeconds: 8,
+  buildSeconds: 6,
   zoneSeconds: 5,
   attackSeconds: 8,
   waitBulletSeconds: 5,
-  upgradeSeconds: 3,
+  upgradeSeconds: 5,
   attackRounds: 3,
   crystalHp: 100,
-  initialObstacles: 3,
+  initialObstacles: 2,
   obstacleGainPerRound: 1,
+  obstacleMaxPerRound: 5,
+  buildSecondsPerObstacle: 3,
   baseExp: 10,
   obstacleHitExp: 8,
   crystalHitExp: 20,
@@ -753,9 +755,18 @@ function broadcastTurnSnapshot(roomState) {
   broadcastTurn(roomState, getTurnStateSnapshot(roomState));
 }
 
-function getTurnPhaseDurationSeconds(phase) {
+function getRoundObstacleGain(displayRound) {
+  let r = Math.max(1, displayRound | 0);
+  return Math.min(r + 1, TURN_CONFIG.obstacleMaxPerRound);
+}
+
+function getRoundBuildSeconds(displayRound) {
+  return getRoundObstacleGain(displayRound) * TURN_CONFIG.buildSecondsPerObstacle;
+}
+
+function getTurnPhaseDurationSeconds(phase, displayRound) {
   if (phase === TURN_PHASE.BUILD) {
-    return TURN_CONFIG.buildSeconds;
+    return getRoundBuildSeconds(displayRound || 1);
   }
   if (phase === TURN_PHASE.ZONE) {
     return TURN_CONFIG.zoneSeconds;
@@ -817,13 +828,16 @@ function startTurnBuildPhase(roomState) {
   roomState.actionSubmitted = false;
   roomState.actedCampsInZone = {};
   roomState.zones = [];
+  let displayRound = (roomState.roundIndex | 0) + 1;
   if (roomState.roundIndex > 0) {
+    let gain = getRoundObstacleGain(displayRound);
     roomState.players.forEach((player) => {
-      player.inventory.obstacles += TURN_CONFIG.obstacleGainPerRound;
+      player.inventory.obstacles += gain;
     });
   }
-  logTurn(roomState, `phase build round=${roomState.roundIndex}`);
-  setTurnPhase(roomState, TURN_PHASE.BUILD, TURN_CONFIG.buildSeconds, () => {
+  let buildSeconds = getRoundBuildSeconds(displayRound);
+  logTurn(roomState, `phase build round=${roomState.roundIndex} buildSeconds=${buildSeconds}`);
+  setTurnPhase(roomState, TURN_PHASE.BUILD, buildSeconds, () => {
     if (roomState.roundIndex <= 0) {
       startTurnAttackPhase(roomState, 'A');
       return;

@@ -19,6 +19,8 @@ export interface TurnGameConfig {
     attackRounds: number;
     initialObstacles: number;
     obstacleGainPerRound: number;
+    obstacleMaxPerRound: number;
+    buildSecondsPerObstacle: number;
     baseExpPerRound: number;
     obstacleHitExp: number;
     crystalHitExp: number;
@@ -50,14 +52,16 @@ export interface TurnGameConfig {
 
 export const TURN_GAME_CONFIG: TurnGameConfig = {
     crystalHp: 100,
-    buildSeconds: 8,
+    buildSeconds: 6,
     zoneSeconds: 5,
     attackSeconds: 3,
     waitBulletSeconds: 0,
     upgradeSeconds: 2,
     attackRounds: 3,
-    initialObstacles: 3,
+    initialObstacles: 2,
     obstacleGainPerRound: 1,
+    obstacleMaxPerRound: 5,
+    buildSecondsPerObstacle: 3,
     baseExpPerRound: 10,
     obstacleHitExp: 8,
     crystalHitExp: 25,
@@ -92,6 +96,17 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         { id: "unlock_black_hole", name: "解锁黑洞区", desc: "后续辅助期可以放置黑洞区" },
     ],
 };
+
+export function getRoundObstacleGain(roundIndex: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let round = Math.max(1, roundIndex | 0);
+    return Math.min(round + 1, cfg.obstacleMaxPerRound);
+}
+
+export function getRoundBuildSeconds(roundIndex: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    return getRoundObstacleGain(roundIndex, cfg) * cfg.buildSecondsPerObstacle;
+}
 
 if (typeof yyp !== "undefined") {
     yyp.config = yyp.config || {};

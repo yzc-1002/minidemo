@@ -1,4 +1,4 @@
-import { TurnCamp, TurnGameConfig, TurnPhase, TURN_GAME_CONFIG } from "../config/TurnGame";
+import { TurnCamp, TurnGameConfig, TurnPhase, TURN_GAME_CONFIG, getRoundBuildSeconds } from "../config/TurnGame";
 
 export interface TurnStateSnapshot {
     phase: TurnPhase;
@@ -153,7 +153,7 @@ export class TurnStateMachine {
         this._phaseElapsed = 0;
 
         if (phase === "build") {
-            this._phaseDuration = this._config.buildSeconds;
+            this._phaseDuration = getRoundBuildSeconds(this._roundIndex, this._config);
         }
         else if (phase === "zone") {
             this._phaseDuration = this._config.zoneSeconds;

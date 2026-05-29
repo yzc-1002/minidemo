@@ -1,4 +1,4 @@
-import { TurnAssistZoneType, TurnCamp, TurnGameConfig, TurnPhase, TurnUpgradeConfig, TurnUpgradeId, TURN_GAME_CONFIG } from "../config/TurnGame";
+import { TurnAssistZoneType, TurnCamp, TurnGameConfig, TurnPhase, TurnUpgradeConfig, TurnUpgradeId, TURN_GAME_CONFIG, getRoundObstacleGain } from "../config/TurnGame";
 import { GameMap } from "../GameMap";
 import { TurnStateSnapshot } from "./TurnStateMachine";
 
@@ -287,8 +287,9 @@ export default class TurnBattleMap extends cc.Component {
 
     refreshForNewRound(roundIndex: number) {
         if (roundIndex > 1) {
-            this._obstacleInventory.A += this._config.obstacleGainPerRound;
-            this._obstacleInventory.B += this._config.obstacleGainPerRound;
+            let gain = getRoundObstacleGain(roundIndex, this._config);
+            this._obstacleInventory.A += gain;
+            this._obstacleInventory.B += gain;
             if (this._serverMode && this.getCampStats("A").blackHoleUnlocked) {
                 this.getCampStats("A").zoneInventory.black_hole += 1;
             }
