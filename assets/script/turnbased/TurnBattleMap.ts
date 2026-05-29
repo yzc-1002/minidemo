@@ -460,6 +460,13 @@ export default class TurnBattleMap extends cc.Component {
         return this._assistZones.length;
     }
 
+    getAssistAreaBottomLeft(): cc.Vec2 {
+        if (!this._assistArea) {
+            return cc.v2(0, 0);
+        }
+        return cc.v2(this._assistArea.x, this._assistArea.y);
+    }
+    
     screenToMapPosition(screenPos: cc.Vec2): cc.Vec2 {
         let root = this.contentRoot || this.node;
         return root.convertToNodeSpaceAR(screenPos);

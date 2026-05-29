@@ -87,6 +87,7 @@ export default class TurnGameMain extends cc.Component {
 
         this._battleMap.initMap(this._config);
         this._battleMap.setServerMode(this.useServer);
+        this.syncHudBuildPalettePosition();
 
         if (this.useServer) {
             this.connectTurnServer();
@@ -148,6 +149,7 @@ export default class TurnGameMain extends cc.Component {
         this._battleMap.initMap(this._config);
         this._battleMap.setServerMode(this.useServer);
         this._battleMap.setLocalCamp(this.getLocalCamp());
+        this.syncHudBuildPalettePosition();
         this.refreshHudNumbers();
         if (this.useServer) {
             this._serverSnapshot = null;
@@ -249,6 +251,7 @@ export default class TurnGameMain extends cc.Component {
         }
 
         this._battleMap.setTurnSnapshot(snapshot);
+        this.syncHudBuildPalettePosition();
 
         this._hud.refreshState(snapshot);
         this.refreshHudNumbers();
@@ -576,5 +579,15 @@ export default class TurnGameMain extends cc.Component {
 
     private convertHudWorldToMapLocal(worldPos: cc.Vec2): cc.Vec2 {
         return this._battleMap.screenToMapPosition(worldPos);
+    }
+
+    private syncHudBuildPalettePosition() {
+        if (!this._hud || !this._battleMap || !this.hudRoot || !this.mapRoot) {
+            return;
+        }
+        let mapBottomLeft = this._battleMap.getAssistAreaBottomLeft();
+        let worldPos = this.mapRoot.convertToWorldSpaceAR(mapBottomLeft);
+        let hudPos = this.hudRoot.convertToNodeSpaceAR(worldPos);
+        this._hud.setBuildPalettePosition(hudPos);
     }
 }
