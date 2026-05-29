@@ -321,7 +321,6 @@ const TURN_PHASE = {
 const TURN_CAMPS = ['A', 'B'];
 const TURN_UPGRADE_POOL = [
   { id: 'bulletBounce', type: 'bullet', title: '反弹 +1', value: 1 },
-  { id: 'multiShot', type: 'attack', title: '每次行动多发 +1', value: 1 },
   { id: 'damageUp', type: 'attr', title: '子弹伤害 +10', value: 10 },
   { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20 },
 ];
