@@ -406,6 +406,16 @@ export default class TurnBattleMap extends cc.Component {
         this.updateTankState("B", this._phase === "attack" && this._actionCamp === "B");
     }
 
+    getTankPose(camp: TurnCamp): { x: number; y: number; aimX: number; aimY: number } | null {
+        let tankState = this._tanks[camp];
+        if (!tankState || !tankState.root) {
+            return null;
+        }
+        let pos = this.getNodePosition(tankState.root);
+        let aim = tankState.aim ? tankState.aim : cc.v2(pos.x, pos.y);
+        return { x: pos.x, y: pos.y, aimX: aim.x, aimY: aim.y };
+    }
+
     applyServerTankPose(payload: any) {
         if (!payload || !payload.pose) {
             return;

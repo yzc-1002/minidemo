@@ -71,6 +71,8 @@ export default class TurnGameMain extends cc.Component {
         this._hud.onBuildDragMove = this.onHudBuildDragMove.bind(this);
         this._hud.onBuildDragEnd = this.onHudBuildDragEnd.bind(this);
         this._hud.onBuildDragCancel = this.onHudBuildDragCancel.bind(this);
+        this._hud.onMoveLeft = this.onHudMoveLeft.bind(this);
+        this._hud.onMoveRight = this.onHudMoveRight.bind(this);
         this._stateMachine.init(this._config, {
             onTurnPhaseChanged: this.onTurnPhaseChanged.bind(this),
             onTurnTimer: this.onTurnTimer.bind(this),
@@ -292,6 +294,7 @@ export default class TurnGameMain extends cc.Component {
             this._battleMap.getObstacleInventory(localCamp),
             this._battleMap.isBuildPhaseActiveForCamp(localCamp),
         );
+        this.refreshMoveButtonsEnabled();
     }
 
     private beginUpgradePhase() {
@@ -492,8 +495,23 @@ export default class TurnGameMain extends cc.Component {
         if (snapshot.phase === "build" && this._lastRoundIndex !== snapshot.roundIndex) {
             this._lastRoundIndex = snapshot.roundIndex;
         }
+        if (this._serverSnapshot) {
+            this._serverSnapshot.phase = snapshot.phase;
+            this._serverSnapshot.actionCamp = snapshot.actionCamp;
+            this._serverSnapshot.roundIndex = snapshot.roundIndex;
+            this._serverSnapshot.attackRoundIndex = snapshot.attackRoundIndex;
+        }
+        else {
+            this._serverSnapshot = {
+                phase: snapshot.phase,
+                actionCamp: snapshot.actionCamp,
+                roundIndex: snapshot.roundIndex,
+                attackRoundIndex: snapshot.attackRoundIndex,
+            };
+        }
         this._battleMap.setTurnSnapshot(snapshot);
         this._hud.refreshState(snapshot);
+        this.refreshMoveButtonsEnabled();
         if (snapshot.phase !== "upgrade") {
             this._upgradeOptions = [];
             this._waitingForOwnUpgradeResult = false;
@@ -575,6 +593,53 @@ export default class TurnGameMain extends cc.Component {
 
     private onHudBuildDragCancel(camp: TurnCamp) {
         this._battleMap.cancelPaletteBuildDrag(camp);
+    }
+
+    private onHudMoveLeft() {
+        this.requestTankMove(-24);
+    }
+
+    private onHudMoveRight() {
+        this.requestTankMove(24);
+    }
+
+    private requestTankMove(deltaX: number) {
+        if (!this.useServer) {
+            return;
+        }
+        if (!this.isLocalAttackTurn()) {
+            return;
+        }
+        let pose = this._battleMap.getTankPose("A");
+        if (!pose) {
+            return;
+        }
+        let newX = pose.x + deltaX;
+        if (newX < -302) {
+            newX = -302;
+        }
+        if (newX > 302) {
+            newX = 302;
+        }
+        if (Math.abs(newX - pose.x) < 0.5) {
+            return;
+        }
+        this.sendTankPoseIntent({ x: newX, y: pose.y, aimX: pose.aimX, aimY: pose.aimY });
+    }
+
+    private isLocalAttackTurn(): boolean {
+        let snapshot = this._serverSnapshot;
+        if (!snapshot) {
+            return false;
+        }
+        return snapshot.phase === "attack" && (snapshot.actionCamp || "") === "A";
+    }
+
+    private refreshMoveButtonsEnabled() {
+        if (!this._hud) {
+            return;
+        }
+        this._hud.setMoveButtonsEnabled(this.useServer && this.isLocalAttackTurn());
     }
 
     private convertHudWorldToMapLocal(worldPos: cc.Vec2): cc.Vec2 {

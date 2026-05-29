@@ -42,6 +42,14 @@ export default class TurnHud extends cc.Component {
     onBuildDragEnd: (camp: TurnCamp, worldPos: cc.Vec2) => void = null;
     onBuildDragCancel: (camp: TurnCamp) => void = null;
 
+    onMoveLeft: () => void = null;
+    onMoveRight: () => void = null;
+
+    private _moveButtonsRoot: cc.Node = null;
+    private _moveLeftBtn: cc.Node = null;
+    private _moveRightBtn: cc.Node = null;
+    private _moveButtonsEnabled = false;
+
     initHud() {
         this.node.removeAllChildren();
         this.phaseLabel = this.createLabel("回合制塔防", 26, 0, 20);
@@ -59,8 +67,13 @@ export default class TurnHud extends cc.Component {
         this._buildPaletteHintLabel = null;
         this._buildDragNode = null;
         this._lastBuildDragWorldPos = null;
+        this._moveButtonsRoot = null;
+        this._moveLeftBtn = null;
+        this._moveRightBtn = null;
         this.ensureBuildPalette();
         this.refreshBuildPalette("A", 0, false);
+        this.ensureMoveButtons();
+        this.setMoveButtonsEnabled(false);
     }
 
     refreshState(snapshot: TurnStateSnapshot) {
@@ -237,6 +250,72 @@ export default class TurnHud extends cc.Component {
             this._settlementRoot.destroy();
             this._settlementRoot = null;
         }
+    }
+
+    setMoveButtonsEnabled(enabled: boolean) {
+        this.ensureMoveButtons();
+        this._moveButtonsEnabled = !!enabled;
+        this.refreshMoveButtonsView();
+    }
+
+    private ensureMoveButtons() {
+        if (this._moveButtonsRoot) {
+            return;
+        }
+
+        this._moveButtonsRoot = new cc.Node("TurnMoveButtons");
+        this._moveButtonsRoot.parent = this.node;
+        this._moveButtonsRoot.setPosition(-280, -380);
+        this._moveButtonsRoot.zIndex = 25;
+
+        this._moveLeftBtn = this.createMoveButton("◀", -10, 0, () => {
+            if (this._moveButtonsEnabled && this.onMoveLeft) {
+                this.onMoveLeft();
+            }
+        });
+        this._moveLeftBtn.parent = this._moveButtonsRoot;
+
+        this._moveRightBtn = this.createMoveButton("▶", 60, 0, () => {
+            if (this._moveButtonsEnabled && this.onMoveRight) {
+                this.onMoveRight();
+            }
+        });
+        this._moveRightBtn.parent = this._moveButtonsRoot;
+
+        // let hint = this.createLabel("移动", 26, 0, 36);
+        // hint.node.parent = this._moveButtonsRoot;
+        // hint.node.color = new cc.Color(210, 220, 235, 255);
+    }
+
+    private createMoveButton(text: string, x: number, y: number, onClick: () => void): cc.Node {
+        let node = new cc.Node("TurnMoveButton");
+        node.setPosition(x, y);
+        node.setContentSize(64, 64);
+
+        let graphics = node.addComponent(cc.Graphics);
+        graphics.fillColor = new cc.Color(40, 56, 84, 235);
+        graphics.roundRect(-32, -32, 64, 64, 10);
+        graphics.fill();
+        graphics.strokeColor = new cc.Color(215, 225, 240, 200);
+        graphics.lineWidth = 2;
+        graphics.roundRect(-32, -32, 64, 64, 10);
+        graphics.stroke();
+
+        let label = this.createLabel(text, 28, 0, -2);
+        label.node.parent = node;
+
+        node.on(cc.Node.EventType.TOUCH_END, function (event: cc.Event.EventTouch) {
+            event.stopPropagation();
+            onClick();
+        }, this);
+        return node;
+    }
+
+    private refreshMoveButtonsView() {
+        if (!this._moveButtonsRoot) {
+            return;
+        }
+        this._moveButtonsRoot.opacity = this._moveButtonsEnabled ? 255 : 130;
     }
 
     cancelBuildDrag() {
