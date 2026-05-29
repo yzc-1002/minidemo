@@ -946,9 +946,55 @@ export default class TurnBattleMap extends cc.Component {
                 obstacleId: obstacle.id,
                 obstacleName: obstacle.name,
             });
+            if (bullet.bounceLeft > 0) {
+                this.reflectBulletOffRect(bullet, obstacle.rect);
+                bullet.bounceLeft -= 1;
+                return false;
+            }
             return true;
         }
         return false;
+    }
+
+    private reflectBulletOffRect(bullet: TurnBulletState, rect: cc.Rect) {
+        let position = this.getNodePosition(bullet.node);
+        let nearestX = Math.max(rect.x, Math.min(position.x, rect.x + rect.width));
+        let nearestY = Math.max(rect.y, Math.min(position.y, rect.y + rect.height));
+        let dx = position.x - nearestX;
+        let dy = position.y - nearestY;
+        if (dx === 0 && dy === 0) {
+            let leftDist = Math.abs(position.x - rect.x);
+            let rightDist = Math.abs(rect.x + rect.width - position.x);
+            let bottomDist = Math.abs(position.y - rect.y);
+            let topDist = Math.abs(rect.y + rect.height - position.y);
+            let minDist = Math.min(leftDist, rightDist, bottomDist, topDist);
+            if (minDist === leftDist || minDist === rightDist) {
+                bullet.dir.x *= -1;
+            }
+            else {
+                bullet.dir.y *= -1;
+            }
+        }
+        else if (Math.abs(dx) >= Math.abs(dy)) {
+            bullet.dir.x *= -1;
+        }
+        else {
+            bullet.dir.y *= -1;
+        }
+        bullet.dir = bullet.dir.normalize();
+        let pushDist = bullet.radius + 1;
+        if (dx !== 0 || dy !== 0) {
+            let nx = dx;
+            let ny = dy;
+            let len = Math.sqrt(nx * nx + ny * ny);
+            if (len > 0) {
+                nx /= len;
+                ny /= len;
+                bullet.node.x = nearestX + nx * pushDist;
+                bullet.node.y = nearestY + ny * pushDist;
+            }
+        }
+        bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
     }
 
     private tryHitCrystal(bullet: TurnBulletState): boolean {
