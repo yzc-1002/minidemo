@@ -466,7 +466,7 @@ export default class TurnBattleMap extends cc.Component {
         }
         return cc.v2(this._assistArea.x, this._assistArea.y);
     }
-    
+
     screenToMapPosition(screenPos: cc.Vec2): cc.Vec2 {
         let root = this.contentRoot || this.node;
         return root.convertToNodeSpaceAR(screenPos);
@@ -627,7 +627,44 @@ export default class TurnBattleMap extends cc.Component {
 
     finishPaletteBuildDrag(camp: TurnCamp, position: cc.Vec2) {
         this.cancelPaletteBuildDrag(camp);
-        this.finishBuildTouch(position);
+        this.placeBuildObstacleAt(camp, position);
+    }
+
+    private placeBuildObstacleAt(camp: TurnCamp, position: cc.Vec2) {
+        if (!camp || !this.canControlCamp(camp)) {
+            this.showFloatText("只能放在可操作阵营建造区", position, cc.Color.RED);
+            return;
+        }
+        let targetCamp = this.getBuildCampAt(position);
+        if (targetCamp !== camp) {
+            this.showFloatText("只能放在可操作阵营建造区", position, cc.Color.RED);
+            return;
+        }
+        if (this.getObstacleInventory(camp) <= 0) {
+            this.showFloatText("掩体库存不足", position, cc.Color.RED);
+            return;
+        }
+        let snappedPosition = this.snapBuildPosition(position);
+        if (!this.isBuildPositionValid(camp, snappedPosition)) {
+            this.showFloatText("位置不可用", position, cc.Color.RED);
+            return;
+        }
+
+        if (this._serverMode) {
+            if (this.onBuildIntent) {
+                this.onBuildIntent({
+                    op: "place",
+                    x: snappedPosition.x,
+                    y: snappedPosition.y,
+                });
+            }
+            return;
+        }
+
+        this.createBuildObstacle(camp, snappedPosition);
+        this._obstacleInventory[camp] -= 1;
+        this.emitStatsChanged();
+        this.refreshBuildInteractionView();
     }
 
     cancelPaletteBuildDrag(camp?: TurnCamp) {
@@ -759,37 +796,6 @@ export default class TurnBattleMap extends cc.Component {
             this.refreshBuildInteractionView();
             return;
         }
-
-        let camp = this.getBuildCampAt(position);
-        if (!camp || !this.canControlCamp(camp)) {
-            this.showFloatText("只能放在可操作阵营建造区", position, cc.Color.RED);
-            return;
-        }
-        if (this.getObstacleInventory(camp) <= 0) {
-            this.showFloatText("掩体库存不足", position, cc.Color.RED);
-            return;
-        }
-        let snappedPosition = this.snapBuildPosition(position);
-        if (!this.isBuildPositionValid(camp, snappedPosition)) {
-            this.showFloatText("位置不可用", position, cc.Color.RED);
-            return;
-        }
-
-        if (this._serverMode) {
-            if (this.onBuildIntent) {
-                this.onBuildIntent({
-                    op: "place",
-                    x: snappedPosition.x,
-                    y: snappedPosition.y,
-                });
-            }
-            return;
-        }
-
-        this.createBuildObstacle(camp, snappedPosition);
-        this._obstacleInventory[camp] -= 1;
-        this.emitStatsChanged();
-        this.refreshBuildInteractionView();
     }
 
     private finishZoneTouch(position: cc.Vec2) {
