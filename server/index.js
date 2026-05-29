@@ -307,6 +307,7 @@ const TURN_CONFIG = {
   expNeed: 60,
   maxBulletResultDamage: 80,
   assistZoneRadius: 74,
+  obstacleGrid: 32,
 };
 const TURN_PHASE = {
   WAITING: 'waiting',
@@ -1132,14 +1133,15 @@ function getTurnActionPayload(msg) {
 }
 
 function isTurnObstaclePositionFree(roomState, x, y, ignoreId) {
-  const gridX = Math.round(x / 40);
-  const gridY = Math.round(y / 40);
+  const grid = TURN_CONFIG.obstacleGrid || 32;
+  const gridX = Math.round(x / grid);
+  const gridY = Math.round(y / grid);
   return !Object.keys(roomState.obstacles).some((id) => {
     if (id === ignoreId) {
       return false;
     }
     const obstacle = roomState.obstacles[id];
-    return Math.round(obstacle.x / 40) === gridX && Math.round(obstacle.y / 40) === gridY;
+    return Math.round(obstacle.x / grid) === gridX && Math.round(obstacle.y / grid) === gridY;
   });
 }
 
