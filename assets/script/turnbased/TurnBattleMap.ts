@@ -711,7 +711,7 @@ export default class TurnBattleMap extends cc.Component {
             if (!this.canControlCamp(this._actionCamp)) {
                 return;
             }
-            this._attackTouchActive = this.isPointInAssistArea(position);
+            this._attackTouchActive = !this.isPointInOwnBuildArea(position);
             if (this._attackTouchActive) {
                 this.updateAimPreview(position, true);
             }
@@ -732,7 +732,7 @@ export default class TurnBattleMap extends cc.Component {
             if (!this.canControlCamp(this._actionCamp)) {
                 return;
             }
-            if (this._attackTouchActive && this.isPointInAssistArea(position)) {
+            if (this._attackTouchActive && !this.isPointInOwnBuildArea(position)) {
                 this.updateAimPreview(position, true);
             }
         }
@@ -754,9 +754,9 @@ export default class TurnBattleMap extends cc.Component {
             if (!this.canControlCamp(this._actionCamp)) {
                 return;
             }
-            if (!this.isPointInAssistArea(position)) {
+            if (this.isPointInOwnBuildArea(position)) {
                 this._attackTouchActive = false;
-                this.showFloatText("只能点击中间辅助区发射", position, cc.Color.RED);
+                this.showFloatText("不能点击自己改造区发射", position, cc.Color.RED);
                 return;
             }
             this.updateAimPreview(position, true);
@@ -843,7 +843,7 @@ export default class TurnBattleMap extends cc.Component {
         if (!tank) {
             return;
         }
-        if (this.isPointInAssistArea(targetPosition)) {
+        if (!this.isPointInOwnBuildArea(targetPosition)) {
             this.applyTankAim(this._actionCamp, targetPosition, true);
         }
 
@@ -2459,6 +2459,18 @@ export default class TurnBattleMap extends cc.Component {
 
     private isPointInAssistArea(position: cc.Vec2): boolean {
         return !!(position && this._assistArea && this._assistArea.contains(position));
+    }
+
+    private isPointInOwnBuildArea(position: cc.Vec2): boolean {
+        if (!position) {
+            return false;
+        }
+        let camp = this._serverMode ? this._localCamp : this._actionCamp;
+        if (!camp) {
+            return false;
+        }
+        let area = this.getBuildArea(camp);
+        return !!(area && area.contains(position));
     }
 
     private onKeyDown(event: cc.Event.EventKeyboard) {
