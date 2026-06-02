@@ -452,6 +452,18 @@ function toPlayerViewLayout(player, layout) {
   }));
 }
 
+function toPlayerViewMirrorDir(player, dir) {
+  const safe = normalizeMirrorDirection(dir);
+  if (!player || player.camp === 'A') {
+    return safe;
+  }
+  if (safe === 'bl') return 'tl';
+  if (safe === 'tl') return 'bl';
+  if (safe === 'br') return 'tr';
+  if (safe === 'tr') return 'br';
+  return safe;
+}
+
 function mapUpgradeIdFromClient(optionId) {
   if (optionId === 'cover_resource_up') return 'coverResourceUp';
   if (optionId === 'bullet_bounce') return 'bulletBounce';
@@ -502,7 +514,10 @@ function buildTurnViewPayload(player, payload) {
       const src = next.inventories[camp] || {};
       const slots = cloneTurnObstacleSlots(src.obstacleSlots);
       Object.keys(slots).forEach((type) => {
-        slots[type].layout = toPlayerViewLayout(player, normalizeObstacleLayout(type, slots[type].layout, slots[type].count));
+        slots[type].layout = type === 'mirror'
+          ? normalizeObstacleLayout(type, slots[type].layout, slots[type].count)
+          : toPlayerViewLayout(player, normalizeObstacleLayout(type, slots[type].layout, slots[type].count));
+        slots[type].mirrorDir = toPlayerViewMirrorDir(player, slots[type].mirrorDir);
       });
       inventories[getTurnViewCamp(player, camp)] = {
         ...src,
@@ -532,8 +547,10 @@ function buildTurnViewPayload(player, payload) {
         camp: getTurnViewCamp(player, obstacle.camp),
         x: Math.round(point.x),
         y: Math.round(point.y),
-        layout: toPlayerViewLayout(player, normalizeObstacleLayout(obstacle.slotType || 'normal', obstacle.layout, obstacle.resourceCount)),
-        mirrorDir: normalizeMirrorDirection(obstacle.mirrorDir),
+        layout: (obstacle.slotType || 'normal') === 'mirror'
+          ? normalizeObstacleLayout(obstacle.slotType || 'normal', obstacle.layout, obstacle.resourceCount)
+          : toPlayerViewLayout(player, normalizeObstacleLayout(obstacle.slotType || 'normal', obstacle.layout, obstacle.resourceCount)),
+        mirrorDir: toPlayerViewMirrorDir(player, normalizeMirrorDirection(obstacle.mirrorDir)),
       };
     });
   }
@@ -674,6 +691,7 @@ function createTurnObstacleSlots() {
       mirrorDir: type === 'mirror' ? TURN_MIRROR_DIRECTIONS[index % TURN_MIRROR_DIRECTIONS.length] : '',
       placedObstacleId: '',
       placedObstacleShapeKey: '',
+      placedCount: 0,
     };
   });
   return slots;
@@ -691,6 +709,7 @@ function cloneTurnObstacleSlots(source) {
       mirrorDir: type === 'mirror' ? normalizeMirrorDirection(slot.mirrorDir) : '',
       placedObstacleId: slot.placedObstacleId ? String(slot.placedObstacleId) : '',
       placedObstacleShapeKey: slot.placedObstacleShapeKey ? String(slot.placedObstacleShapeKey) : '',
+      placedCount: Math.max(0, Number(slot.placedCount) || 0),
     };
     if (!next[type].shapeKey) {
       next[type].shapeKey = getObstacleLayoutKey(next[type].layout);
@@ -789,6 +808,7 @@ function resetTurnObstacleSlotsForBuild(roomState, player) {
     }
     slot.placedObstacleId = '';
     slot.placedObstacleShapeKey = '';
+    slot.placedCount = 0;
     refreshTurnObstacleSlotShape(slot, player.playerId, roomState);
   });
   player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
@@ -1393,7 +1413,7 @@ function handleTurnBuildAction(ws, msg) {
       sendTurnError(ws, '掩体库存不足', 'noInventory');
       return;
     }
-    if (slot.placedObstacleId) {
+    if ((slotType === 'mirror' && Math.max(0, Number(slot.placedCount) || 0) >= slot.count) || (slotType !== 'mirror' && slot.placedObstacleId)) {
       sendTurnError(ws, '该资源已放置', 'slotAlreadyPlaced');
       return;
     }
@@ -1418,8 +1438,12 @@ function handleTurnBuildAction(ws, msg) {
       mirrorDir: slotType === 'mirror' ? normalizeMirrorDirection(slot.mirrorDir) : '',
       placedByCamp: player.camp,
     };
-    slot.placedObstacleId = id;
-    slot.placedObstacleShapeKey = roomState.obstacles[id].shapeKey;
+    if (slotType === 'mirror') {
+      slot.placedCount = Math.max(0, Number(slot.placedCount) || 0) + 1;
+    } else {
+      slot.placedObstacleId = id;
+      slot.placedObstacleShapeKey = roomState.obstacles[id].shapeKey;
+    }
     player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
   } else if (op === 'move') {
     if (!point || !obstacleId || !roomState.obstacles[obstacleId]) {
@@ -1448,8 +1472,12 @@ function handleTurnBuildAction(ws, msg) {
       return;
     }
     delete roomState.obstacles[obstacleId];
-    if (slots[obstacle.slotType] && slots[obstacle.slotType].placedObstacleId === obstacleId) {
-      slots[obstacle.slotType].placedObstacleId = '';
+    if (slots[obstacle.slotType]) {
+      if (obstacle.slotType === 'mirror') {
+        slots[obstacle.slotType].placedCount = Math.max(0, (slots[obstacle.slotType].placedCount || 0) - 1);
+      } else if (slots[obstacle.slotType].placedObstacleId === obstacleId) {
+        slots[obstacle.slotType].placedObstacleId = '';
+      }
     }
     player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
   }

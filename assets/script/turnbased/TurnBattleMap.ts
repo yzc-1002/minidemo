@@ -107,6 +107,7 @@ interface TurnObstacleSlotState {
     mirrorDir: TurnMirrorDirection | "";
     placedObstacleId: string;
     placedObstacleShapeKey: string;
+    placedCount: number;
 }
 
 interface TurnStaticObstacleState {
@@ -699,7 +700,7 @@ export default class TurnBattleMap extends cc.Component {
     beginPaletteBuildDrag(camp: TurnCamp, position: cc.Vec2, slotType?: TurnObstacleResourceType): boolean {
         this._selectedBuildSlotType = slotType || this._selectedBuildSlotType || "normal";
         let slot = slotType ? this.getObstacleSlotState(camp, slotType) : this.getFirstAvailableObstacleSlot(camp);
-        if (!this.isBuildPhaseActiveForCamp(camp) || !slot || slot.count <= 0 || !!slot.placedObstacleId) {
+        if (!this.isBuildPhaseActiveForCamp(camp) || !slot || !this.canPlaceFromSlot(slot)) {
             return false;
         }
         this.cancelPaletteBuildDrag(camp);
@@ -755,7 +756,7 @@ export default class TurnBattleMap extends cc.Component {
             this.showFloatText("掩体库存不足", position, cc.Color.RED);
             return;
         }
-        if (slot.placedObstacleId) {
+        if (!this.canPlaceFromSlot(slot)) {
             this.showFloatText("该资源已放置", position, cc.Color.RED);
             return;
         }
@@ -1088,6 +1089,9 @@ export default class TurnBattleMap extends cc.Component {
             });
             this.getCampStats(obstacle.camp).energyTowers = this.countPlacedEnergyTowers(obstacle.camp);
             this.emitStatsChanged();
+            if (obstacle.slotType === "mirror") {
+                return false;
+            }
             return true;
         }
 
@@ -1232,21 +1236,28 @@ export default class TurnBattleMap extends cc.Component {
         let graphics = node.addComponent(cc.Graphics);
         this.drawObstacleGraphics(graphics, camp, true, slotType, layout, mirrorDir);
 
-        let label = this.createLabel(camp, 16);
-        label.node.parent = node;
-        label.node.y = bounds.minY * this._dynamicObstacleSize.height - 18;
+        // let label = this.createLabel(camp, 16);
+        // label.node.parent = node;
+        // label.node.y = bounds.minY * this._dynamicObstacleSize.height - 18;
+        // label.node.zIndex = 5;
+        // label.node.color = new cc.Color(255, 248, 220, 255);
         let hp = Math.max(1, Number(snapshot && snapshot.hp) || this.getObstacleMaxHp(slotType, resourceCount));
         let maxHp = Math.max(hp, Number(snapshot && snapshot.maxHp) || this.getObstacleMaxHp(slotType, resourceCount));
         let cellMaxHp = slotType === "exp" || slotType === "energy"
             ? this._config.obstacleBaseHp
             : this.getObstacleMaxHp(slotType, 1);
         let cellHp = this.buildCellHpFromSnapshot(snapshot && snapshot.cellHp, layout.length, cellMaxHp);
-        label.string = String(hp);
+        // label.string = String(hp);
 
         let id = forcedId || String(this._nextObstacleId++);
         if (!snapshot) {
-            slot.placedObstacleId = id;
-            slot.placedObstacleShapeKey = this.getLayoutKey(layout);
+            if (slotType === "mirror") {
+                slot.placedCount += 1;
+            }
+            else {
+                slot.placedObstacleId = id;
+                slot.placedObstacleShapeKey = this.getLayoutKey(layout);
+            }
         }
 
         this._obstacles.push({
@@ -1546,6 +1557,7 @@ export default class TurnBattleMap extends cc.Component {
                 mirrorDir: type === "mirror" ? this.pickMirrorDirection(1) : "",
                 placedObstacleId: "",
                 placedObstacleShapeKey: "",
+                placedCount: 0,
             };
         }
         return result;
@@ -1577,7 +1589,7 @@ export default class TurnBattleMap extends cc.Component {
     private getFirstAvailableObstacleSlot(camp: TurnCamp): TurnObstacleSlotState {
         let slots = this.getObstacleSlotStates(camp);
         for (let i = 0; i < slots.length; i++) {
-            if (slots[i].count > 0 && !slots[i].placedObstacleId) {
+            if (this.canPlaceFromSlot(slots[i])) {
                 return slots[i];
             }
         }
@@ -1595,8 +1607,19 @@ export default class TurnBattleMap extends cc.Component {
             let slot = slots[i];
             slot.placedObstacleId = "";
             slot.placedObstacleShapeKey = "";
+            slot.placedCount = 0;
             this.refreshObstacleSlotShape(slot);
         }
+    }
+
+    private canPlaceFromSlot(slot: TurnObstacleSlotState): boolean {
+        if (!slot || slot.count <= 0) {
+            return false;
+        }
+        if (slot.type === "mirror") {
+            return slot.placedCount < slot.count;
+        }
+        return !slot.placedObstacleId;
     }
 
     private grantRandomObstacleResource(camp: TurnCamp) {
@@ -1626,6 +1649,7 @@ export default class TurnBattleMap extends cc.Component {
                 : "";
             target.placedObstacleId = String(source.placedObstacleId || "");
             target.placedObstacleShapeKey = String(source.placedObstacleShapeKey || "");
+            target.placedCount = Math.max(0, Number(source.placedCount) || 0);
         }
     }
 
@@ -1752,20 +1776,23 @@ export default class TurnBattleMap extends cc.Component {
 
     private drawMirrorCell(graphics: cc.Graphics, x: number, y: number, size: number, valid: boolean, direction: TurnMirrorDirection) {
         graphics.fillColor = valid ? new cc.Color(180, 196, 236, 255) : new cc.Color(210, 60, 60, 255);
-        graphics.moveTo(x, y);
         if (direction === "bl") {
+            graphics.moveTo(x, y);
             graphics.lineTo(x + size, y);
             graphics.lineTo(x, y + size);
         }
         else if (direction === "br") {
+            graphics.moveTo(x, y);
             graphics.lineTo(x + size, y);
             graphics.lineTo(x + size, y + size);
         }
         else if (direction === "tl") {
+            graphics.moveTo(x, y);
             graphics.lineTo(x, y + size);
             graphics.lineTo(x + size, y + size);
         }
         else {
+            graphics.moveTo(x, y + size);
             graphics.lineTo(x + size, y + size);
             graphics.lineTo(x + size, y);
         }
