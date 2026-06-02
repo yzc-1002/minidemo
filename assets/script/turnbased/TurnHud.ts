@@ -57,9 +57,9 @@ export default class TurnHud extends cc.Component {
         this.node.removeAllChildren();
         this.phaseLabel = this.createLabel("回合制塔防", 26, 0, 20);
         this.timerLabel = this.createLabel("倒计时 0.0", 22, 0, -20);
-        this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -200, 130);
-        this.expLabel = this.createLabel("A: 0  |  B: 0", 20, -200, 100);
-        this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -210, 70);
+        this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -200, 190);
+        this.expLabel = this.createLabel("A: 0  |  B: 0", 20, -200, 160);
+        this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -210, 130);
         this.zoneLabel = this.createLabel("场上黑洞区: 0", 20, -210, -11125);
         this._upgradeRoot = null;
         this._upgradeHintRoot = null;
@@ -142,7 +142,7 @@ export default class TurnHud extends cc.Component {
         if (!position || !this._buildPaletteRoot) {
             return;
         }
-        this._buildPaletteRoot.setPosition(position.x + 28, position.y + 22);
+        this._buildPaletteRoot.setPosition(position.x + 80, position.y + 80);
     }
 
     refreshExp(aExp: number, aLevel: number, aExpNeed: number, bExp: number, bLevel: number, bExpNeed: number) {
@@ -399,7 +399,7 @@ export default class TurnHud extends cc.Component {
         bg.roundRect(-110, -78, 220, 156, 12);
         bg.stroke();
 
-        let title = this.createLabel("己方掩体", 20, 0, 30);
+        let title = this.createLabel("己方掩体", 20, 0, 45);
         title.node.parent = this._buildPaletteRoot;
 
         this._buildPaletteBlock = new cc.Node("BuildPaletteBlock");
@@ -420,6 +420,10 @@ export default class TurnHud extends cc.Component {
 
     private refreshBuildPaletteView() {
         if (!this._buildPaletteBlock || !this._buildPaletteCountLabel || !this._buildPaletteHintLabel || !this._buildPaletteRoot) {
+            return;
+        }
+        this._buildPaletteRoot.active = !!this._buildPaletteEnabled;
+        if (!this._buildPaletteRoot.active) {
             return;
         }
 

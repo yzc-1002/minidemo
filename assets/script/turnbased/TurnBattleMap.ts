@@ -169,6 +169,7 @@ export default class TurnBattleMap extends cc.Component {
     private _tanks: { [camp: string]: TurnTankState } = {};
     private _obstacleInventory: { [camp: string]: { [type: string]: TurnObstacleSlotState } } = { A: null, B: null };
     private _obstacles: TurnObstacleState[] = [];
+    private _staticObstacleSeeds: TurnStaticObstacleState[] = [];
     private _staticObstacles: TurnStaticObstacleState[] = [];
     private _bullets: TurnBulletState[] = [];
     private _assistZones: TurnAssistZoneState[] = [];
@@ -249,6 +250,7 @@ export default class TurnBattleMap extends cc.Component {
         this._crystals = {};
         this._tanks = {};
         this._obstacles = [];
+        this._staticObstacleSeeds = [];
         this._staticObstacles = [];
         this._bullets = [];
         this._assistZones = [];
@@ -419,6 +421,9 @@ export default class TurnBattleMap extends cc.Component {
 
         this.syncCrystalState("A", snapshot.crystals && snapshot.crystals.A);
         this.syncCrystalState("B", snapshot.crystals && snapshot.crystals.B);
+        if (Array.isArray(snapshot.staticObstacles)) {
+            this.applyServerStaticObstacleState(snapshot.staticObstacles);
+        }
         this.syncObstacleState(snapshot.obstacles || []);
         this.syncAssistZoneState(snapshot.zones || []);
         this.syncTankPoseState(snapshot.tankPoses || {});
@@ -2116,8 +2121,9 @@ export default class TurnBattleMap extends cc.Component {
         this.node.scale = 1;
 
         this.parseTurnPoints();
-        this.parseStaticObstacles();
         this.parseTurnAreas();
+        this.parseStaticObstacles();
+        this.refreshStaticObstacleSelection();
         this.ensureRuntimeLayers();
         this.renderStaticObstacles();
         this.fitMapToView();
@@ -2310,13 +2316,13 @@ export default class TurnBattleMap extends cc.Component {
                 if (rect.width <= 0 || rect.height <= 0) {
                     continue;
                 }
-                this._staticObstacles.push({
+                this._staticObstacleSeeds.push({
                     id: this._nextStaticObstacleId++,
                     name: item && item.name ? item.name : "obstacle",
                     rect: rect,
                 });
             }
-            if (this._staticObstacles.length > 0) {
+            if (this._staticObstacleSeeds.length > 0) {
                 return;
             }
         }
@@ -2333,7 +2339,7 @@ export default class TurnBattleMap extends cc.Component {
                     continue;
                 }
                 let center = this.tileToGamePos(cc.v2(x, y));
-                this._staticObstacles.push({
+                this._staticObstacleSeeds.push({
                     id: this._nextStaticObstacleId++,
                     name: "tileObstacle",
                     rect: cc.rect(
@@ -2345,6 +2351,90 @@ export default class TurnBattleMap extends cc.Component {
                 });
             }
         }
+    }
+
+    private refreshStaticObstacleSelection() {
+        let fixedObstacles: TurnStaticObstacleState[] = [];
+        let candidateObstacles: TurnStaticObstacleState[] = [];
+        for (let i = 0; i < this._staticObstacleSeeds.length; i++) {
+            let obstacle = this._staticObstacleSeeds[i];
+            if (this.isAssistRandomStaticObstacleCandidate(obstacle)) {
+                candidateObstacles.push(obstacle);
+            }
+            else {
+                fixedObstacles.push(this.cloneStaticObstacleState(obstacle));
+            }
+        }
+        this._staticObstacles = fixedObstacles.concat(this.pickRandomStaticObstacleCandidates(candidateObstacles));
+    }
+
+    private applyServerStaticObstacleState(staticObstacles: any[]) {
+        let fixedObstacles: TurnStaticObstacleState[] = [];
+        for (let i = 0; i < this._staticObstacleSeeds.length; i++) {
+            let obstacle = this._staticObstacleSeeds[i];
+            if (!this.isAssistRandomStaticObstacleCandidate(obstacle)) {
+                fixedObstacles.push(this.cloneStaticObstacleState(obstacle));
+            }
+        }
+
+        let activeAssistObstacles: TurnStaticObstacleState[] = [];
+        for (let j = 0; j < staticObstacles.length; j++) {
+            let item = staticObstacles[j];
+            let rect = cc.rect(
+                Number(item && item.x) || 0,
+                Number(item && item.y) || 0,
+                Math.max(0, Number(item && item.width) || 0),
+                Math.max(0, Number(item && item.height) || 0),
+            );
+            if (rect.width <= 0 || rect.height <= 0) {
+                continue;
+            }
+            activeAssistObstacles.push({
+                id: 10000 + j,
+                name: String(item && item.name ? item.name : "qiang"),
+                rect: rect,
+            });
+        }
+        this._staticObstacles = fixedObstacles.concat(activeAssistObstacles);
+        this.renderStaticObstacles();
+    }
+
+    private isAssistRandomStaticObstacleCandidate(obstacle: TurnStaticObstacleState): boolean {
+        if (!obstacle || !this._assistArea) {
+            return false;
+        }
+        if (obstacle.name !== "qiang") {
+            return false;
+        }
+        return this.rectContainsRect(this._assistArea, obstacle.rect);
+    }
+
+    private pickRandomStaticObstacleCandidates(candidates: TurnStaticObstacleState[]): TurnStaticObstacleState[] {
+        if (!candidates || candidates.length <= 0) {
+            return [];
+        }
+        let shuffled = candidates.slice();
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            let swapIndex = Math.floor(Math.random() * (i + 1));
+            let temp = shuffled[i];
+            shuffled[i] = shuffled[swapIndex];
+            shuffled[swapIndex] = temp;
+        }
+        // let count = Math.min(shuffled.length, 4 + Math.floor(Math.random() * 5));
+        let count = Math.min(shuffled.length, 8);
+        let result: TurnStaticObstacleState[] = [];
+        for (let i = 0; i < count; i++) {
+            result.push(this.cloneStaticObstacleState(shuffled[i]));
+        }
+        return result;
+    }
+
+    private cloneStaticObstacleState(obstacle: TurnStaticObstacleState): TurnStaticObstacleState {
+        return {
+            id: obstacle.id,
+            name: obstacle.name,
+            rect: cc.rect(obstacle.rect.x, obstacle.rect.y, obstacle.rect.width, obstacle.rect.height),
+        };
     }
 
     private getSpawnPosition(name: string, fallback: cc.Vec2): cc.Vec2 {

@@ -274,23 +274,77 @@ const TURN_MAP_BOUNDS = {
   halfHeight: 480,
 };
 const TURN_MAP_LAYOUT = {
-  roadY: {
-    A: -144,
-    B: 144,
+  // Sync with `assets/map1/turn_defense_01.tmx` object layer `_tmLayerTurnAreas`.
+  roadRects: {
+    A: { minX: -320, maxX: 320, minY: -256, maxY: -224 },
+    B: { minX: -320, maxX: 320, minY: 224, maxY: 256 },
   },
-  roadMinX: -302,
-  roadMaxX: 302,
   assistArea: {
-    // Keep server-side hit validation aligned with the current tiled map:
-    // roads are centered at y = -144 / 144 with height 32, so the assist band
-    // between them is roughly [-128, 128]. Horizontal bounds mirror the
-    // visible interior play area used by the client.
     minX: -288,
     maxX: 288,
-    minY: -128,
-    maxY: 128,
+    minY: -224,
+    maxY: 224,
   },
+  assistStaticObstacleCandidates: [
+    { key: 'qiang_32_384', name: 'qiang', x: 48, y: 80, width: 32, height: 32 },
+    { key: 'qiang_64_352', name: 'qiang', x: -240, y: 112, width: 32, height: 32 },
+    { key: 'qiang_96_512', name: 'qiang', x: -208, y: -48, width: 32, height: 32 },
+    { key: 'qiang_224_448', name: 'qiang', x: -80, y: 16, width: 32, height: 32 },
+    { key: 'qiang_256_320', name: 'qiang', x: -48, y: 144, width: 32, height: 32 },
+    { key: 'qiang_352_576', name: 'qiang', x: 48, y: -112, width: 32, height: 32 },
+    { key: 'qiang_352_384', name: 'qiang', x: 48, y: 80, width: 32, height: 32 },
+    { key: 'qiang_448_448', name: 'qiang', x: 144, y: 16, width: 32, height: 32 },
+  ],
 };
+
+function getTurnRoadRect(camp) {
+  return TURN_MAP_LAYOUT.roadRects[camp === 'B' ? 'B' : 'A'] || TURN_MAP_LAYOUT.roadRects.A;
+}
+
+function getTurnRoadCenterY(camp) {
+  const road = getTurnRoadRect(camp);
+  return Math.round((road.minY + road.maxY) / 2);
+}
+
+function getTurnRoadMoveMinX(camp) {
+  return getTurnRoadRect(camp).minX + 18;
+}
+
+function getTurnRoadMoveMaxX(camp) {
+  return getTurnRoadRect(camp).maxX - 18;
+}
+
+function getTurnActiveStaticObstacles(roomState) {
+  return Array.isArray(roomState && roomState.activeStaticObstacles) ? roomState.activeStaticObstacles : [];
+}
+
+function randomizeTurnAssistStaticObstacles(roomState) {
+  const candidates = Array.isArray(TURN_MAP_LAYOUT.assistStaticObstacleCandidates)
+    ? TURN_MAP_LAYOUT.assistStaticObstacleCandidates.slice()
+    : [];
+  if (!roomState) {
+    return [];
+  }
+  if (candidates.length <= 0) {
+    roomState.activeStaticObstacles = [];
+    return roomState.activeStaticObstacles;
+  }
+  // const count = Math.min(candidates.length, 4 + Math.floor(Math.random() * 5));
+  const count = Math.min(candidates.length, 8);
+  roomState.activeStaticObstacles = shuffle(candidates).slice(0, count).map((item) => ({ ...item }));
+  return roomState.activeStaticObstacles;
+}
+
+function circleRectIntersects(circle, radius, rect) {
+  if (!circle || !rect) {
+    return false;
+  }
+  const nearestX = clamp(circle.x, rect.x, rect.x + rect.width);
+  const nearestY = clamp(circle.y, rect.y, rect.y + rect.height);
+  const dx = circle.x - nearestX;
+  const dy = circle.y - nearestY;
+  return dx * dx + dy * dy <= radius * radius;
+}
 const TURN_CONFIG = {
   buildSeconds: 6,
   zoneSeconds: 5,
@@ -566,6 +620,16 @@ function buildTurnViewPayload(player, payload) {
       };
     });
   }
+  if (Array.isArray(next.staticObstacles)) {
+    next.staticObstacles = next.staticObstacles.map((obstacle) => {
+      const point = toPlayerViewPoint(player, obstacle);
+      return {
+        ...obstacle,
+        x: Math.round(point.x),
+        y: Math.round(point.y),
+      };
+    });
+  }
   if (next.tankPoses) {
     const tankPoses = {};
     Object.keys(next.tankPoses).forEach((camp) => {
@@ -650,7 +714,7 @@ function buildTurnViewPayload(player, payload) {
 
 function createTurnPlayer(ws, camp, index) {
   const canonicalCamp = camp || 'A';
-  const roadY = TURN_MAP_LAYOUT.roadY[canonicalCamp] || TURN_MAP_LAYOUT.roadY.A;
+  const roadY = getTurnRoadCenterY(canonicalCamp);
   const defaultAimY = canonicalCamp === 'A' ? roadY + 120 : roadY - 120;
   return {
     socket: ws,
@@ -846,18 +910,19 @@ function createTurnRoom() {
     },
     obstacles: {},
     zones: [],
+    activeStaticObstacles: [],
     tankPoses: {
       A: {
         x: 0,
-        y: TURN_MAP_LAYOUT.roadY.A,
+        y: getTurnRoadCenterY('A'),
         aimX: 0,
-        aimY: TURN_MAP_LAYOUT.roadY.A + 120,
+        aimY: getTurnRoadCenterY('A') + 120,
       },
       B: {
         x: 0,
-        y: TURN_MAP_LAYOUT.roadY.B,
+        y: getTurnRoadCenterY('B'),
         aimX: 0,
-        aimY: TURN_MAP_LAYOUT.roadY.B - 120,
+        aimY: getTurnRoadCenterY('B') - 120,
       },
     },
     nextObstacleId: 1,
@@ -942,6 +1007,7 @@ function getTurnStateSnapshot(roomState) {
       A: { ...roomState.crystals.A },
       B: { ...roomState.crystals.B },
     },
+    staticObstacles: getTurnActiveStaticObstacles(roomState).map((item) => ({ ...item })),
     obstacles: Object.keys(roomState.obstacles).map((id) => ({ ...roomState.obstacles[id] })),
     zones: roomState.zones.map((zone) => ({ ...zone })),
     tankPoses: {
@@ -1135,12 +1201,30 @@ function spawnTurnBlackHoleZone(roomState) {
   const maxX = TURN_MAP_LAYOUT.assistArea.maxX - marginX;
   const minY = TURN_MAP_LAYOUT.assistArea.minY + marginY;
   const maxY = TURN_MAP_LAYOUT.assistArea.maxY - marginY;
+  let point = null;
+  for (let attempt = 0; attempt < 24; attempt++) {
+    const nextPoint = {
+      x: Math.round(randomBetween(minX, maxX)),
+      y: Math.round(randomBetween(minY, maxY)),
+    };
+    const blocked = getTurnActiveStaticObstacles(roomState).some((obstacle) => circleRectIntersects(nextPoint, TURN_CONFIG.assistZoneRadius, obstacle));
+    if (!blocked) {
+      point = nextPoint;
+      break;
+    }
+  }
+  if (!point) {
+    point = {
+      x: Math.round((minX + maxX) / 2),
+      y: Math.round((minY + maxY) / 2),
+    };
+  }
   const zone = {
     id: `system_zone_${roomState.nextZoneId++}`,
     camp: 'A',
     zoneType: 'blackHole',
-    x: Math.round(randomBetween(minX, maxX)),
-    y: Math.round(randomBetween(minY, maxY)),
+    x: point.x,
+    y: point.y,
     extra: {
       source: 'system',
       roundIndex: roomState.roundIndex,
@@ -1199,8 +1283,8 @@ function translateTurnTankAimWithMove(prevPose, nextPose) {
 
 function updateTurnTankPose(roomState, camp, x, aimX, aimY) {
   const canonicalCamp = camp === 'B' ? 'B' : 'A';
-  const roadY = TURN_MAP_LAYOUT.roadY[canonicalCamp] || 0;
-  const clampedX = clamp(Number(x) || 0, TURN_MAP_LAYOUT.roadMinX, TURN_MAP_LAYOUT.roadMaxX);
+  const roadY = getTurnRoadCenterY(canonicalCamp);
+  const clampedX = clamp(Number(x) || 0, getTurnRoadMoveMinX(canonicalCamp), getTurnRoadMoveMaxX(canonicalCamp));
   const pose = roomState.tankPoses[canonicalCamp] || {
     x: 0,
     y: roadY,
@@ -1267,6 +1351,7 @@ function startTurnUpgradePhase(roomState) {
 
 function startTurnRoom(roomState) {
   roomState.phase = TURN_PHASE.BUILD;
+  randomizeTurnAssistStaticObstacles(roomState);
   roomState.players.forEach((player) => {
     const ws = player.socket;
     ws.turnPlayerId = player.playerId;

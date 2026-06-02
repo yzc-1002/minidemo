@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.10.2" orientation="orthogonal" renderorder="right-down" width="20" height="30" tilewidth="32" tileheight="32" infinite="0" nextlayerid="5" nextobjectid="108">
+<map version="1.10" tiledversion="1.10.2" orientation="orthogonal" renderorder="right-down" width="20" height="30" tilewidth="32" tileheight="32" infinite="0" nextlayerid="5" nextobjectid="117">
  <tileset firstgid="1" source="../../../minitankdemo/assets/map1/tankSprite.tsx"/>
  <tileset firstgid="641" source="tankSprite1.tsx"/>
  <layer id="1" name="_tmLayerGroup " width="20" height="30">
@@ -12,8 +12,8 @@
 641,642,643,643,723,723,723,723,723,723,723,723,723,723,723,723,723,723,641,642,
 641,642,643,641,641,641,641,641,641,641,641,641,641,641,641,642,643,722,641,642,
 641,642,641,641,641,641,641,641,641,642,643,643,643,643,643,641,641,642,641,642,
-641,642,681,681,681,681,681,681,641,641,641,641,641,641,641,641,642,643,641,642,
-683,724,724,724,724,724,724,724,724,724,724,724,724,724,724,724,724,724,724,683,
+731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,
+731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,
 744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,
 744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,
 744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,
@@ -24,8 +24,8 @@
 744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,
 744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,
 744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,744,
-1044,1044,1042,1042,1042,1042,1042,1042,1042,1042,1042,1042,1042,1042,1044,1044,1044,1044,1044,1044,
-961,962,963,964,1044,1044,1044,1044,1044,1044,1044,1044,1044,1044,1044,1044,1081,1082,1083,1084,
+731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,
+731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,731,
 961,961,961,961,961,961,961,961,961,961,961,961,961,961,961,961,1081,1082,1083,1084,
 1001,1001,1001,1001,1001,1001,1001,1001,1001,1001,1001,1001,1001,1001,961,961,1081,1082,1083,1084,
 1041,1041,1041,1041,1041,1041,1041,1041,1041,1041,1041,1041,1041,961,1001,1001,1081,1082,1083,1084,
@@ -83,45 +83,41 @@
   <object id="47" name="qiang" x="0" y="160" width="32" height="32"/>
   <object id="48" name="qiang" x="0" y="128" width="32" height="32"/>
   <object id="49" name="qiang" x="0" y="192" width="32" height="32"/>
-  <object id="50" name="qiang" x="0" y="224" width="32" height="32"/>
-  <object id="51" name="qiang" x="0" y="256" width="32" height="32"/>
-  <object id="52" name="qiang" x="0" y="288" width="32" height="32"/>
   <object id="59" name="qiang" x="608" y="32" width="32" height="32"/>
   <object id="60" name="qiang" x="608" y="64" width="32" height="32"/>
   <object id="61" name="qiang" x="608" y="96" width="32" height="32"/>
   <object id="62" name="qiang" x="608" y="160" width="32" height="32"/>
   <object id="63" name="qiang" x="608" y="128" width="32" height="32"/>
   <object id="64" name="qiang" x="608" y="192" width="32" height="32"/>
-  <object id="65" name="qiang" x="608" y="224" width="32" height="32"/>
-  <object id="66" name="qiang" x="608" y="256" width="32" height="32"/>
-  <object id="67" name="qiang" x="608" y="288" width="32" height="32"/>
-  <object id="78" name="qiang" x="0" y="640" width="32" height="32"/>
-  <object id="79" name="qiang" x="0" y="672" width="32" height="32"/>
-  <object id="80" name="qiang" x="0" y="704" width="32" height="32"/>
   <object id="81" name="qiang" x="0" y="736" width="32" height="32"/>
   <object id="82" name="qiang" x="0" y="768" width="32" height="32"/>
   <object id="83" name="qiang" x="0" y="800" width="32" height="32"/>
   <object id="84" name="qiang" x="0" y="832" width="32" height="32"/>
   <object id="85" name="qiang" x="0" y="864" width="32" height="32"/>
   <object id="86" name="qiang" x="0" y="896" width="32" height="32"/>
-  <object id="92" name="qiang" x="608" y="640" width="32" height="32"/>
-  <object id="93" name="qiang" x="608" y="672" width="32" height="32"/>
-  <object id="94" name="qiang" x="608" y="704" width="32" height="32"/>
   <object id="95" name="qiang" x="608" y="736" width="32" height="32"/>
   <object id="96" name="qiang" x="608" y="768" width="32" height="32"/>
   <object id="97" name="qiang" x="608" y="800" width="32" height="32"/>
   <object id="98" name="qiang" x="608" y="832" width="32" height="32"/>
   <object id="99" name="qiang" x="608" y="864" width="32" height="32"/>
   <object id="100" name="qiang" x="608" y="896" width="32" height="32"/>
+  <object id="108" name="qiang" x="352" y="384" width="32" height="32"/>
+  <object id="109" name="qiang" x="256" y="320" width="32" height="32"/>
+  <object id="110" name="qiang" x="224" y="448" width="32" height="32"/>
+  <object id="111" name="qiang" x="448" y="448" width="32" height="32"/>
+  <object id="113" name="qiang" x="96" y="512" width="32" height="32"/>
+  <object id="114" name="qiang" x="64" y="352" width="32" height="32"/>
+  <object id="115" name="qiang" x="576" y="512" width="32" height="32"/>
+  <object id="116" name="qiang" x="352" y="576" width="32" height="32"/>
  </objectgroup>
  <objectgroup id="3" name="_tmLayerBorn">
   <object id="101" name="crystalA" x="288" y="32" width="64" height="64"/>
   <object id="102" name="crystalB" x="288" y="864" width="64" height="64"/>
-  <object id="103" name="tankA" x="304" y="320" width="32" height="32"/>
-  <object id="104" name="tankB" x="304" y="608" width="32" height="32"/>
+  <object id="103" name="tankA" x="304" y="224" width="32" height="32"/>
+  <object id="104" name="tankB" x="304" y="704" width="32" height="32"/>
  </objectgroup>
  <objectgroup id="4" name="_tmLayerTurnAreas">
-  <object id="106" name="roadA" x="0" y="608" width="640" height="32"/>
-  <object id="107" name="roadA" x="0" y="320" width="640" height="32"/>
+  <object id="106" name="roadB" x="0" y="704" width="640" height="32"/>
+  <object id="107" name="roadA" x="0" y="224" width="640" height="32"/>
  </objectgroup>
 </map>
