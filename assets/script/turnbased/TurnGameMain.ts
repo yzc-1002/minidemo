@@ -184,6 +184,7 @@ export default class TurnGameMain extends cc.Component {
             targetId: result.targetId || "",
             damage: result.damage || 0,
             destroyedIds: result.destroyedIds || [],
+            destroyedCells: result.destroyedCells || [],
             expGain: result.expGain || 0,
         });
     }
@@ -291,7 +292,12 @@ export default class TurnGameMain extends cc.Component {
         let localCamp = this.getLocalCamp();
         this._hud.refreshBuildPalette(
             localCamp,
-            this._battleMap.getObstacleInventory(localCamp),
+            this._battleMap.getObstacleSlotStates(localCamp).map((slot) => ({
+                type: slot.type,
+                name: slot.type,
+                count: slot.count,
+                placed: !!slot.placedObstacleId,
+            })),
             this._battleMap.isBuildPhaseActiveForCamp(localCamp),
         );
         this.refreshMoveButtonsEnabled();
@@ -578,16 +584,16 @@ export default class TurnGameMain extends cc.Component {
         return this.useServer ? this._serverCamp : "A";
     }
 
-    private onHudBuildDragStart(camp: TurnCamp, worldPos: cc.Vec2): boolean {
-        return this._battleMap.beginPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos));
+    private onHudBuildDragStart(camp: TurnCamp, slotType: any, worldPos: cc.Vec2): boolean {
+        return this._battleMap.beginPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos), slotType);
     }
 
-    private onHudBuildDragMove(camp: TurnCamp, worldPos: cc.Vec2) {
-        this._battleMap.updatePaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos));
+    private onHudBuildDragMove(camp: TurnCamp, slotType: any, worldPos: cc.Vec2) {
+        this._battleMap.updatePaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos), slotType);
     }
 
-    private onHudBuildDragEnd(camp: TurnCamp, worldPos: cc.Vec2) {
-        this._battleMap.finishPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos));
+    private onHudBuildDragEnd(camp: TurnCamp, slotType: any, worldPos: cc.Vec2) {
+        this._battleMap.finishPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos), slotType);
         this.refreshHudNumbers();
     }
 

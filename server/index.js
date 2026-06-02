@@ -305,11 +305,16 @@ const TURN_CONFIG = {
   buildSecondsPerObstacle: 3,
   baseExp: 10,
   obstacleHitExp: 8,
+  expWallDestroyExp: 50,
+  energyWallRoundHeal: 10,
   crystalHitExp: 20,
   expNeed: 60,
   maxBulletResultDamage: 80,
   assistZoneRadius: 74,
   obstacleGrid: 32,
+  obstacleBaseHp: 10,
+  obstacleMaxHp: 50,
+  obstacleSlotMaxResources: 4,
 };
 const TURN_PHASE = {
   WAITING: 'waiting',
@@ -322,10 +327,45 @@ const TURN_PHASE = {
 };
 const TURN_CAMPS = ['A', 'B'];
 const TURN_UPGRADE_POOL = [
+  { id: 'coverResourceUp', type: 'cover', title: '基础资源 +1', value: 1 },
   { id: 'bulletBounce', type: 'bullet', title: '反弹 +1', value: 1 },
   { id: 'damageUp', type: 'attr', title: '子弹伤害 +10', value: 10 },
   { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20 },
 ];
+const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy'];
+const TURN_MIRROR_DIRECTIONS = ['bl', 'br', 'tl', 'tr'];
+const TURN_OBSTACLE_LAYOUT_LIBRARY = {
+  1: [
+    [{ x: 0, y: 0 }],
+  ],
+  2: [
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+    [{ x: 0, y: 0 }, { x: 0, y: 1 }],
+  ],
+  3: [
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }],
+    [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }],
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }],
+    [{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }],
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }],
+    [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }],
+  ],
+  4: [
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }],
+    [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 0, y: 3 }],
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }],
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 0, y: 1 }],
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 1 }],
+    [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 1, y: 2 }],
+    [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 1, y: 0 }],
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 1, y: 1 }],
+    [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 1, y: 1 }],
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 1 }],
+    [{ x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 0 }, { x: 2, y: 0 }],
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 0 }],
+    [{ x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 0 }, { x: 2, y: 1 }],
+  ],
+};
 
 const turnRooms = {};
 let nextTurnRoomId = 1;
@@ -399,7 +439,21 @@ function mapZoneTypeFromClient(zoneType) {
   return zoneType === 'black_hole' ? 'blackHole' : zoneType;
 }
 
+function toPlayerViewLayout(player, layout) {
+  if (!Array.isArray(layout)) {
+    return layout;
+  }
+  if (!player || player.camp === 'A') {
+    return layout.map((cell) => ({ x: Math.round(Number(cell && cell.x) || 0), y: Math.round(Number(cell && cell.y) || 0) }));
+  }
+  return layout.map((cell) => ({
+    x: Math.round(Number(cell && cell.x) || 0),
+    y: -Math.round(Number(cell && cell.y) || 0),
+  }));
+}
+
 function mapUpgradeIdFromClient(optionId) {
+  if (optionId === 'cover_resource_up') return 'coverResourceUp';
   if (optionId === 'bullet_bounce') return 'bulletBounce';
   if (optionId === 'extra_shot') return 'multiShot';
   if (optionId === 'damage_up') return 'damageUp';
@@ -445,9 +499,15 @@ function buildTurnViewPayload(player, payload) {
   if (next.inventories) {
     const inventories = {};
     Object.keys(next.inventories).forEach((camp) => {
+      const src = next.inventories[camp] || {};
+      const slots = cloneTurnObstacleSlots(src.obstacleSlots);
+      Object.keys(slots).forEach((type) => {
+        slots[type].layout = toPlayerViewLayout(player, normalizeObstacleLayout(type, slots[type].layout, slots[type].count));
+      });
       inventories[getTurnViewCamp(player, camp)] = {
-        ...next.inventories[camp],
-        black_hole: next.inventories[camp].blackHole || next.inventories[camp].black_hole || 0,
+        ...src,
+        black_hole: src.blackHole || src.black_hole || 0,
+        obstacleSlots: slots,
       };
     });
     next.inventories = inventories;
@@ -472,6 +532,8 @@ function buildTurnViewPayload(player, payload) {
         camp: getTurnViewCamp(player, obstacle.camp),
         x: Math.round(point.x),
         y: Math.round(point.y),
+        layout: toPlayerViewLayout(player, normalizeObstacleLayout(obstacle.slotType || 'normal', obstacle.layout, obstacle.resourceCount)),
+        mirrorDir: normalizeMirrorDirection(obstacle.mirrorDir),
       };
     });
   }
@@ -581,7 +643,8 @@ function createTurnPlayer(ws, camp, index) {
     exp: 0,
     expNeed: TURN_CONFIG.expNeed,
     inventory: {
-      obstacles: TURN_CONFIG.initialObstacles,
+      obstacles: TURN_OBSTACLE_SLOT_TYPES.length,
+      obstacleSlots: createTurnObstacleSlots(),
       blackHole: 0,
     },
     upgrades: {
@@ -598,6 +661,147 @@ function createTurnPlayer(ws, camp, index) {
       aimY: defaultAimY,
     },
   };
+}
+
+function createTurnObstacleSlots() {
+  const slots = {};
+  TURN_OBSTACLE_SLOT_TYPES.forEach((type, index) => {
+    slots[type] = {
+      type,
+      count: 1,
+      layout: buildObstacleLayout(type, 1),
+      shapeKey: type === 'mirror' ? 'single' : '0:0',
+      mirrorDir: type === 'mirror' ? TURN_MIRROR_DIRECTIONS[index % TURN_MIRROR_DIRECTIONS.length] : '',
+      placedObstacleId: '',
+      placedObstacleShapeKey: '',
+    };
+  });
+  return slots;
+}
+
+function cloneTurnObstacleSlots(source) {
+  const next = createTurnObstacleSlots();
+  TURN_OBSTACLE_SLOT_TYPES.forEach((type) => {
+    const slot = source && source[type] ? source[type] : next[type];
+    next[type] = {
+      type,
+      count: clamp(Math.round(Number(slot.count) || 1), 1, TURN_CONFIG.obstacleSlotMaxResources),
+      layout: normalizeObstacleLayout(type, slot.layout, slot.count),
+      shapeKey: String(slot.shapeKey || ''),
+      mirrorDir: type === 'mirror' ? normalizeMirrorDirection(slot.mirrorDir) : '',
+      placedObstacleId: slot.placedObstacleId ? String(slot.placedObstacleId) : '',
+      placedObstacleShapeKey: slot.placedObstacleShapeKey ? String(slot.placedObstacleShapeKey) : '',
+    };
+    if (!next[type].shapeKey) {
+      next[type].shapeKey = getObstacleLayoutKey(next[type].layout);
+    }
+  });
+  return next;
+}
+
+function buildObstacleLayout(type, count) {
+  if (type === 'mirror') {
+    return [{ x: 0, y: 0 }];
+  }
+  const safeCount = clamp(Math.round(Number(count) || 1), 1, TURN_CONFIG.obstacleSlotMaxResources);
+  const candidates = TURN_OBSTACLE_LAYOUT_LIBRARY[safeCount] || TURN_OBSTACLE_LAYOUT_LIBRARY[1];
+  const picked = candidates[Math.floor(Math.random() * candidates.length)] || TURN_OBSTACLE_LAYOUT_LIBRARY[1][0];
+  return picked.map((cell) => ({ x: cell.x, y: cell.y }));
+}
+
+function normalizeObstacleLayout(type, layout, count) {
+  if (type === 'mirror') {
+    return [{ x: 0, y: 0 }];
+  }
+  if (!Array.isArray(layout) || layout.length <= 0) {
+    return buildObstacleLayout(type, count);
+  }
+  return layout.map((cell) => ({
+    x: Math.round(Number(cell && cell.x) || 0),
+    y: Math.round(Number(cell && cell.y) || 0),
+  }));
+}
+
+function getObstacleLayoutKey(layout) {
+  return (Array.isArray(layout) ? layout : [{ x: 0, y: 0 }])
+    .map((cell) => `${Math.round(Number(cell.x) || 0)}:${Math.round(Number(cell.y) || 0)}`)
+    .join('|');
+}
+
+function normalizeMirrorDirection(value) {
+  const dir = String(value || '').toLowerCase();
+  return TURN_MIRROR_DIRECTIONS.indexOf(dir) >= 0 ? dir : 'bl';
+}
+
+function getObstacleMaxHp(slotType, resourceCount) {
+  if (slotType === 'exp' || slotType === 'energy') {
+    return TURN_CONFIG.obstacleBaseHp;
+  }
+  return Math.min(TURN_CONFIG.obstacleMaxHp, TURN_CONFIG.obstacleBaseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+}
+
+function grantRandomTurnObstacleResource(player, roomState) {
+  if (!player) {
+    return null;
+  }
+  if (!player.inventory || !player.inventory.obstacleSlots) {
+    player.inventory = player.inventory || {};
+    player.inventory.obstacleSlots = createTurnObstacleSlots();
+  }
+  const candidates = TURN_OBSTACLE_SLOT_TYPES.filter((type) => {
+    const slot = player.inventory.obstacleSlots[type];
+    return slot && slot.count < TURN_CONFIG.obstacleSlotMaxResources;
+  });
+  if (candidates.length <= 0) {
+    return null;
+  }
+  const seed = (roomState ? roomState.seed : Date.now()) + player.playerId + player.exp + candidates.length;
+  const type = candidates[Math.abs(seed) % candidates.length];
+  const slot = player.inventory.obstacleSlots[type];
+  slot.count = clamp(slot.count + 1, 1, TURN_CONFIG.obstacleSlotMaxResources);
+  refreshTurnObstacleSlotShape(slot, player.playerId, roomState);
+  player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
+  return type;
+}
+
+function refreshTurnObstacleSlotShape(slot, playerId = 0, roomState = null) {
+  if (!slot) {
+    return;
+  }
+  slot.layout = buildObstacleLayout(slot.type, slot.count);
+  slot.shapeKey = getObstacleLayoutKey(slot.layout);
+  if (slot.type === 'mirror') {
+    const seed = (roomState ? roomState.seed : Date.now()) + playerId + Math.floor(Math.random() * 7);
+    slot.mirrorDir = TURN_MIRROR_DIRECTIONS[Math.abs(seed) % TURN_MIRROR_DIRECTIONS.length];
+  }
+}
+
+function resetTurnObstacleSlotsForBuild(roomState, player) {
+  if (!player) {
+    return;
+  }
+  player.inventory = player.inventory || {};
+  player.inventory.obstacleSlots = player.inventory.obstacleSlots || createTurnObstacleSlots();
+  TURN_OBSTACLE_SLOT_TYPES.forEach((type) => {
+    const slot = player.inventory.obstacleSlots[type];
+    if (!slot) {
+      return;
+    }
+    slot.placedObstacleId = '';
+    slot.placedObstacleShapeKey = '';
+    refreshTurnObstacleSlotShape(slot, player.playerId, roomState);
+  });
+  player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
+}
+
+function getTurnObstacleInventoryTotal(player) {
+  if (!player || !player.inventory || !player.inventory.obstacleSlots) {
+    return 0;
+  }
+  return TURN_OBSTACLE_SLOT_TYPES.reduce((total, type) => {
+    const slot = player.inventory.obstacleSlots[type];
+    return total + (slot ? Math.max(0, slot.count) : 0);
+  }, 0);
 }
 
 function createTurnRoom() {
@@ -735,6 +939,7 @@ function getTurnStateSnapshot(roomState) {
     inventories: roomState.players.reduce((result, player) => {
       result[player.camp] = {
         ...player.inventory,
+        obstacleSlots: cloneTurnObstacleSlots(player.inventory.obstacleSlots),
         blackHole: player.inventory.blackHole || 0,
       };
       return result;
@@ -828,11 +1033,17 @@ function startTurnBuildPhase(roomState) {
   roomState.actionSubmitted = false;
   roomState.actedCampsInZone = {};
   roomState.zones = [];
+  roomState.players.forEach((player) => {
+    resetTurnObstacleSlotsForBuild(roomState, player);
+  });
   let displayRound = (roomState.roundIndex | 0) + 1;
   if (roomState.roundIndex > 0) {
     let gain = getRoundObstacleGain(displayRound);
     roomState.players.forEach((player) => {
-      player.inventory.obstacles += gain;
+      for (let i = 0; i < gain; i++) {
+        grantRandomTurnObstacleResource(player, roomState);
+      }
+      player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
     });
   }
   let buildSeconds = getRoundBuildSeconds(displayRound);
@@ -1169,14 +1380,21 @@ function handleTurnBuildAction(ws, msg) {
   const op = payload.op === 'move' || payload.op === 'remove' ? payload.op : 'place';
   const point = sanitizeTurnPointForPlayer(player, payload);
   const obstacleId = String(payload.obstacleId || '');
+  const slotType = TURN_OBSTACLE_SLOT_TYPES.indexOf(String(payload.slotType || '')) >= 0 ? String(payload.slotType) : 'normal';
+  const slots = player.inventory.obstacleSlots || (player.inventory.obstacleSlots = createTurnObstacleSlots());
 
   if (op === 'place') {
     if (!point) {
       sendTurnError(ws, '建造坐标无效', 'invalidPoint');
       return;
     }
-    if (player.inventory.obstacles <= 0) {
+    const slot = slots[slotType];
+    if (!slot || slot.count <= 0) {
       sendTurnError(ws, '掩体库存不足', 'noInventory');
+      return;
+    }
+    if (slot.placedObstacleId) {
+      sendTurnError(ws, '该资源已放置', 'slotAlreadyPlaced');
       return;
     }
     if (!isTurnObstaclePositionFree(roomState, point.x, point.y)) {
@@ -1184,14 +1402,25 @@ function handleTurnBuildAction(ws, msg) {
       return;
     }
     const id = obstacleId || `${player.camp}_${roomState.nextObstacleId++}`;
+    const resourceCount = clamp(Math.round(Number(slot.count) || 1), 1, TURN_CONFIG.obstacleSlotMaxResources);
     roomState.obstacles[id] = {
       id,
       camp: player.camp,
       x: Math.round(point.x),
       y: Math.round(point.y),
-      hp: 1,
+      hp: getObstacleMaxHp(slotType, resourceCount),
+      maxHp: getObstacleMaxHp(slotType, resourceCount),
+      slotType,
+      resourceCount,
+      layout: normalizeObstacleLayout(slotType, slot.layout, resourceCount),
+      cellHp: normalizeObstacleLayout(slotType, slot.layout, resourceCount).map(() => slotType === 'exp' || slotType === 'energy' ? TURN_CONFIG.obstacleBaseHp : TURN_CONFIG.obstacleBaseHp),
+      shapeKey: slot.shapeKey || getObstacleLayoutKey(slot.layout),
+      mirrorDir: slotType === 'mirror' ? normalizeMirrorDirection(slot.mirrorDir) : '',
+      placedByCamp: player.camp,
     };
-    player.inventory.obstacles -= 1;
+    slot.placedObstacleId = id;
+    slot.placedObstacleShapeKey = roomState.obstacles[id].shapeKey;
+    player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
   } else if (op === 'move') {
     if (!point || !obstacleId || !roomState.obstacles[obstacleId]) {
       sendTurnError(ws, '移动掩体参数无效', 'invalidObstacle');
@@ -1219,7 +1448,10 @@ function handleTurnBuildAction(ws, msg) {
       return;
     }
     delete roomState.obstacles[obstacleId];
-    player.inventory.obstacles += 1;
+    if (slots[obstacle.slotType] && slots[obstacle.slotType].placedObstacleId === obstacleId) {
+      slots[obstacle.slotType].placedObstacleId = '';
+    }
+    player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
   }
 
   broadcastTurn(roomState, {
@@ -1230,6 +1462,7 @@ function handleTurnBuildAction(ws, msg) {
     action: {
       op,
       obstacleId: obstacleId || undefined,
+      slotType: op === 'place' ? slotType : undefined,
       x: point ? Math.round(point.x) : undefined,
       y: point ? Math.round(point.y) : undefined,
     },
@@ -1357,6 +1590,29 @@ function evaluateTurnGameEnd(roomState) {
   return true;
 }
 
+function applyTurnEnergyWallRoundEnd(roomState) {
+  if (!roomState || !roomState.players) {
+    return;
+  }
+  roomState.players.forEach((player) => {
+    const towers = Object.keys(roomState.obstacles).reduce((total, id) => {
+      const obstacle = roomState.obstacles[id];
+      if (!obstacle || obstacle.camp !== player.camp || obstacle.slotType !== 'energy') {
+        return total;
+      }
+      return total + Math.max(1, Math.round(Number(obstacle.resourceCount) || 1));
+    }, 0);
+    if (towers <= 0) {
+      return;
+    }
+    const crystal = roomState.crystals[player.camp];
+    if (!crystal) {
+      return;
+    }
+    crystal.hp = Math.min(crystal.maxHp, crystal.hp + towers * TURN_CONFIG.energyWallRoundHeal);
+  });
+}
+
 function handleTurnBulletResult(ws, msg) {
   const roomState = getTurnRoom(ws);
   const player = getTurnPlayer(roomState, ws);
@@ -1366,11 +1622,34 @@ function handleTurnBulletResult(ws, msg) {
   }
   const payload = getTurnActionPayload(msg);
   const destroyedIds = Array.isArray(payload.destroyedIds) ? payload.destroyedIds.slice(0, 20).map(String) : [];
+  const destroyedCells = Array.isArray(payload.destroyedCells) ? payload.destroyedCells.slice(0, 40) : [];
   let awardedExp = 0;
+  destroyedCells.forEach((item) => {
+    const obstacleId = item && item.obstacleId != null ? String(item.obstacleId) : '';
+    const cellIndex = Math.max(0, Math.floor(Number(item && item.cellIndex) || 0));
+    const obstacle = obstacleId ? roomState.obstacles[obstacleId] : null;
+    if (!obstacle || !Array.isArray(obstacle.layout) || obstacle.layout.length <= 0) {
+      return;
+    }
+    if (cellIndex >= obstacle.layout.length) {
+      return;
+    }
+    obstacle.layout.splice(cellIndex, 1);
+    if (Array.isArray(obstacle.cellHp)) {
+      obstacle.cellHp.splice(cellIndex, 1);
+    }
+    obstacle.resourceCount = Math.max(0, obstacle.layout.length);
+    obstacle.shapeKey = getObstacleLayoutKey(obstacle.layout);
+  });
   destroyedIds.forEach((id) => {
     if (roomState.obstacles[id]) {
+      const obstacle = roomState.obstacles[id];
+      const slot = player.inventory.obstacleSlots && obstacle ? player.inventory.obstacleSlots[obstacle.slotType] : null;
+      if (slot && slot.placedObstacleId === id) {
+        slot.placedObstacleId = '';
+      }
       delete roomState.obstacles[id];
-      awardedExp += TURN_CONFIG.obstacleHitExp;
+      awardedExp += obstacle && obstacle.slotType === 'exp' ? TURN_CONFIG.expWallDestroyExp : TURN_CONFIG.obstacleHitExp;
     }
   });
 
@@ -1406,6 +1685,13 @@ function handleTurnBulletResult(ws, msg) {
   });
   broadcastTurnSnapshot(roomState);
   if (!evaluateTurnGameEnd(roomState)) {
+    if (roomState.actionCamp === 'B') {
+      applyTurnEnergyWallRoundEnd(roomState);
+      broadcastTurnSnapshot(roomState);
+      if (evaluateTurnGameEnd(roomState)) {
+        return;
+      }
+    }
     advanceTurnAttack(roomState);
   }
 }
@@ -1414,7 +1700,10 @@ function applyTurnUpgrade(player, option) {
   if (!option) {
     return;
   }
-  if (option.id === 'bulletBounce') {
+  if (option.id === 'coverResourceUp') {
+    const roomState = getTurnRoom(player.socket);
+    grantRandomTurnObstacleResource(player, roomState);
+  } else if (option.id === 'bulletBounce') {
     player.upgrades.bulletBounce += option.value || 1;
   } else if (option.id === 'multiShot') {
     player.upgrades.multiShot += option.value || 1;

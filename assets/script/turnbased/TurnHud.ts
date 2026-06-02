@@ -1,4 +1,4 @@
-import { TurnCamp, TurnUpgradeConfig, TurnUpgradeId } from "../config/TurnGame";
+import { TurnCamp, TurnObstacleResourceType, TurnUpgradeConfig, TurnUpgradeId } from "../config/TurnGame";
 import { TurnStateSnapshot } from "./TurnStateMachine";
 
 const { ccclass, property } = cc._decorator;
@@ -34,12 +34,15 @@ export default class TurnHud extends cc.Component {
     private _buildPaletteCamp: TurnCamp = "A";
     private _buildPaletteCount = 0;
     private _buildPaletteEnabled = false;
+    private _buildPaletteSlots: { type: TurnObstacleResourceType; name: string; count: number; placed: boolean }[] = [];
+    private _selectedBuildSlotType: TurnObstacleResourceType = "normal";
+    private _buildSlotInfoNodes: cc.Node[] = [];
     private _buildDragNode: cc.Node = null;
     private _lastBuildDragWorldPos: cc.Vec2 = null;
 
-    onBuildDragStart: (camp: TurnCamp, worldPos: cc.Vec2) => boolean = null;
-    onBuildDragMove: (camp: TurnCamp, worldPos: cc.Vec2) => void = null;
-    onBuildDragEnd: (camp: TurnCamp, worldPos: cc.Vec2) => void = null;
+    onBuildDragStart: (camp: TurnCamp, slotType: TurnObstacleResourceType, worldPos: cc.Vec2) => boolean = null;
+    onBuildDragMove: (camp: TurnCamp, slotType: TurnObstacleResourceType, worldPos: cc.Vec2) => void = null;
+    onBuildDragEnd: (camp: TurnCamp, slotType: TurnObstacleResourceType, worldPos: cc.Vec2) => void = null;
     onBuildDragCancel: (camp: TurnCamp) => void = null;
 
     onMoveLeft: () => void = null;
@@ -65,13 +68,14 @@ export default class TurnHud extends cc.Component {
         this._buildPaletteBlock = null;
         this._buildPaletteCountLabel = null;
         this._buildPaletteHintLabel = null;
+        this._buildPaletteSlots = [];
         this._buildDragNode = null;
         this._lastBuildDragWorldPos = null;
         this._moveButtonsRoot = null;
         this._moveLeftBtn = null;
         this._moveRightBtn = null;
         this.ensureBuildPalette();
-        this.refreshBuildPalette("A", 0, false);
+        this.refreshBuildPalette("A", [], false);
         this.ensureMoveButtons();
         this.setMoveButtonsEnabled(false);
     }
@@ -113,15 +117,24 @@ export default class TurnHud extends cc.Component {
         this.inventoryLabel.string = "掩体 A: " + aCount + "  |  B: " + bCount;
     }
 
-    refreshBuildPalette(camp: TurnCamp, count: number, enabled: boolean) {
+    refreshBuildPalette(camp: TurnCamp, slots: { type: TurnObstacleResourceType; name: string; count: number; placed: boolean }[], enabled: boolean) {
         this.ensureBuildPalette();
         this._buildPaletteCamp = camp || "A";
-        this._buildPaletteCount = Math.max(0, count || 0);
+        this._buildPaletteSlots = Array.isArray(slots) ? slots.slice() : [];
+        this._buildPaletteCount = this._buildPaletteSlots.reduce((total, item) => total + Math.max(0, item.count || 0), 0);
         this._buildPaletteEnabled = !!enabled;
+        if (!this.getSelectedBuildSlot()) {
+            let firstUsable = this._buildPaletteSlots.find((item) => item.count > 0 && !item.placed);
+            this._selectedBuildSlotType = firstUsable ? firstUsable.type : "normal";
+        }
         this.refreshBuildPaletteView();
         if (!this._buildPaletteEnabled) {
             this.cancelBuildDrag();
         }
+    }
+
+    getSelectedBuildSlotType(): TurnObstacleResourceType {
+        return this._selectedBuildSlotType;
     }
 
     setBuildPalettePosition(position: cc.Vec2) {
@@ -374,16 +387,16 @@ export default class TurnHud extends cc.Component {
         this._buildPaletteRoot = new cc.Node("TurnBuildPalette");
         this._buildPaletteRoot.parent = this.node;
         this._buildPaletteRoot.setPosition(-220, -235);
-        this._buildPaletteRoot.setContentSize(180, 104);
+        this._buildPaletteRoot.setContentSize(220, 156);
         this._buildPaletteRoot.zIndex = 20;
 
         let bg = this._buildPaletteRoot.addComponent(cc.Graphics);
         bg.fillColor = new cc.Color(24, 30, 42, 220);
-        bg.roundRect(-90, -52, 180, 104, 12);
+        bg.roundRect(-110, -78, 220, 156, 12);
         bg.fill();
         bg.strokeColor = new cc.Color(215, 225, 240, 140);
         bg.lineWidth = 2;
-        bg.roundRect(-90, -52, 180, 104, 12);
+        bg.roundRect(-110, -78, 220, 156, 12);
         bg.stroke();
 
         let title = this.createLabel("己方掩体", 20, 0, 30);
@@ -391,11 +404,11 @@ export default class TurnHud extends cc.Component {
 
         this._buildPaletteBlock = new cc.Node("BuildPaletteBlock");
         this._buildPaletteBlock.parent = this._buildPaletteRoot;
-        this._buildPaletteBlock.setPosition(-40, -4);
+        this._buildPaletteBlock.setPosition(0, 18);
 
-        this._buildPaletteCountLabel = this.createLabel("x0", 22, 30, -3);
+        this._buildPaletteCountLabel = this.createLabel("总数 x0", 20, 0, -48);
         this._buildPaletteCountLabel.node.parent = this._buildPaletteRoot;
-        this._buildPaletteHintLabel = this.createLabel("等待改造期", 15, 0, -34);
+        this._buildPaletteHintLabel = this.createLabel("等待改造期", 15, 0, -66);
         this._buildPaletteHintLabel.node.parent = this._buildPaletteRoot;
         this._buildPaletteHintLabel.node.color = new cc.Color(190, 200, 220, 255);
 
@@ -410,8 +423,8 @@ export default class TurnHud extends cc.Component {
             return;
         }
 
-        this.drawBuildBlock(this._buildPaletteBlock, this._buildPaletteCamp, this.isBuildPaletteAvailable());
-        this._buildPaletteCountLabel.string = "x" + this._buildPaletteCount;
+        this.drawBuildSlots(this._buildPaletteBlock);
+        this._buildPaletteCountLabel.string = "总数 x" + this._buildPaletteCount;
         this._buildPaletteCountLabel.node.color = this.isBuildPaletteAvailable()
             ? new cc.Color(245, 245, 245, 255)
             : new cc.Color(150, 160, 178, 255);
@@ -444,8 +457,167 @@ export default class TurnHud extends cc.Component {
         graphics.stroke();
     }
 
+    private drawBuildSlots(target: cc.Node) {
+        let graphics = target.getComponent(cc.Graphics);
+        if (!graphics) {
+            graphics = target.addComponent(cc.Graphics);
+        }
+        graphics.clear();
+        this.clearBuildSlotInfoNodes();
+        let slots = this._buildPaletteSlots;
+        let width = 34;
+        let gap = 16;
+        let startX = -((slots.length - 1) * (width + gap)) / 2;
+        for (let i = 0; i < slots.length; i++) {
+            let slot = slots[i];
+            let x = startX + i * (width + gap);
+            let y = 0;
+            graphics.fillColor = this.getSlotColor(slot.type, slot.placed);
+            graphics.roundRect(x - width / 2, y - width / 2, width, width, 6);
+            graphics.fill();
+            graphics.strokeColor = new cc.Color(240, 240, 240, slot.placed ? 120 : 220);
+            graphics.lineWidth = 2;
+            graphics.roundRect(x - width / 2, y - width / 2, width, width, 6);
+            graphics.stroke();
+            this.drawSlotMark(graphics, slot.type, x, y);
+            if (slot.type === this._selectedBuildSlotType) {
+                graphics.strokeColor = new cc.Color(255, 235, 120, 255);
+                graphics.lineWidth = 3;
+                graphics.roundRect(x - width / 2 - 3, y - width / 2 - 3, width + 6, width + 6, 8);
+                graphics.stroke();
+            }
+            this.createBuildSlotInfo(slot, x, y - 28);
+        }
+    }
+
+    private clearBuildSlotInfoNodes() {
+        for (let i = 0; i < this._buildSlotInfoNodes.length; i++) {
+            if (this._buildSlotInfoNodes[i]) {
+                this._buildSlotInfoNodes[i].destroy();
+            }
+        }
+        this._buildSlotInfoNodes = [];
+    }
+
+    private createBuildSlotInfo(slot: { type: TurnObstacleResourceType; name: string; count: number; placed: boolean }, x: number, y: number) {
+        let root = new cc.Node("BuildSlotInfo");
+        root.parent = this._buildPaletteBlock;
+        root.setPosition(x, y);
+        this._buildSlotInfoNodes.push(root);
+
+        let name = this.createChildLabel(root, this.getSlotDisplayName(slot.type, slot.name), 11, 0, 0);
+        name.node.color = slot.type === this._selectedBuildSlotType
+            ? new cc.Color(255, 235, 120, 255)
+            : new cc.Color(225, 230, 238, 255);
+
+        let status = this.createChildLabel(root, "x" + Math.max(0, slot.count || 0) + " " + (slot.placed ? "已放置" : "未放置"), 10, 0, -14);
+        status.node.color = slot.placed
+            ? new cc.Color(180, 188, 200, 255)
+            : new cc.Color(170, 240, 180, 255);
+    }
+
+    private createChildLabel(parent: cc.Node, text: string, size: number, x: number, y: number): cc.Label {
+        let node = new cc.Node("TurnHudChildLabel");
+        node.parent = parent;
+        node.setPosition(x, y);
+        node.color = new cc.Color(245, 245, 245, 255);
+        let label = node.addComponent(cc.Label);
+        label.string = text;
+        label.fontSize = size;
+        label.lineHeight = size + 2;
+        label.horizontalAlign = cc.Label.HorizontalAlign.CENTER;
+        return label;
+    }
+
+    private getSlotDisplayName(type: TurnObstacleResourceType, fallback?: string): string {
+        if (type === "mirror") {
+            return "镜面墙";
+        }
+        if (type === "exp") {
+            return "经验墙";
+        }
+        if (type === "energy") {
+            return "能量墙";
+        }
+        return fallback || "普通方块";
+    }
+
+    private getSlotColor(type: TurnObstacleResourceType, placed: boolean): cc.Color {
+        if (type === "mirror") {
+            return placed ? new cc.Color(126, 140, 170, 200) : new cc.Color(180, 196, 236, 255);
+        }
+        if (type === "exp") {
+            return placed ? new cc.Color(144, 126, 78, 200) : new cc.Color(223, 173, 62, 255);
+        }
+        if (type === "energy") {
+            return placed ? new cc.Color(76, 120, 155, 200) : new cc.Color(72, 168, 228, 255);
+        }
+        return placed ? new cc.Color(90, 104, 92, 200) : new cc.Color(99, 156, 106, 255);
+    }
+
+    private drawSlotMark(graphics: cc.Graphics, type: TurnObstacleResourceType, x: number, y: number) {
+        graphics.strokeColor = new cc.Color(250, 250, 250, 220);
+        graphics.lineWidth = 2;
+        if (type === "mirror") {
+            graphics.moveTo(x - 10, y - 10);
+            graphics.lineTo(x + 10, y + 10);
+        }
+        else if (type === "exp") {
+            graphics.moveTo(x - 7, y);
+            graphics.lineTo(x + 7, y);
+            graphics.moveTo(x, y - 7);
+            graphics.lineTo(x, y + 7);
+        }
+        else if (type === "energy") {
+            graphics.moveTo(x - 5, y + 8);
+            graphics.lineTo(x + 1, y + 1);
+            graphics.lineTo(x - 2, y + 1);
+            graphics.lineTo(x + 5, y - 8);
+        }
+        else {
+            graphics.rect(x - 8, y - 8, 16, 16);
+        }
+        graphics.stroke();
+    }
+
     private isBuildPaletteAvailable(): boolean {
-        return this._buildPaletteEnabled && this._buildPaletteCount > 0;
+        return this._buildPaletteEnabled && !!this.getSelectedBuildSlot() && this._buildPaletteCount > 0;
+    }
+
+    private getSelectedBuildSlot() {
+        for (let i = 0; i < this._buildPaletteSlots.length; i++) {
+            let slot = this._buildPaletteSlots[i];
+            if (slot.type === this._selectedBuildSlotType) {
+                return slot;
+            }
+        }
+        return null;
+    }
+
+    private getSlotTypeAtWorldPos(worldPos: cc.Vec2): TurnObstacleResourceType | null {
+        if (!this._buildPaletteBlock || !worldPos) {
+            return null;
+        }
+        let local = this._buildPaletteBlock.convertToNodeSpaceAR(worldPos);
+        let slots = this._buildPaletteSlots;
+        let width = 34;
+        let gap = 8;
+        let startX = -((slots.length - 1) * (width + gap)) / 2;
+        for (let i = 0; i < slots.length; i++) {
+            let x = startX + i * (width + gap);
+            if (local.x >= x - width / 2 && local.x <= x + width / 2 && local.y >= -width / 2 && local.y <= width / 2) {
+                return slots[i].type;
+            }
+        }
+        return null;
+    }
+
+    private selectBuildSlot(type: TurnObstacleResourceType) {
+        if (!type) {
+            return;
+        }
+        this._selectedBuildSlotType = type;
+        this.refreshBuildPaletteView();
     }
 
     private createBuildDragNode(worldPos: cc.Vec2) {
@@ -469,12 +641,20 @@ export default class TurnHud extends cc.Component {
 
     private onBuildPaletteTouchStart(event: cc.Event.EventTouch) {
         event.stopPropagation();
+        let worldPos = cc.v2(event.getLocation());
+        let touchedType = this.getSlotTypeAtWorldPos(worldPos);
+        if (touchedType) {
+            this.selectBuildSlot(touchedType);
+        }
         if (!this.isBuildPaletteAvailable()) {
             return;
         }
-        let worldPos = cc.v2(event.getLocation());
+        let selected = this.getSelectedBuildSlot();
+        if (!selected || selected.count <= 0 || selected.placed) {
+            return;
+        }
         this._lastBuildDragWorldPos = cc.v2(worldPos);
-        if (this.onBuildDragStart && this.onBuildDragStart(this._buildPaletteCamp, worldPos) === false) {
+        if (this.onBuildDragStart && this.onBuildDragStart(this._buildPaletteCamp, this._selectedBuildSlotType, worldPos) === false) {
             this._lastBuildDragWorldPos = null;
             return;
         }
@@ -490,7 +670,7 @@ export default class TurnHud extends cc.Component {
         this._lastBuildDragWorldPos = cc.v2(worldPos);
         this.updateBuildDragNode(worldPos);
         if (this.onBuildDragMove) {
-            this.onBuildDragMove(this._buildPaletteCamp, worldPos);
+            this.onBuildDragMove(this._buildPaletteCamp, this._selectedBuildSlotType, worldPos);
         }
     }
 
@@ -502,7 +682,7 @@ export default class TurnHud extends cc.Component {
         let worldPos = cc.v2(event.getLocation());
         this._lastBuildDragWorldPos = cc.v2(worldPos);
         if (this.onBuildDragEnd) {
-            this.onBuildDragEnd(this._buildPaletteCamp, worldPos);
+            this.onBuildDragEnd(this._buildPaletteCamp, this._selectedBuildSlotType, worldPos);
         }
         this.cancelBuildDrag();
     }
@@ -514,7 +694,7 @@ export default class TurnHud extends cc.Component {
         event.stopPropagation();
         let worldPos = event && event.getLocation ? cc.v2(event.getLocation()) : this._lastBuildDragWorldPos;
         if (worldPos && this.onBuildDragEnd) {
-            this.onBuildDragEnd(this._buildPaletteCamp, worldPos);
+            this.onBuildDragEnd(this._buildPaletteCamp, this._selectedBuildSlotType, worldPos);
         }
         else if (this.onBuildDragCancel) {
             this.onBuildDragCancel(this._buildPaletteCamp);
