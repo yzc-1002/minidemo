@@ -1047,12 +1047,23 @@ function broadcastTurnSnapshot(roomState) {
 }
 
 function getRoundObstacleGain(displayRound) {
-  let r = Math.max(1, displayRound | 0);
-  return Math.min(r + 1, TURN_CONFIG.obstacleMaxPerRound);
+  let gain = Math.max(1, Number(TURN_CONFIG.obstacleGainPerRound) || 1);
+  return Math.min(gain, TURN_CONFIG.obstacleMaxPerRound);
 }
 
 function getRoundBuildSeconds(displayRound) {
   return getRoundObstacleGain(displayRound) * TURN_CONFIG.buildSecondsPerObstacle;
+}
+
+function getBuildSecondsByObstacleSlots(slots) {
+  if (!slots) {
+    return 0;
+  }
+  const total = TURN_OBSTACLE_SLOT_TYPES.reduce((sum, type) => {
+    const slot = slots[type];
+    return sum + (slot ? clamp(Math.round(Number(slot.count) || 0), 0, TURN_CONFIG.obstacleSlotMaxResources) : 0);
+  }, 0);
+  return total * TURN_CONFIG.buildSecondsPerObstacle;
 }
 
 function getTurnPhaseDurationSeconds(phase, displayRound) {
@@ -1132,7 +1143,9 @@ function startTurnBuildPhase(roomState) {
       player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
     });
   }
-  let buildSeconds = getRoundBuildSeconds(displayRound);
+  let buildSeconds = roomState.players.reduce((maxSeconds, player) => {
+    return Math.max(maxSeconds, getBuildSecondsByObstacleSlots(player && player.inventory ? player.inventory.obstacleSlots : null));
+  }, 0);
   logTurn(roomState, `phase build round=${roomState.roundIndex} buildSeconds=${buildSeconds}`);
   setTurnPhase(roomState, TURN_PHASE.BUILD, buildSeconds, () => {
     if (roomState.roundIndex <= 0) {

@@ -1,4 +1,4 @@
-import { TurnCamp, TurnGameConfig, TurnPhase, TURN_GAME_CONFIG, getRoundBuildSeconds } from "../config/TurnGame";
+import { TurnCamp, TurnGameConfig, TurnPhase, TURN_GAME_CONFIG, getBuildSecondsByObstacleTotal, getRoundBuildSeconds } from "../config/TurnGame";
 
 export interface TurnStateSnapshot {
     phase: TurnPhase;
@@ -26,6 +26,7 @@ export class TurnStateMachine {
     private _phaseDuration = 0;
     private _running = false;
     private _winnerCamp: TurnCamp = null;
+    private _buildResourceTotal = 0;
 
     init(config?: TurnGameConfig, listener?: TurnStateMachineListener) {
         this._config = config || TURN_GAME_CONFIG;
@@ -41,6 +42,7 @@ export class TurnStateMachine {
         this._phaseDuration = 0;
         this._running = false;
         this._winnerCamp = null;
+        this._buildResourceTotal = 0;
     }
 
     startMatch() {
@@ -100,6 +102,14 @@ export class TurnStateMachine {
         this.advancePhase();
     }
 
+    setBuildResourceTotal(total: number) {
+        this._buildResourceTotal = Math.max(0, Math.round(Number(total) || 0));
+        if (this._phase === "build") {
+            this._phaseDuration = getBuildSecondsByObstacleTotal(this._buildResourceTotal, this._config);
+            this.emitTimer();
+        }
+    }
+
     getSnapshot(): TurnStateSnapshot {
         let left = Math.max(0, this._phaseDuration - this._phaseElapsed);
         return {
@@ -153,7 +163,9 @@ export class TurnStateMachine {
         this._phaseElapsed = 0;
 
         if (phase === "build") {
-            this._phaseDuration = getRoundBuildSeconds(this._roundIndex, this._config);
+            this._phaseDuration = this._buildResourceTotal > 0
+                ? getBuildSecondsByObstacleTotal(this._buildResourceTotal, this._config)
+                : getRoundBuildSeconds(this._roundIndex, this._config);
         }
         else if (phase === "zone") {
             this._phaseDuration = this._config.zoneSeconds;

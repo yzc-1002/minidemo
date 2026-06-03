@@ -124,13 +124,19 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
 
 export function getRoundObstacleGain(roundIndex: number, config?: TurnGameConfig): number {
     let cfg = config || TURN_GAME_CONFIG;
-    let round = Math.max(1, roundIndex | 0);
-    return Math.min(round + 1, cfg.obstacleMaxPerRound);
+    let gain = Math.max(1, Number(cfg.obstacleGainPerRound) || 1);
+    return Math.min(gain, cfg.obstacleMaxPerRound);
 }
 
 export function getRoundBuildSeconds(roundIndex: number, config?: TurnGameConfig): number {
     let cfg = config || TURN_GAME_CONFIG;
     return getRoundObstacleGain(roundIndex, cfg) * cfg.buildSecondsPerObstacle;
+}
+
+export function getBuildSecondsByObstacleTotal(totalResources: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let total = Math.max(0, Math.round(Number(totalResources) || 0));
+    return total * cfg.buildSecondsPerObstacle;
 }
 
 if (typeof yyp !== "undefined") {

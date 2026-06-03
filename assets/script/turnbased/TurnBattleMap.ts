@@ -1,4 +1,4 @@
-import { TurnAssistZoneType, TurnCamp, TurnGameConfig, TurnMirrorDirection, TurnObstacleResourceType, TurnPhase, TurnUpgradeConfig, TurnUpgradeId, TURN_GAME_CONFIG, getRoundObstacleGain } from "../config/TurnGame";
+import { TurnAssistZoneType, TurnCamp, TurnGameConfig, TurnMirrorDirection, TurnObstacleResourceType, TurnPhase, TurnUpgradeConfig, TurnUpgradeId, TURN_GAME_CONFIG } from "../config/TurnGame";
 import { GameMap } from "../GameMap";
 import { TurnStateSnapshot } from "./TurnStateMachine";
 
@@ -349,11 +349,8 @@ export default class TurnBattleMap extends cc.Component {
         this.resetBuildSlotsForNewRound("A");
         this.resetBuildSlotsForNewRound("B");
         if (roundIndex > 1) {
-            let gain = getRoundObstacleGain(roundIndex, this._config);
-            for (let i = 0; i < gain; i++) {
-                this.grantRandomObstacleResource("A");
-                this.grantRandomObstacleResource("B");
-            }
+            this.grantRandomObstacleResource("A");
+            this.grantRandomObstacleResource("B");
             if (this._serverMode && this.getCampStats("A").blackHoleUnlocked) {
                 this.getCampStats("A").zoneInventory.black_hole += 1;
             }
@@ -524,6 +521,10 @@ export default class TurnBattleMap extends cc.Component {
             total += Math.max(0, inventory[slots[i].type] ? inventory[slots[i].type].count : 0);
         }
         return total;
+    }
+
+    getObstacleSlotTotal(camp: TurnCamp): number {
+        return this.getObstacleInventory(camp);
     }
 
     getObstacleSlotStates(camp: TurnCamp): TurnObstacleSlotState[] {

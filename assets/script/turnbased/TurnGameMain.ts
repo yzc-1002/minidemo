@@ -250,6 +250,7 @@ export default class TurnGameMain extends cc.Component {
         if (snapshot.phase === "build" && this._lastRoundIndex !== snapshot.roundIndex) {
             this._lastRoundIndex = snapshot.roundIndex;
             this._battleMap.refreshForNewRound(snapshot.roundIndex);
+            this._stateMachine.setBuildResourceTotal(this.getBuildPhaseObstacleTotalForLocal());
             this.refreshHudNumbers();
         }
 
@@ -301,6 +302,12 @@ export default class TurnGameMain extends cc.Component {
             this._battleMap.isBuildPhaseActiveForCamp(localCamp),
         );
         this.refreshMoveButtonsEnabled();
+    }
+
+    private getBuildPhaseObstacleTotalForLocal(): number {
+        let totalA = this._battleMap ? this._battleMap.getObstacleSlotTotal("A") : 0;
+        let totalB = this._battleMap ? this._battleMap.getObstacleSlotTotal("B") : 0;
+        return Math.max(totalA, totalB);
     }
 
     private beginUpgradePhase() {
