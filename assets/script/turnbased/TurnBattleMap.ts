@@ -75,6 +75,7 @@ interface TurnTankState {
 interface TurnObstacleState {
     id: string;
     camp: TurnCamp;
+    originSlotId: string;
     slotType: TurnObstacleResourceType;
     node: cc.Node;
     radius: number;
@@ -92,6 +93,7 @@ interface TurnObstacleState {
 
 interface TurnBuildPreviewState {
     camp: TurnCamp;
+    slotId: string;
     slotType: TurnObstacleResourceType;
     node: cc.Node;
     tile: cc.Vec2;
@@ -100,14 +102,15 @@ interface TurnBuildPreviewState {
 }
 
 interface TurnObstacleSlotState {
+    slotId: string;
     type: TurnObstacleResourceType;
+    name: string;
     count: number;
     layout: cc.Vec2[];
     shapeKey: string;
     mirrorDir: TurnMirrorDirection | "";
+    placed: boolean;
     placedObstacleId: string;
-    placedObstacleShapeKey: string;
-    placedCount: number;
 }
 
 interface TurnStaticObstacleState {
@@ -142,9 +145,9 @@ interface TurnCampStats {
     damageBonus: number;
     extraShots: number;
     bulletBounce: number;
-    blackHoleUnlocked: boolean;
-    zoneInventory: { [type: string]: number };
     energyTowers: number;
+    roundResourceBonus: number;
+    upgradeStacks: { [id: string]: number };
 }
 
 @ccclass
@@ -159,15 +162,14 @@ export default class TurnBattleMap extends cc.Component {
     onAttackFired: () => void = null;
     onBulletsCleared: () => void = null;
     onGameFinished: (winnerCamp: TurnCamp) => void = null;
-    onBuildIntent: (action: { op: string; obstacleId?: string; slotType?: TurnObstacleResourceType; x: number; y: number; }) => void = null;
-    onZoneIntent: (action: { zoneType: string; x: number; y: number; }) => void = null;
+    onBuildIntent: (action: { op: string; obstacleId?: string; slotId?: string; slotType?: TurnObstacleResourceType; x: number; y: number; }) => void = null;
     onAttackIntent: (action: { fromX: number; fromY: number; aimX: number; aimY: number; shotIndex: number; }) => void = null;
     onTankPoseIntent: (action: { x: number; y: number; aimX: number; aimY: number; }) => void = null;
 
     private _config: TurnGameConfig = TURN_GAME_CONFIG;
     private _crystals: { [camp: string]: TurnCrystalState } = {};
     private _tanks: { [camp: string]: TurnTankState } = {};
-    private _obstacleInventory: { [camp: string]: { [type: string]: TurnObstacleSlotState } } = { A: null, B: null };
+    private _obstacleInventory: { [camp: string]: TurnObstacleSlotState[] } = { A: null, B: null };
     private _obstacles: TurnObstacleState[] = [];
     private _staticObstacleSeeds: TurnStaticObstacleState[] = [];
     private _staticObstacles: TurnStaticObstacleState[] = [];
@@ -308,8 +310,8 @@ export default class TurnBattleMap extends cc.Component {
         this._attackTouchActive = false;
         this._lastSentTankPoseAt = 0;
         this._obstacleInventory = {
-            A: this.createObstacleInventory(),
-            B: this.createObstacleInventory(),
+            A: [],
+            B: [],
         };
 
         this.node.off(cc.Node.EventType.TOUCH_START, this.onTouchStart, this);
@@ -346,18 +348,11 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     refreshForNewRound(roundIndex: number) {
-        this.resetBuildSlotsForNewRound("A");
-        this.resetBuildSlotsForNewRound("B");
-        if (roundIndex > 1) {
-            this.grantRandomObstacleResource("A");
-            this.grantRandomObstacleResource("B");
-            if (this._serverMode && this.getCampStats("A").blackHoleUnlocked) {
-                this.getCampStats("A").zoneInventory.black_hole += 1;
-            }
-            if (this._serverMode && this.getCampStats("B").blackHoleUnlocked) {
-                this.getCampStats("B").zoneInventory.black_hole += 1;
-            }
-        }
+        this.generateRoundState("A", roundIndex);
+        this.generateRoundState("B", roundIndex);
+        this.refreshStaticObstacleSelection();
+        this.renderStaticObstacles();
+        this.spawnRoundAssistZone();
         this.refreshBuildInteractionView();
     }
 
@@ -409,10 +404,10 @@ export default class TurnBattleMap extends cc.Component {
         statsB.extraShots = Math.max(0, Number(upgradesB.multiShot) || 0);
         statsA.bulletBounce = Math.max(0, Number(upgradesA.bulletBounce) || 0);
         statsB.bulletBounce = Math.max(0, Number(upgradesB.bulletBounce) || 0);
-        statsA.blackHoleUnlocked = !!(upgradesA.zones && upgradesA.zones.indexOf("black_hole") >= 0);
-        statsB.blackHoleUnlocked = !!(upgradesB.zones && upgradesB.zones.indexOf("black_hole") >= 0);
-        statsA.zoneInventory.black_hole = Math.max(0, Number(inventoriesA.black_hole) || 0);
-        statsB.zoneInventory.black_hole = Math.max(0, Number(inventoriesB.black_hole) || 0);
+        statsA.roundResourceBonus = Math.max(0, Number(upgradesA.roundResourceBonus) || 0);
+        statsB.roundResourceBonus = Math.max(0, Number(upgradesB.roundResourceBonus) || 0);
+        statsA.upgradeStacks = upgradesA.stacks || {};
+        statsB.upgradeStacks = upgradesB.stacks || {};
         statsA.energyTowers = this.countPlacedEnergyTowers("A");
         statsB.energyTowers = this.countPlacedEnergyTowers("B");
 
@@ -511,33 +506,24 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     getObstacleInventory(camp: TurnCamp): number {
-        let inventory = this._obstacleInventory[camp];
-        if (!inventory) {
-            return 0;
-        }
+        return this.getRoundResourceTotal(camp);
+    }
+
+    getRoundResourceTotal(camp: TurnCamp): number {
+        let slots = this._obstacleInventory[camp] || [];
         let total = 0;
-        let slots = this._config.obstacleSlots || [];
         for (let i = 0; i < slots.length; i++) {
-            total += Math.max(0, inventory[slots[i].type] ? inventory[slots[i].type].count : 0);
+            total += Math.max(0, Number(slots[i].count) || 0);
         }
         return total;
     }
 
     getObstacleSlotTotal(camp: TurnCamp): number {
-        return this.getObstacleInventory(camp);
+        return this.getRoundResourceTotal(camp);
     }
 
     getObstacleSlotStates(camp: TurnCamp): TurnObstacleSlotState[] {
-        let inventory = this._obstacleInventory[camp] || this.createObstacleInventory();
-        let slots = this._config.obstacleSlots || [];
-        let result: TurnObstacleSlotState[] = [];
-        for (let i = 0; i < slots.length; i++) {
-            let state = inventory[slots[i].type];
-            if (state) {
-                result.push(state);
-            }
-        }
-        return result;
+        return (this._obstacleInventory[camp] || []).slice();
     }
 
     getCrystalHp(camp: TurnCamp): number {
@@ -555,10 +541,6 @@ export default class TurnBattleMap extends cc.Component {
 
     getCampExpNeed(camp: TurnCamp): number {
         return this.getCampStats(camp).expNeed;
-    }
-
-    getBlackHoleInventory(camp: TurnCamp): number {
-        return this.getCampStats(camp).zoneInventory.black_hole || 0;
     }
 
     getActiveAssistZoneCount(): number {
@@ -586,6 +568,13 @@ export default class TurnBattleMap extends cc.Component {
         this.addExp("B", this._config.baseExpPerRound, cc.v2(160, 0));
     }
 
+    settleRound() {
+        this.grantRoundBaseExp();
+        this.applyRoundSettlementForCamp("A");
+        this.applyRoundSettlementForCamp("B");
+        this.emitStatsChanged();
+    }
+
     canCampUpgrade(camp: TurnCamp): boolean {
         let stats = this.getCampStats(camp);
         return stats.exp >= stats.expNeed && this.getUpgradeOptions(camp).length > 0;
@@ -596,16 +585,23 @@ export default class TurnBattleMap extends cc.Component {
         let pool: TurnUpgradeConfig[] = [];
         for (let i = 0; i < this._config.upgradePool.length; i++) {
             let option = this._config.upgradePool[i];
-            if (option.id === "unlock_black_hole") {
+            let stacks = Math.max(0, Number(stats.upgradeStacks[option.id]) || 0);
+            if (option.maxStacks != null && stacks >= option.maxStacks) {
                 continue;
             }
             pool.push(option);
         }
 
         let options: TurnUpgradeConfig[] = [];
-        let start = (stats.level + (camp === "A" ? 0 : 2)) % Math.max(1, pool.length);
-        for (let i = 0; i < pool.length && options.length < 3; i++) {
-            options.push(pool[(start + i) % pool.length]);
+        let shuffled = pool.slice();
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            let swapIndex = Math.floor(Math.random() * (i + 1));
+            let temp = shuffled[i];
+            shuffled[i] = shuffled[swapIndex];
+            shuffled[swapIndex] = temp;
+        }
+        for (let i = 0; i < shuffled.length && options.length < 3; i++) {
+            options.push(shuffled[i]);
         }
         return options;
     }
@@ -619,11 +615,12 @@ export default class TurnBattleMap extends cc.Component {
         stats.exp -= stats.expNeed;
         stats.expNeed += 20;
         stats.level += 1;
+        stats.upgradeStacks[upgradeId] = Math.max(0, Number(stats.upgradeStacks[upgradeId]) || 0) + 1;
         if (upgradeId === "bullet_bounce") {
             stats.bulletBounce += 1;
         }
         else if (upgradeId === "cover_resource_up") {
-            this.grantRandomObstacleResource(camp);
+            stats.roundResourceBonus += 1;
         }
         else if (upgradeId === "extra_shot") {
             stats.extraShots += 1;
@@ -633,10 +630,6 @@ export default class TurnBattleMap extends cc.Component {
         }
         else if (upgradeId === "crystal_hp_up") {
             this.increaseCrystalHp(camp, 20);
-        }
-        else if (upgradeId === "unlock_black_hole") {
-            stats.blackHoleUnlocked = true;
-            stats.zoneInventory.black_hole += this._config.zoneInventoryOnUnlock;
         }
 
         this.showFloatText("阵营 " + camp + " 升级", cc.v2(camp === "A" ? -150 : 150, 0), cc.Color.YELLOW);
@@ -652,9 +645,9 @@ export default class TurnBattleMap extends cc.Component {
         );
     }
 
-    isBuildPositionValid(camp: TurnCamp, position: cc.Vec2, ignoreObstacleId?: string, slotType: TurnObstacleResourceType = "normal"): boolean {
+    isBuildPositionValid(camp: TurnCamp, position: cc.Vec2, ignoreObstacleId?: string, slotId?: string, slotType: TurnObstacleResourceType = "normal"): boolean {
         let buildArea = this.getBuildArea(camp);
-        let slot = this.getObstacleSlotState(camp, slotType);
+        let slot = slotId ? this.getObstacleSlotState(camp, slotId) : null;
         let obstacleRects = this.getDynamicObstacleRectsAt(position, slot ? slot.layout : null, slotType);
         if (!buildArea || obstacleRects.length <= 0) {
             return false;
@@ -683,6 +676,13 @@ export default class TurnBattleMap extends cc.Component {
                 }
             }
 
+            for (let zoneIndex = 0; zoneIndex < this._assistZones.length; zoneIndex++) {
+                let zone = this._assistZones[zoneIndex];
+                if (this.circleRectIntersects(this.getNodePosition(zone.node), zone.radius, obstacleRect)) {
+                    return false;
+                }
+            }
+
             let crystalA = this._crystals.A;
             let crystalB = this._crystals.B;
             if ((crystalA && this.circleRectIntersects(this.getNodePosition(crystalA.node), crystalA.radius, obstacleRect))
@@ -703,9 +703,9 @@ export default class TurnBattleMap extends cc.Component {
         return true;
     }
 
-    beginPaletteBuildDrag(camp: TurnCamp, position: cc.Vec2, slotType?: TurnObstacleResourceType): boolean {
-        this._selectedBuildSlotType = slotType || this._selectedBuildSlotType || "normal";
-        let slot = slotType ? this.getObstacleSlotState(camp, slotType) : this.getFirstAvailableObstacleSlot(camp);
+    beginPaletteBuildDrag(camp: TurnCamp, position: cc.Vec2, slotId?: string): boolean {
+        let slot = slotId ? this.getObstacleSlotState(camp, slotId) : this.getFirstAvailableObstacleSlot(camp);
+        this._selectedBuildSlotType = slot ? slot.type : this._selectedBuildSlotType || "normal";
         if (!this.isBuildPhaseActiveForCamp(camp) || !slot || !this.canPlaceFromSlot(slot)) {
             return false;
         }
@@ -713,6 +713,7 @@ export default class TurnBattleMap extends cc.Component {
         this.ensureBuildOverlayLayers();
         this._palettePreview = {
             camp: camp,
+            slotId: slot.slotId,
             slotType: slot.type,
             node: this.createBuildPreviewNode(camp, slot.type),
             tile: null,
@@ -725,39 +726,43 @@ export default class TurnBattleMap extends cc.Component {
         return true;
     }
 
-    updatePaletteBuildDrag(camp: TurnCamp, position: cc.Vec2, slotType?: TurnObstacleResourceType) {
+    updatePaletteBuildDrag(camp: TurnCamp, position: cc.Vec2, slotId?: string) {
         if (!this._palettePreview || this._palettePreview.camp !== camp) {
             return;
         }
-        if (slotType) {
-            this._palettePreview.slotType = slotType;
-            this._selectedBuildSlotType = slotType;
+        if (slotId) {
+            let slot = this.getObstacleSlotState(camp, slotId);
+            if (slot) {
+                this._palettePreview.slotId = slot.slotId;
+                this._palettePreview.slotType = slot.type;
+                this._selectedBuildSlotType = slot.type;
+            }
         }
 
         let snappedPosition = this.snapBuildPosition(position);
         let tile = this.worldToTile(snappedPosition);
-        let valid = !!tile && this.isBuildPositionValid(camp, snappedPosition, undefined, this._palettePreview.slotType);
+        let valid = !!tile && this.isBuildPositionValid(camp, snappedPosition, undefined, this._palettePreview.slotId, this._palettePreview.slotType);
         this._palettePreview.tile = tile;
         this._palettePreview.snappedPosition = snappedPosition;
         this._palettePreview.valid = valid;
         this._palettePreview.node.setPosition(snappedPosition.x, snappedPosition.y);
         this._palettePreview.node.opacity = valid ? 228 : 168;
-        this.updatePreviewNodeView(this._palettePreview.node, camp, valid, this._palettePreview.slotType);
+        this.updatePreviewNodeView(this._palettePreview.node, camp, valid, this._palettePreview.slotType, this._palettePreview.slotId);
         this.refreshBuildInteractionView();
     }
 
-    finishPaletteBuildDrag(camp: TurnCamp, position: cc.Vec2, slotType?: TurnObstacleResourceType) {
-        let finalSlotType = slotType || (this._palettePreview ? this._palettePreview.slotType : this.getFirstAvailableObstacleSlotType(camp));
+    finishPaletteBuildDrag(camp: TurnCamp, position: cc.Vec2, slotId?: string) {
+        let finalSlotId = slotId || (this._palettePreview ? this._palettePreview.slotId : this.getFirstAvailableObstacleSlotId(camp));
         this.cancelPaletteBuildDrag(camp);
-        this.placeBuildObstacleAt(camp, position, finalSlotType);
+        this.placeBuildObstacleAt(camp, position, finalSlotId);
     }
 
-    private placeBuildObstacleAt(camp: TurnCamp, position: cc.Vec2, slotType?: TurnObstacleResourceType) {
+    private placeBuildObstacleAt(camp: TurnCamp, position: cc.Vec2, slotId?: string) {
         if (!camp || !this.canControlCamp(camp)) {
             this.showFloatText("只能放在可操作阵营建造区", position, cc.Color.RED);
             return;
         }
-        let slot = slotType ? this.getObstacleSlotState(camp, slotType) : this.getFirstAvailableObstacleSlot(camp);
+        let slot = slotId ? this.getObstacleSlotState(camp, slotId) : this.getFirstAvailableObstacleSlot(camp);
         if (!slot || slot.count <= 0) {
             this.showFloatText("掩体库存不足", position, cc.Color.RED);
             return;
@@ -772,7 +777,7 @@ export default class TurnBattleMap extends cc.Component {
             return;
         }
         let snappedPosition = this.snapBuildPosition(position);
-        if (!this.isBuildPositionValid(camp, snappedPosition, undefined, slot.type)) {
+        if (!this.isBuildPositionValid(camp, snappedPosition, undefined, slot.slotId, slot.type)) {
             this.showFloatText("位置不可用", position, cc.Color.RED);
             return;
         }
@@ -781,6 +786,7 @@ export default class TurnBattleMap extends cc.Component {
             if (this.onBuildIntent) {
                 this.onBuildIntent({
                     op: "place",
+                    slotId: slot.slotId,
                     slotType: slot.type,
                     x: snappedPosition.x,
                     y: snappedPosition.y,
@@ -789,7 +795,7 @@ export default class TurnBattleMap extends cc.Component {
             return;
         }
 
-        this.createBuildObstacle(camp, snappedPosition, undefined, slot.type);
+        this.createBuildObstacle(camp, snappedPosition, undefined, slot.slotId, slot.type);
         this.emitStatsChanged();
         this.refreshBuildInteractionView();
     }
@@ -839,7 +845,7 @@ export default class TurnBattleMap extends cc.Component {
         if (this._phase === "build" && this._dragObstacle) {
             let snappedPosition = this.snapBuildPosition(position);
             this._dragObstacle.node.setPosition(snappedPosition.x, snappedPosition.y);
-            this.updateObstacleValidView(this._dragObstacle, this.isBuildPositionValid(this._dragObstacle.camp, snappedPosition, this._dragObstacle.id, this._dragObstacle.slotType));
+            this.updateObstacleValidView(this._dragObstacle, this.isBuildPositionValid(this._dragObstacle.camp, snappedPosition, this._dragObstacle.id, this._dragObstacle.originSlotId, this._dragObstacle.slotType));
             this.refreshBuildInteractionView();
             return;
         }
@@ -858,11 +864,6 @@ export default class TurnBattleMap extends cc.Component {
         let position = this.getLocalTouchPosition(event);
         if (this._phase === "build") {
             this.finishBuildTouch(position);
-            return;
-        }
-
-        if (this._phase === "zone") {
-            this.finishZoneTouch(position);
             return;
         }
 
@@ -899,7 +900,7 @@ export default class TurnBattleMap extends cc.Component {
         if (this._dragObstacle) {
             let obstacle = this._dragObstacle;
             let snappedPosition = this.snapBuildPosition(position);
-            let valid = this.isBuildPositionValid(obstacle.camp, snappedPosition, obstacle.id, obstacle.slotType);
+            let valid = this.isBuildPositionValid(obstacle.camp, snappedPosition, obstacle.id, obstacle.originSlotId, obstacle.slotType);
             obstacle.node.opacity = 255;
             if (valid) {
                 obstacle.node.setPosition(snappedPosition.x, snappedPosition.y);
@@ -1229,8 +1230,11 @@ export default class TurnBattleMap extends cc.Component {
         }
     }
 
-    private createBuildObstacle(camp: TurnCamp, position: cc.Vec2, forcedId?: string, slotType: TurnObstacleResourceType = "normal", snapshot?: any) {
-        let slot = this.getObstacleSlotState(camp, slotType);
+    private createBuildObstacle(camp: TurnCamp, position: cc.Vec2, forcedId?: string, slotId?: string, slotType: TurnObstacleResourceType = "normal", snapshot?: any) {
+        let slot = slotId ? this.getObstacleSlotState(camp, slotId) : this.getFirstAvailableObstacleSlot(camp);
+        if (!slot && snapshot && snapshot.originSlotId) {
+            slot = this.getObstacleSlotState(camp, String(snapshot.originSlotId));
+        }
         let layout = snapshot && snapshot.layout ? this.buildLayoutFromSnapshot(slotType, snapshot.layout, Number(snapshot.resourceCount) || slot.count) : slot.layout;
         let mirrorDir = snapshot && snapshot.mirrorDir ? this.normalizeMirrorDirection(snapshot.mirrorDir) : slot.mirrorDir;
         let resourceCount = Math.max(1, Number(snapshot && snapshot.resourceCount) || slot.count);
@@ -1256,19 +1260,15 @@ export default class TurnBattleMap extends cc.Component {
         // label.string = String(hp);
 
         let id = forcedId || String(this._nextObstacleId++);
-        if (!snapshot) {
-            if (slotType === "mirror") {
-                slot.placedCount += 1;
-            }
-            else {
-                slot.placedObstacleId = id;
-                slot.placedObstacleShapeKey = this.getLayoutKey(layout);
-            }
+        if (slot) {
+            slot.placed = true;
+            slot.placedObstacleId = id;
         }
 
         this._obstacles.push({
             id: id,
             camp: camp,
+            originSlotId: slot ? slot.slotId : (slotId || ""),
             slotType: slotType,
             node: node,
             radius: Math.max((bounds.maxX - bounds.minX + 1) * this._dynamicObstacleSize.width, (bounds.maxY - bounds.minY + 1) * this._dynamicObstacleSize.height) * 0.5,
@@ -1399,13 +1399,13 @@ export default class TurnBattleMap extends cc.Component {
         }
     }
 
-    private updatePreviewNodeView(node: cc.Node, camp: TurnCamp, valid: boolean, slotType: TurnObstacleResourceType) {
+    private updatePreviewNodeView(node: cc.Node, camp: TurnCamp, valid: boolean, slotType: TurnObstacleResourceType, slotId?: string) {
         let graphics = node.getComponent(cc.Graphics);
         if (!graphics) {
             graphics = node.addComponent(cc.Graphics);
         }
         graphics.clear();
-        let slot = this.getObstacleSlotState(camp, slotType);
+        let slot = slotId ? this.getObstacleSlotState(camp, slotId) : this.getObstacleSlotByType(camp, slotType);
         this.drawObstacleGraphics(graphics, camp, valid, slotType, slot ? slot.layout : null, slot ? slot.mirrorDir : "");
     }
 
@@ -1550,25 +1550,6 @@ export default class TurnBattleMap extends cc.Component {
         tank.preview.opacity = active ? 210 : 90;
     }
 
-    private createObstacleInventory(): { [type: string]: TurnObstacleSlotState } {
-        let result: { [type: string]: TurnObstacleSlotState } = {};
-        let slots = this._config.obstacleSlots || [];
-        for (let i = 0; i < slots.length; i++) {
-            let type = slots[i].type;
-            result[type] = {
-                type: type,
-                count: 1,
-                layout: this.buildLayoutForSlot(type, 1),
-                shapeKey: "single",
-                mirrorDir: type === "mirror" ? this.pickMirrorDirection(1) : "",
-                placedObstacleId: "",
-                placedObstacleShapeKey: "",
-                placedCount: 0,
-            };
-        }
-        return result;
-    }
-
     private createCampStats(): TurnCampStats {
         return {
             exp: 0,
@@ -1577,19 +1558,30 @@ export default class TurnBattleMap extends cc.Component {
             damageBonus: 0,
             extraShots: 0,
             bulletBounce: 0,
-            blackHoleUnlocked: false,
-            zoneInventory: {
-                black_hole: 0,
-            },
             energyTowers: 0,
+            roundResourceBonus: 0,
+            upgradeStacks: {},
         };
     }
 
-    private getObstacleSlotState(camp: TurnCamp, type: TurnObstacleResourceType): TurnObstacleSlotState {
-        if (!this._obstacleInventory[camp]) {
-            this._obstacleInventory[camp] = this.createObstacleInventory();
+    private getObstacleSlotState(camp: TurnCamp, slotId: string): TurnObstacleSlotState {
+        let slots = this._obstacleInventory[camp] || [];
+        for (let i = 0; i < slots.length; i++) {
+            if (slots[i].slotId === slotId) {
+                return slots[i];
+            }
         }
-        return this._obstacleInventory[camp][type];
+        return null;
+    }
+
+    private getObstacleSlotByType(camp: TurnCamp, type: TurnObstacleResourceType): TurnObstacleSlotState {
+        let slots = this._obstacleInventory[camp] || [];
+        for (let i = 0; i < slots.length; i++) {
+            if (slots[i].type === type) {
+                return slots[i];
+            }
+        }
+        return null;
     }
 
     private getFirstAvailableObstacleSlot(camp: TurnCamp): TurnObstacleSlotState {
@@ -1602,61 +1594,63 @@ export default class TurnBattleMap extends cc.Component {
         return null;
     }
 
-    private getFirstAvailableObstacleSlotType(camp: TurnCamp): TurnObstacleResourceType {
+    private getFirstAvailableObstacleSlotId(camp: TurnCamp): string {
         let slot = this.getFirstAvailableObstacleSlot(camp);
-        return slot ? slot.type : "normal";
-    }
-
-    private resetBuildSlotsForNewRound(camp: TurnCamp) {
-        let slots = this.getObstacleSlotStates(camp);
-        for (let i = 0; i < slots.length; i++) {
-            let slot = slots[i];
-            slot.placedObstacleId = "";
-            slot.placedObstacleShapeKey = "";
-            slot.placedCount = 0;
-            this.refreshObstacleSlotShape(slot);
-        }
+        return slot ? slot.slotId : "";
     }
 
     private canPlaceFromSlot(slot: TurnObstacleSlotState): boolean {
         if (!slot || slot.count <= 0) {
             return false;
         }
-        if (slot.type === "mirror") {
-            return slot.placedCount < slot.count;
-        }
+        this.reconcileSlotPlacementState(slot);
         return !slot.placedObstacleId;
     }
 
-    private grantRandomObstacleResource(camp: TurnCamp) {
-        let slots = this.getObstacleSlotStates(camp).filter((slot) => slot && slot.count < this._config.obstacleSlotMaxResources);
-        if (slots.length <= 0) {
-            return;
-        }
-        let index = Math.floor(Math.random() * slots.length);
-        let slot = slots[index];
-        slot.count = Math.min(this._config.obstacleSlotMaxResources, slot.count + 1);
-        this.refreshObstacleSlotShape(slot);
+    private applyObstacleInventorySnapshot(camp: TurnCamp, inventory: any) {
+        let slots = inventory && Array.isArray(inventory.roundSlots)
+            ? inventory.roundSlots
+            : (inventory && Array.isArray(inventory.obstacleSlots) ? inventory.obstacleSlots : []);
+        this._obstacleInventory[camp] = slots.map((source: any, index: number) => {
+            let type = (source && source.type ? source.type : "normal") as TurnObstacleResourceType;
+            let count = Math.max(1, Math.min(this._config.slotMaxResource, Number(source && source.count) || 1));
+            let layout = this.buildLayoutFromSnapshot(type, source && source.layout, count);
+            let placedObstacleId = String(source && source.placedObstacleId ? source.placedObstacleId : "");
+            return {
+                slotId: String(source && source.slotId ? source.slotId : (camp + "_slot_" + index)),
+                type: type,
+                name: this.getSlotDisplayName(type),
+                count: count,
+                layout: layout,
+                shapeKey: String(source && source.shapeKey ? source.shapeKey : this.getLayoutKey(layout)),
+                mirrorDir: type === "mirror" ? this.normalizeMirrorDirection(source && (source.mirrorDir || source.direction || "")) : "",
+                placed: !!placedObstacleId,
+                placedObstacleId: placedObstacleId,
+            };
+        });
     }
 
-    private applyObstacleInventorySnapshot(camp: TurnCamp, inventory: any) {
-        this._obstacleInventory[camp] = this.createObstacleInventory();
-        let resourceSlots = inventory && inventory.obstacleSlots ? inventory.obstacleSlots : {};
-        let slotList = this._config.obstacleSlots || [];
-        for (let i = 0; i < slotList.length; i++) {
-            let type = slotList[i].type;
-            let target = this._obstacleInventory[camp][type];
-            let source = resourceSlots[type] || {};
-            target.count = Math.max(1, Math.min(this._config.obstacleSlotMaxResources, Number(source.count) || 1));
-            target.layout = this.buildLayoutFromSnapshot(type, source.layout, target.count);
-            target.shapeKey = String(source.shapeKey || this.getLayoutKey(target.layout));
-            target.mirrorDir = type === "mirror"
-                ? this.normalizeMirrorDirection(source.mirrorDir || source.direction || "")
-                : "";
-            target.placedObstacleId = String(source.placedObstacleId || "");
-            target.placedObstacleShapeKey = String(source.placedObstacleShapeKey || "");
-            target.placedCount = Math.max(0, Number(source.placedCount) || 0);
+    private reconcileSlotPlacementState(slot: TurnObstacleSlotState) {
+        if (!slot) {
+            return;
         }
+        if (!slot.placedObstacleId) {
+            slot.placed = false;
+            return;
+        }
+        let exists = false;
+        for (let i = 0; i < this._obstacles.length; i++) {
+            if (this._obstacles[i] && this._obstacles[i].id === slot.placedObstacleId) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            slot.placed = false;
+            slot.placedObstacleId = "";
+            return;
+        }
+        slot.placed = true;
     }
 
     private refreshObstacleSlotShape(slot: TurnObstacleSlotState) {
@@ -1665,10 +1659,82 @@ export default class TurnBattleMap extends cc.Component {
         }
         slot.layout = this.buildLayoutForSlot(slot.type, slot.count);
         slot.shapeKey = this.getLayoutKey(slot.layout);
-        slot.placedObstacleShapeKey = "";
         if (slot.type === "mirror") {
             slot.mirrorDir = this.pickMirrorDirection(slot.count + Math.floor(Math.random() * 8));
         }
+    }
+
+    private getSlotDisplayName(type: TurnObstacleResourceType): string {
+        if (type === "mirror") {
+            return "镜面墙";
+        }
+        if (type === "exp") {
+            return "经验墙";
+        }
+        if (type === "energy") {
+            return "能量墙";
+        }
+        if (type === "blood") {
+            return "滴血块";
+        }
+        return "普通方块";
+    }
+
+    private generateRoundState(camp: TurnCamp, roundIndex: number) {
+        let total = this.getNaturalRoundResourceTotal(camp, roundIndex);
+        this._obstacleInventory[camp] = this.createRoundSlots(camp, roundIndex, total);
+    }
+
+    private getNaturalRoundResourceTotal(camp: TurnCamp, roundIndex: number): number {
+        let stats = this.getCampStats(camp);
+        let natural = this._config.initialRoundResourceTotal + Math.max(0, roundIndex - 1) * this._config.roundResourceGrowth;
+        natural += Math.max(0, stats.roundResourceBonus || 0);
+        return Math.max(this._config.slotCountPerRound, Math.min(this._config.maxRoundResourceTotal, natural));
+    }
+
+    private createRoundSlots(camp: TurnCamp, roundIndex: number, totalResources: number): TurnObstacleSlotState[] {
+        let counts = this.splitRoundResources(totalResources);
+        let result: TurnObstacleSlotState[] = [];
+        for (let i = 0; i < counts.length; i++) {
+            let type = this.randomSlotType();
+            let layout = this.buildLayoutForSlot(type, counts[i]);
+            result.push({
+                slotId: camp + "_r" + roundIndex + "_s" + i,
+                type: type,
+                name: this.getSlotDisplayName(type),
+                count: counts[i],
+                layout: layout,
+                shapeKey: this.getLayoutKey(layout),
+                mirrorDir: type === "mirror" ? this.pickMirrorDirection(roundIndex + i) : "",
+                placed: false,
+                placedObstacleId: "",
+            });
+        }
+        return result;
+    }
+
+    private splitRoundResources(totalResources: number): number[] {
+        let slotCount = this._config.slotCountPerRound;
+        let minValue = this._config.slotMinResource;
+        let maxValue = this._config.slotMaxResource;
+        let remaining = Math.max(slotCount * minValue, Math.min(this._config.maxRoundResourceTotal, Math.floor(totalResources)));
+        let result: number[] = [];
+        for (let i = 0; i < slotCount; i++) {
+            let slotsLeft = slotCount - i;
+            let minAllowed = Math.max(minValue, remaining - (slotsLeft - 1) * maxValue);
+            let maxAllowed = Math.min(maxValue, remaining - (slotsLeft - 1) * minValue);
+            let picked = i === slotCount - 1 ? remaining : Math.floor(Math.random() * (maxAllowed - minAllowed + 1)) + minAllowed;
+            result.push(picked);
+            remaining -= picked;
+        }
+        return result;
+    }
+
+    private randomSlotType(): TurnObstacleResourceType {
+        let slots = this._config.obstacleSlots || [];
+        let index = Math.floor(Math.random() * Math.max(1, slots.length));
+        let picked = slots[index];
+        return picked ? picked.type : "normal";
     }
 
     private findLatestObstacleBySlot(camp: TurnCamp, slotType: TurnObstacleResourceType): TurnObstacleState {
@@ -1824,6 +1890,52 @@ export default class TurnBattleMap extends cc.Component {
             }
         }
         return total;
+    }
+
+    private countPlacedBloodBlocks(camp: TurnCamp): number {
+        let total = 0;
+        for (let i = 0; i < this._obstacles.length; i++) {
+            let obstacle = this._obstacles[i];
+            if (obstacle.camp === camp && obstacle.slotType === "blood") {
+                total += Math.max(1, obstacle.resourceCount);
+            }
+        }
+        return total;
+    }
+
+    private countPlacedExpBlocks(camp: TurnCamp): number {
+        let total = 0;
+        for (let i = 0; i < this._obstacles.length; i++) {
+            let obstacle = this._obstacles[i];
+            if (obstacle.camp === camp && obstacle.slotType === "exp") {
+                total += Math.max(1, obstacle.resourceCount);
+            }
+        }
+        return total;
+    }
+
+    private applyRoundSettlementForCamp(camp: TurnCamp) {
+        let expCount = this.countPlacedExpBlocks(camp);
+        if (expCount > 0) {
+            this.addExp(camp, expCount * this._config.baseExpPerRound, cc.v2(camp === "A" ? -120 : 120, camp === "A" ? -70 : 70));
+        }
+        let healCount = this.countPlacedEnergyTowers(camp);
+        if (healCount <= 0) {
+            return;
+        }
+        let enemyCamp: TurnCamp = camp === "A" ? "B" : "A";
+        let blockedHeal = Math.min(healCount, this.countPlacedBloodBlocks(enemyCamp) * this._config.bloodBlockHealPerStack);
+        let finalHeal = Math.max(0, healCount - blockedHeal) * this._config.energyWallRoundHeal;
+        if (finalHeal <= 0) {
+            return;
+        }
+        let crystal = this._crystals[camp];
+        if (!crystal) {
+            return;
+        }
+        crystal.hp = Math.min(crystal.maxHp, crystal.hp + finalHeal);
+        this.refreshCrystalView(camp);
+        this.showFloatText("+" + finalHeal + " HP", this.getNodePosition(crystal.node).add(cc.v2(0, 52)), new cc.Color(120, 240, 160, 255));
     }
 
     private getCampStats(camp: TurnCamp): TurnCampStats {
@@ -1994,10 +2106,13 @@ export default class TurnBattleMap extends cc.Component {
 
     private syncObstacleState(obstacles: any[]) {
         this.clearAllDynamicObstacles();
-        let slots = this._config.obstacleSlots || [];
-        for (let s = 0; s < slots.length; s++) {
-            this.getObstacleSlotState("A", slots[s].type).placedObstacleId = "";
-            this.getObstacleSlotState("B", slots[s].type).placedObstacleId = "";
+        let camps: TurnCamp[] = ["A", "B"];
+        for (let campIndex = 0; campIndex < camps.length; campIndex++) {
+            let campSlots = this._obstacleInventory[camps[campIndex]] || [];
+            for (let slotIndex = 0; slotIndex < campSlots.length; slotIndex++) {
+                campSlots[slotIndex].placed = false;
+                campSlots[slotIndex].placedObstacleId = "";
+            }
         }
         let maxId = this._nextObstacleId;
         for (let j = 0; j < obstacles.length; j++) {
@@ -2010,6 +2125,7 @@ export default class TurnBattleMap extends cc.Component {
                 obstacle.camp,
                 cc.v2(Number(obstacle.x) || 0, Number(obstacle.y) || 0),
                 id,
+                String(obstacle.originSlotId || obstacle.slotId || ""),
                 (obstacle.slotType || "normal") as TurnObstacleResourceType,
                 obstacle,
             );
@@ -2613,8 +2729,9 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private clearObstaclePlacedSlot(obstacle: TurnObstacleState) {
-        let slot = this.getObstacleSlotState(obstacle.camp, obstacle.slotType);
+        let slot = this.getObstacleSlotState(obstacle.camp, obstacle.originSlotId);
         if (slot && slot.placedObstacleId === obstacle.id) {
+            slot.placed = false;
             slot.placedObstacleId = "";
         }
     }
@@ -2975,10 +3092,15 @@ export default class TurnBattleMap extends cc.Component {
         this.cancelPaletteBuildDrag();
         this.refreshBuildInteractionView();
         if (!this._serverMode) {
-            if (nextPhase === "zone") {
+            if (nextPhase === "build") {
+                this.refreshStaticObstacleSelection();
+                this.renderStaticObstacles();
                 this.spawnRoundAssistZone();
             }
-            else if (nextPhase === "upgrade" || nextPhase === "build" || nextPhase === "finish" || nextPhase === "init") {
+            else if (nextPhase === "settle") {
+                this.settleRound();
+            }
+            else if (nextPhase === "upgrade" || nextPhase === "finish" || nextPhase === "init") {
                 this.clearAssistZones();
             }
         }

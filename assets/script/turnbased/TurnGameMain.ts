@@ -64,7 +64,6 @@ export default class TurnGameMain extends cc.Component {
         this._battleMap.onBulletsCleared = this.notifyBulletsClear.bind(this);
         this._battleMap.onGameFinished = this.finishMatch.bind(this);
         this._battleMap.onBuildIntent = this.sendBuildIntent.bind(this);
-        this._battleMap.onZoneIntent = this.sendZoneIntent.bind(this);
         this._battleMap.onAttackIntent = this.sendAttackIntent.bind(this);
         this._battleMap.onTankPoseIntent = this.sendTankPoseIntent.bind(this);
         this._hud.onBuildDragStart = this.onHudBuildDragStart.bind(this);
@@ -279,7 +278,7 @@ export default class TurnGameMain extends cc.Component {
 
     private refreshHudNumbers() {
         this._hud.refreshCrystals(this._battleMap.getCrystalHp("A"), this._battleMap.getCrystalHp("B"));
-        this._hud.refreshInventory(this._battleMap.getObstacleInventory("A"), this._battleMap.getObstacleInventory("B"));
+        this._hud.refreshInventory(this._battleMap.getRoundResourceTotal("A"), this._battleMap.getRoundResourceTotal("B"));
         this._hud.refreshExp(
             this._battleMap.getCampExp("A"),
             this._battleMap.getCampLevel("A"),
@@ -294,10 +293,12 @@ export default class TurnGameMain extends cc.Component {
         this._hud.refreshBuildPalette(
             localCamp,
             this._battleMap.getObstacleSlotStates(localCamp).map((slot) => ({
+                slotId: slot.slotId,
                 type: slot.type,
-                name: slot.type,
+                name: slot.name || slot.type,
                 count: slot.count,
-                placed: !!slot.placedObstacleId,
+                shapeKey: slot.shapeKey,
+                placed: !!slot.placed,
             })),
             this._battleMap.isBuildPhaseActiveForCamp(localCamp),
         );
@@ -513,6 +514,7 @@ export default class TurnGameMain extends cc.Component {
             this._serverSnapshot.actionCamp = snapshot.actionCamp;
             this._serverSnapshot.roundIndex = snapshot.roundIndex;
             this._serverSnapshot.attackRoundIndex = snapshot.attackRoundIndex;
+            this._serverSnapshot.attackTurnIndex = snapshot.attackTurnIndex;
         }
         else {
             this._serverSnapshot = {
@@ -520,6 +522,7 @@ export default class TurnGameMain extends cc.Component {
                 actionCamp: snapshot.actionCamp,
                 roundIndex: snapshot.roundIndex,
                 attackRoundIndex: snapshot.attackRoundIndex,
+                attackTurnIndex: snapshot.attackTurnIndex,
             };
         }
         this._battleMap.setTurnSnapshot(snapshot);
@@ -556,6 +559,7 @@ export default class TurnGameMain extends cc.Component {
             phase: msg.phase || (this._serverSnapshot ? this._serverSnapshot.phase : "init"),
             roundIndex: Number(msg.roundIndex || (this._serverSnapshot ? this._serverSnapshot.roundIndex : 0)),
             attackRoundIndex: Number(msg.attackRoundIndex || (this._serverSnapshot ? this._serverSnapshot.attackRoundIndex : 0)),
+            attackTurnIndex: Number(msg.attackTurnIndex || (this._serverSnapshot ? this._serverSnapshot.attackTurnIndex : 0)),
             actionCamp: (msg.actionCamp || (this._serverSnapshot ? this._serverSnapshot.actionCamp : "A")) as TurnCamp,
             winnerCamp: winnerCamp as TurnCamp,
             phaseTimeLeft: phaseTimeLeft,
@@ -564,12 +568,8 @@ export default class TurnGameMain extends cc.Component {
         };
     }
 
-    private sendBuildIntent(action: { op: string; obstacleId?: string; x: number; y: number; }) {
+    private sendBuildIntent(action: { op: string; obstacleId?: string; slotId?: string; slotType?: string; x: number; y: number; }) {
         this.sendNetMessage("buildAction", action);
-    }
-
-    private sendZoneIntent(action: { zoneType: string; x: number; y: number; }) {
-        this.sendNetMessage("zoneAction", action);
     }
 
     private sendAttackIntent(action: { fromX: number; fromY: number; aimX: number; aimY: number; shotIndex: number; }) {
@@ -591,16 +591,16 @@ export default class TurnGameMain extends cc.Component {
         return this.useServer ? this._serverCamp : "A";
     }
 
-    private onHudBuildDragStart(camp: TurnCamp, slotType: any, worldPos: cc.Vec2): boolean {
-        return this._battleMap.beginPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos), slotType);
+    private onHudBuildDragStart(camp: TurnCamp, slotId: string, worldPos: cc.Vec2): boolean {
+        return this._battleMap.beginPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos), slotId);
     }
 
-    private onHudBuildDragMove(camp: TurnCamp, slotType: any, worldPos: cc.Vec2) {
-        this._battleMap.updatePaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos), slotType);
+    private onHudBuildDragMove(camp: TurnCamp, slotId: string, worldPos: cc.Vec2) {
+        this._battleMap.updatePaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos), slotId);
     }
 
-    private onHudBuildDragEnd(camp: TurnCamp, slotType: any, worldPos: cc.Vec2) {
-        this._battleMap.finishPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos), slotType);
+    private onHudBuildDragEnd(camp: TurnCamp, slotId: string, worldPos: cc.Vec2) {
+        this._battleMap.finishPaletteBuildDrag(camp, this.convertHudWorldToMapLocal(worldPos), slotId);
         this.refreshHudNumbers();
     }
 

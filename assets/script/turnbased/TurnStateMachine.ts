@@ -4,6 +4,7 @@ export interface TurnStateSnapshot {
     phase: TurnPhase;
     roundIndex: number;
     attackRoundIndex: number;
+    attackTurnIndex: number;
     actionCamp: TurnCamp;
     winnerCamp: TurnCamp;
     phaseTimeLeft: number;
@@ -115,7 +116,8 @@ export class TurnStateMachine {
         return {
             phase: this._phase,
             roundIndex: this._roundIndex,
-            attackRoundIndex: Math.floor(this._attackStep / 2) + 1,
+            attackRoundIndex: this._phase === "attack" || this._phase === "waitBullet" ? 1 : 0,
+            attackTurnIndex: this._phase === "attack" || this._phase === "waitBullet" ? this._attackStep + 1 : 0,
             actionCamp: this.getActionCamp(),
             winnerCamp: this._winnerCamp,
             phaseTimeLeft: left,
@@ -127,15 +129,6 @@ export class TurnStateMachine {
     private advancePhase() {
         switch (this._phase) {
             case "build":
-                if (this._roundIndex === 1) {
-                    this._attackStep = 0;
-                    this.enterPhase("attack");
-                }
-                else {
-                    this.enterPhase("zone");
-                }
-                break;
-            case "zone":
                 this._attackStep = 0;
                 this.enterPhase("attack");
                 break;
@@ -144,12 +137,15 @@ export class TurnStateMachine {
                 break;
             case "waitBullet":
                 this._attackStep += 1;
-                if (this._attackStep < this._config.attackRounds * 2) {
+                if (this._attackStep < 2) {
                     this.enterPhase("attack");
                 }
                 else {
-                    this.enterPhase("upgrade");
+                    this.enterPhase("settle");
                 }
+                break;
+            case "settle":
+                this.enterPhase("upgrade");
                 break;
             case "upgrade":
                 this._roundIndex += 1;
@@ -167,17 +163,17 @@ export class TurnStateMachine {
                 ? getBuildSecondsByObstacleTotal(this._buildResourceTotal, this._config)
                 : getRoundBuildSeconds(this._roundIndex, this._config);
         }
-        else if (phase === "zone") {
-            this._phaseDuration = this._config.zoneSeconds;
-        }
         else if (phase === "attack") {
             this._phaseDuration = this._config.attackSeconds;
         }
         else if (phase === "waitBullet") {
             this._phaseDuration = this._config.waitBulletSeconds;
         }
+        else if (phase === "settle") {
+            this._phaseDuration = this._config.settleSeconds;
+        }
         else if (phase === "upgrade") {
-            this._phaseDuration = 0;
+            this._phaseDuration = this._config.upgradeSeconds;
         }
         else {
             this._phaseDuration = 0;
@@ -196,6 +192,13 @@ export class TurnStateMachine {
     }
 
     private getActionCamp(): TurnCamp {
+        if (this._phase !== "attack" && this._phase !== "waitBullet") {
+            return this._actionCampForNonAttackPhase();
+        }
+        return this._attackStep % 2 === 0 ? "A" : "B";
+    }
+
+    private _actionCampForNonAttackPhase(): TurnCamp {
         return this._attackStep % 2 === 0 ? "A" : "B";
     }
 }

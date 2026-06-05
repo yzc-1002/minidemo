@@ -275,6 +275,13 @@ const TURN_MAP_BOUNDS = {
 };
 const TURN_MAP_LAYOUT = {
   // Sync with `assets/map1/turn_defense_01.tmx` object layer `_tmLayerTurnAreas`.
+  mapRect: { minX: -320, maxX: 320, minY: -480, maxY: 480 },
+  buildAreas: {
+    // Must match client's `deriveLayerAreas()` (TurnBattleMap.ts): build area extends
+    // from the outer map edge up to the player's own road, inset by one tile horizontally.
+    A: { minX: -288, maxX: 288, minY: -480, maxY: -256 },
+    B: { minX: -288, maxX: 288, minY: 256, maxY: 480 },
+  },
   roadRects: {
     A: { minX: -320, maxX: 320, minY: -256, maxY: -224 },
     B: { minX: -320, maxX: 320, minY: 224, maxY: 256 },
@@ -346,21 +353,24 @@ function circleRectIntersects(circle, radius, rect) {
   return dx * dx + dy * dy <= radius * radius;
 }
 const TURN_CONFIG = {
-  buildSeconds: 6,
-  zoneSeconds: 5,
+  buildSeconds: 15,
   attackSeconds: 8,
   waitBulletSeconds: 5,
-  upgradeSeconds: 5,
-  attackRounds: 3,
+  settleSeconds: 2,
+  upgradeSeconds: 6,
+  attackRounds: 1,
   crystalHp: 100,
-  initialObstacles: 2,
-  obstacleGainPerRound: 1,
-  obstacleMaxPerRound: 5,
-  buildSecondsPerObstacle: 3,
+  initialRoundResourceTotal: 3,
+  roundResourceGrowth: 1,
+  maxRoundResourceTotal: 12,
+  slotCountPerRound: 3,
+  slotMinResource: 1,
+  slotMaxResource: 4,
   baseExp: 10,
   obstacleHitExp: 8,
   expWallDestroyExp: 50,
   energyWallRoundHeal: 10,
+  bloodBlockHealPerStack: 1,
   crystalHitExp: 20,
   expNeed: 60,
   maxBulletResultDamage: 80,
@@ -373,20 +383,21 @@ const TURN_CONFIG = {
 const TURN_PHASE = {
   WAITING: 'waiting',
   BUILD: 'build',
-  ZONE: 'zone',
   ATTACK: 'attack',
   WAIT_BULLET: 'waitBullet',
+  SETTLE: 'settle',
   UPGRADE: 'upgrade',
   FINISH: 'finish',
 };
 const TURN_CAMPS = ['A', 'B'];
 const TURN_UPGRADE_POOL = [
-  { id: 'coverResourceUp', type: 'cover', title: '基础资源 +1', value: 1 },
-  { id: 'bulletBounce', type: 'bullet', title: '反弹 +1', value: 1 },
-  { id: 'damageUp', type: 'attr', title: '子弹伤害 +10', value: 10 },
-  { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20 },
+  { id: 'coverResourceUp', type: 'cover', title: '回合资源 +1', value: 1, maxStacks: 9 },
+  { id: 'bulletBounce', type: 'bullet', title: '反弹 +1', value: 1, maxStacks: 5 },
+  { id: 'multiShot', type: 'bullet', title: '连发 +1', value: 1, maxStacks: 3 },
+  { id: 'damageUp', type: 'attr', title: '伤害 +10', value: 10, maxStacks: null },
+  { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20, maxStacks: null },
 ];
-const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy'];
+const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'blood'];
 const TURN_MIRROR_DIRECTIONS = ['bl', 'br', 'tl', 'tr'];
 const TURN_OBSTACLE_LAYOUT_LIBRARY = {
   1: [
@@ -524,7 +535,6 @@ function mapUpgradeIdFromClient(optionId) {
   if (optionId === 'extra_shot') return 'multiShot';
   if (optionId === 'damage_up') return 'damageUp';
   if (optionId === 'crystal_hp_up') return 'crystalHp';
-  if (optionId === 'unlock_black_hole') return 'unlockBlackHole';
   return optionId;
 }
 
@@ -566,17 +576,16 @@ function buildTurnViewPayload(player, payload) {
     const inventories = {};
     Object.keys(next.inventories).forEach((camp) => {
       const src = next.inventories[camp] || {};
-      const slots = cloneTurnObstacleSlots(src.obstacleSlots);
-      Object.keys(slots).forEach((type) => {
-        slots[type].layout = type === 'mirror'
-          ? normalizeObstacleLayout(type, slots[type].layout, slots[type].count)
-          : toPlayerViewLayout(player, normalizeObstacleLayout(type, slots[type].layout, slots[type].count));
-        slots[type].mirrorDir = toPlayerViewMirrorDir(player, slots[type].mirrorDir);
-      });
+      const slots = cloneTurnObstacleSlots(src.roundSlots).map((slot) => ({
+        ...slot,
+        layout: slot.type === 'mirror'
+          ? normalizeObstacleLayout(slot.type, slot.layout, slot.count)
+          : toPlayerViewLayout(player, normalizeObstacleLayout(slot.type, slot.layout, slot.count)),
+        mirrorDir: toPlayerViewMirrorDir(player, slot.mirrorDir),
+      }));
       inventories[getTurnViewCamp(player, camp)] = {
         ...src,
-        black_hole: src.blackHole || src.black_hole || 0,
-        obstacleSlots: slots,
+        roundSlots: slots,
       };
     });
     next.inventories = inventories;
@@ -584,12 +593,7 @@ function buildTurnViewPayload(player, payload) {
   if (next.upgrades) {
     const upgrades = {};
     Object.keys(next.upgrades).forEach((camp) => {
-      upgrades[getTurnViewCamp(player, camp)] = {
-        ...next.upgrades[camp],
-        zones: Array.isArray(next.upgrades[camp].zones)
-          ? next.upgrades[camp].zones.map(mapZoneTypeToClient)
-          : [],
-      };
+      upgrades[getTurnViewCamp(player, camp)] = { ...next.upgrades[camp] };
     });
     next.upgrades = upgrades;
   }
@@ -686,8 +690,7 @@ function buildTurnViewPayload(player, payload) {
   if (Array.isArray(next.options)) {
     next.options = next.options.map((option) => ({
       ...option,
-      id: option.id === 'unlockBlackHole' ? 'unlock_black_hole'
-        : option.id === 'bulletBounce' ? 'bullet_bounce'
+      id: option.id === 'bulletBounce' ? 'bullet_bounce'
         : option.id === 'multiShot' ? 'extra_shot'
         : option.id === 'damageUp' ? 'damage_up'
         : option.id === 'crystalHp' ? 'crystal_hp_up'
@@ -699,8 +702,7 @@ function buildTurnViewPayload(player, payload) {
   if (next.option) {
     next.option = {
       ...next.option,
-      id: next.option.id === 'unlockBlackHole' ? 'unlock_black_hole'
-        : next.option.id === 'bulletBounce' ? 'bullet_bounce'
+      id: next.option.id === 'bulletBounce' ? 'bullet_bounce'
         : next.option.id === 'multiShot' ? 'extra_shot'
         : next.option.id === 'damageUp' ? 'damage_up'
         : next.option.id === 'crystalHp' ? 'crystal_hp_up'
@@ -724,15 +726,15 @@ function createTurnPlayer(ws, camp, index) {
     exp: 0,
     expNeed: TURN_CONFIG.expNeed,
     inventory: {
-      obstacles: TURN_OBSTACLE_SLOT_TYPES.length,
-      obstacleSlots: createTurnObstacleSlots(),
-      blackHole: 0,
+      roundResourceTotal: TURN_CONFIG.initialRoundResourceTotal,
+      roundSlots: [],
     },
     upgrades: {
       bulletBounce: 0,
       multiShot: 0,
       damageAdd: 0,
-      zones: [],
+      roundResourceBonus: 0,
+      stacks: {},
     },
     pendingUpgradeOptions: [],
     tankPose: {
@@ -745,41 +747,28 @@ function createTurnPlayer(ws, camp, index) {
 }
 
 function createTurnObstacleSlots() {
-  const slots = {};
-  TURN_OBSTACLE_SLOT_TYPES.forEach((type, index) => {
-    slots[type] = {
-      type,
-      count: 1,
-      layout: buildObstacleLayout(type, 1),
-      shapeKey: type === 'mirror' ? 'single' : '0:0',
-      mirrorDir: type === 'mirror' ? TURN_MIRROR_DIRECTIONS[index % TURN_MIRROR_DIRECTIONS.length] : '',
-      placedObstacleId: '',
-      placedObstacleShapeKey: '',
-      placedCount: 0,
-    };
-  });
-  return slots;
+  return [];
 }
 
 function cloneTurnObstacleSlots(source) {
-  const next = createTurnObstacleSlots();
-  TURN_OBSTACLE_SLOT_TYPES.forEach((type) => {
-    const slot = source && source[type] ? source[type] : next[type];
-    next[type] = {
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source.map((slot, index) => {
+    const type = TURN_OBSTACLE_SLOT_TYPES.indexOf(String(slot && slot.type)) >= 0 ? String(slot.type) : 'normal';
+    const count = clamp(Math.round(Number(slot && slot.count) || 1), 1, TURN_CONFIG.slotMaxResource);
+    const layout = normalizeObstacleLayout(type, slot && slot.layout, count);
+    return {
+      slotId: String(slot && slot.slotId ? slot.slotId : `slot_${index}`),
       type,
-      count: clamp(Math.round(Number(slot.count) || 1), 1, TURN_CONFIG.obstacleSlotMaxResources),
-      layout: normalizeObstacleLayout(type, slot.layout, slot.count),
-      shapeKey: String(slot.shapeKey || ''),
-      mirrorDir: type === 'mirror' ? normalizeMirrorDirection(slot.mirrorDir) : '',
-      placedObstacleId: slot.placedObstacleId ? String(slot.placedObstacleId) : '',
-      placedObstacleShapeKey: slot.placedObstacleShapeKey ? String(slot.placedObstacleShapeKey) : '',
-      placedCount: Math.max(0, Number(slot.placedCount) || 0),
+      count,
+      layout,
+      shapeKey: String(slot && slot.shapeKey ? slot.shapeKey : getObstacleLayoutKey(layout)),
+      mirrorDir: type === 'mirror' ? normalizeMirrorDirection(slot && slot.mirrorDir) : '',
+      placed: !!(slot && slot.placed),
+      placedObstacleId: slot && slot.placedObstacleId ? String(slot.placedObstacleId) : '',
     };
-    if (!next[type].shapeKey) {
-      next[type].shapeKey = getObstacleLayoutKey(next[type].layout);
-    }
   });
-  return next;
 }
 
 function buildObstacleLayout(type, count) {
@@ -823,28 +812,74 @@ function getObstacleMaxHp(slotType, resourceCount) {
   return Math.min(TURN_CONFIG.obstacleMaxHp, TURN_CONFIG.obstacleBaseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
 }
 
-function grantRandomTurnObstacleResource(player, roomState) {
-  if (!player) {
-    return null;
+function getTurnUpgradeStack(player, upgradeId) {
+  return Math.max(0, Number(player && player.upgrades && player.upgrades.stacks && player.upgrades.stacks[upgradeId]) || 0);
+}
+
+function getTurnRoundResourceTotal(player, displayRound) {
+  const round = Math.max(1, Number(displayRound) || 1);
+  const bonus = Math.max(0, Number(player && player.upgrades && player.upgrades.roundResourceBonus) || 0);
+  const total = TURN_CONFIG.initialRoundResourceTotal + (round - 1) * TURN_CONFIG.roundResourceGrowth + bonus;
+  return clamp(total, TURN_CONFIG.slotCountPerRound, TURN_CONFIG.maxRoundResourceTotal);
+}
+
+function randomTurnObstacleType() {
+  return TURN_OBSTACLE_SLOT_TYPES[Math.floor(Math.random() * TURN_OBSTACLE_SLOT_TYPES.length)] || 'normal';
+}
+
+function splitTurnRoundResources(totalResources) {
+  const remainingStart = clamp(Math.floor(Number(totalResources) || 0), TURN_CONFIG.slotCountPerRound, TURN_CONFIG.maxRoundResourceTotal);
+  let remaining = remainingStart;
+  const result = [];
+  for (let i = 0; i < TURN_CONFIG.slotCountPerRound; i++) {
+    const left = TURN_CONFIG.slotCountPerRound - i;
+    const minAllowed = Math.max(TURN_CONFIG.slotMinResource, remaining - (left - 1) * TURN_CONFIG.slotMaxResource);
+    const maxAllowed = Math.min(TURN_CONFIG.slotMaxResource, remaining - (left - 1) * TURN_CONFIG.slotMinResource);
+    const picked = i === TURN_CONFIG.slotCountPerRound - 1 ? remaining : Math.floor(randomBetween(minAllowed, maxAllowed + 0.999));
+    result.push(picked);
+    remaining -= picked;
   }
-  if (!player.inventory || !player.inventory.obstacleSlots) {
-    player.inventory = player.inventory || {};
-    player.inventory.obstacleSlots = createTurnObstacleSlots();
-  }
-  const candidates = TURN_OBSTACLE_SLOT_TYPES.filter((type) => {
-    const slot = player.inventory.obstacleSlots[type];
-    return slot && slot.count < TURN_CONFIG.obstacleSlotMaxResources;
+  return result;
+}
+
+function createTurnRoundSlots(player, roomState, displayRound) {
+  const totalResources = getTurnRoundResourceTotal(player, displayRound);
+  const counts = splitTurnRoundResources(totalResources);
+  player.inventory = player.inventory || {};
+  player.inventory.roundResourceTotal = totalResources;
+  player.inventory.roundSlots = counts.map((count, index) => {
+    const type = randomTurnObstacleType();
+    const layout = buildObstacleLayout(type, count);
+    const shapeKey = getObstacleLayoutKey(layout);
+    return {
+      slotId: `${player.camp}_r${displayRound}_s${index}`,
+      type,
+      count,
+      layout,
+      shapeKey,
+      mirrorDir: type === 'mirror'
+        ? TURN_MIRROR_DIRECTIONS[Math.abs((roomState.seed || Date.now()) + player.playerId + displayRound + index) % TURN_MIRROR_DIRECTIONS.length]
+        : '',
+      placed: false,
+      placedObstacleId: '',
+    };
   });
-  if (candidates.length <= 0) {
-    return null;
-  }
-  const seed = (roomState ? roomState.seed : Date.now()) + player.playerId + player.exp + candidates.length;
-  const type = candidates[Math.abs(seed) % candidates.length];
-  const slot = player.inventory.obstacleSlots[type];
-  slot.count = clamp(slot.count + 1, 1, TURN_CONFIG.obstacleSlotMaxResources);
-  refreshTurnObstacleSlotShape(slot, player.playerId, roomState);
-  player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
-  return type;
+  return player.inventory.roundSlots;
+}
+
+function findTurnRoundSlot(player, slotId) {
+  const slots = player && player.inventory && Array.isArray(player.inventory.roundSlots) ? player.inventory.roundSlots : [];
+  return slots.find((slot) => slot && slot.slotId === slotId) || null;
+}
+
+function countTurnLivingResource(roomState, camp, slotType) {
+  return Object.keys(roomState.obstacles).reduce((total, id) => {
+    const obstacle = roomState.obstacles[id];
+    if (!obstacle || obstacle.camp !== camp || obstacle.slotType !== slotType) {
+      return total;
+    }
+    return total + Math.max(1, Math.round(Number(obstacle.resourceCount) || 1));
+  }, 0);
 }
 
 function refreshTurnObstacleSlotShape(slot, playerId = 0, roomState = null) {
@@ -859,33 +894,11 @@ function refreshTurnObstacleSlotShape(slot, playerId = 0, roomState = null) {
   }
 }
 
-function resetTurnObstacleSlotsForBuild(roomState, player) {
-  if (!player) {
-    return;
-  }
-  player.inventory = player.inventory || {};
-  player.inventory.obstacleSlots = player.inventory.obstacleSlots || createTurnObstacleSlots();
-  TURN_OBSTACLE_SLOT_TYPES.forEach((type) => {
-    const slot = player.inventory.obstacleSlots[type];
-    if (!slot) {
-      return;
-    }
-    slot.placedObstacleId = '';
-    slot.placedObstacleShapeKey = '';
-    slot.placedCount = 0;
-    refreshTurnObstacleSlotShape(slot, player.playerId, roomState);
-  });
-  player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
-}
-
 function getTurnObstacleInventoryTotal(player) {
-  if (!player || !player.inventory || !player.inventory.obstacleSlots) {
+  if (!player || !player.inventory || !Array.isArray(player.inventory.roundSlots)) {
     return 0;
   }
-  return TURN_OBSTACLE_SLOT_TYPES.reduce((total, type) => {
-    const slot = player.inventory.obstacleSlots[type];
-    return total + (slot ? Math.max(0, slot.count) : 0);
-  }, 0);
+  return player.inventory.roundSlots.reduce((total, slot) => total + Math.max(0, Number(slot && slot.count) || 0), 0);
 }
 
 function createTurnRoom() {
@@ -895,15 +908,15 @@ function createTurnRoom() {
     players: [],
     seed: Date.now() ^ Math.floor(Math.random() * 1000000),
     phase: TURN_PHASE.WAITING,
-    roundIndex: 0,
-    attackRoundIndex: 0,
+    roundIndex: 1,
+    attackRoundIndex: 1,
+    attackTurnIndex: 0,
     actionCamp: '',
     phaseEndAt: 0,
     phaseTimer: null,
     timerSync: null,
     waitingForBulletCamp: '',
     actionSubmitted: false,
-    actedCampsInZone: {},
     crystals: {
       A: { camp: 'A', hp: TURN_CONFIG.crystalHp, maxHp: TURN_CONFIG.crystalHp },
       B: { camp: 'B', hp: TURN_CONFIG.crystalHp, maxHp: TURN_CONFIG.crystalHp },
@@ -1001,6 +1014,7 @@ function getTurnStateSnapshot(roomState) {
     phase: roomState.phase,
     roundIndex: roomState.roundIndex,
     attackRoundIndex: roomState.attackRoundIndex,
+    attackTurnIndex: roomState.attackTurnIndex || 0,
     actionCamp: roomState.actionCamp,
     endAt: roomState.phaseEndAt,
     crystals: {
@@ -1025,8 +1039,7 @@ function getTurnStateSnapshot(roomState) {
     inventories: roomState.players.reduce((result, player) => {
       result[player.camp] = {
         ...player.inventory,
-        obstacleSlots: cloneTurnObstacleSlots(player.inventory.obstacleSlots),
-        blackHole: player.inventory.blackHole || 0,
+        roundSlots: cloneTurnObstacleSlots(player.inventory.roundSlots),
       };
       return result;
     }, {}),
@@ -1035,7 +1048,8 @@ function getTurnStateSnapshot(roomState) {
         bulletBounce: player.upgrades.bulletBounce,
         multiShot: player.upgrades.multiShot,
         damageAdd: player.upgrades.damageAdd,
-        zones: player.upgrades.zones.slice(),
+        roundResourceBonus: player.upgrades.roundResourceBonus || 0,
+        stacks: { ...(player.upgrades.stacks || {}) },
       };
       return result;
     }, {}),
@@ -1046,38 +1060,22 @@ function broadcastTurnSnapshot(roomState) {
   broadcastTurn(roomState, getTurnStateSnapshot(roomState));
 }
 
-function getRoundObstacleGain(displayRound) {
-  let gain = Math.max(1, Number(TURN_CONFIG.obstacleGainPerRound) || 1);
-  return Math.min(gain, TURN_CONFIG.obstacleMaxPerRound);
-}
-
 function getRoundBuildSeconds(displayRound) {
-  return getRoundObstacleGain(displayRound) * TURN_CONFIG.buildSecondsPerObstacle;
-}
-
-function getBuildSecondsByObstacleSlots(slots) {
-  if (!slots) {
-    return 0;
-  }
-  const total = TURN_OBSTACLE_SLOT_TYPES.reduce((sum, type) => {
-    const slot = slots[type];
-    return sum + (slot ? clamp(Math.round(Number(slot.count) || 0), 0, TURN_CONFIG.obstacleSlotMaxResources) : 0);
-  }, 0);
-  return total * TURN_CONFIG.buildSecondsPerObstacle;
+  return TURN_CONFIG.buildSeconds;
 }
 
 function getTurnPhaseDurationSeconds(phase, displayRound) {
   if (phase === TURN_PHASE.BUILD) {
     return getRoundBuildSeconds(displayRound || 1);
   }
-  if (phase === TURN_PHASE.ZONE) {
-    return TURN_CONFIG.zoneSeconds;
-  }
   if (phase === TURN_PHASE.ATTACK) {
     return TURN_CONFIG.attackSeconds;
   }
   if (phase === TURN_PHASE.WAIT_BULLET) {
     return TURN_CONFIG.waitBulletSeconds;
+  }
+  if (phase === TURN_PHASE.SETTLE) {
+    return TURN_CONFIG.settleSeconds;
   }
   if (phase === TURN_PHASE.UPGRADE) {
     return TURN_CONFIG.upgradeSeconds;
@@ -1098,6 +1096,7 @@ function setTurnPhase(roomState, phase, durationSeconds, onTimeout) {
     phase: roomState.phase,
     roundIndex: roomState.roundIndex,
     attackRoundIndex: roomState.attackRoundIndex,
+    attackTurnIndex: roomState.attackTurnIndex || 0,
     actionCamp: roomState.actionCamp,
     endAt: roomState.phaseEndAt,
   });
@@ -1125,53 +1124,28 @@ function setTurnPhase(roomState, phase, durationSeconds, onTimeout) {
 
 function startTurnBuildPhase(roomState) {
   roomState.actionCamp = '';
-  roomState.attackRoundIndex = 0;
+  roomState.attackRoundIndex = 1;
+  roomState.attackTurnIndex = 0;
   roomState.waitingForBulletCamp = '';
   roomState.actionSubmitted = false;
-  roomState.actedCampsInZone = {};
   roomState.zones = [];
-  roomState.players.forEach((player) => {
-    resetTurnObstacleSlotsForBuild(roomState, player);
-  });
-  let displayRound = (roomState.roundIndex | 0) + 1;
-  if (roomState.roundIndex > 0) {
-    let gain = getRoundObstacleGain(displayRound);
-    roomState.players.forEach((player) => {
-      for (let i = 0; i < gain; i++) {
-        grantRandomTurnObstacleResource(player, roomState);
-      }
-      player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
-    });
-  }
-  let buildSeconds = roomState.players.reduce((maxSeconds, player) => {
-    return Math.max(maxSeconds, getBuildSecondsByObstacleSlots(player && player.inventory ? player.inventory.obstacleSlots : null));
-  }, 0);
-  logTurn(roomState, `phase build round=${roomState.roundIndex} buildSeconds=${buildSeconds}`);
-  setTurnPhase(roomState, TURN_PHASE.BUILD, buildSeconds, () => {
-    if (roomState.roundIndex <= 0) {
-      startTurnAttackPhase(roomState, 'A');
-      return;
-    }
-    startTurnZonePhase(roomState);
-  });
-}
-
-function startTurnZonePhase(roomState) {
-  roomState.actionCamp = '';
-  roomState.actedCampsInZone = {};
-  roomState.zones = [];
+  randomizeTurnAssistStaticObstacles(roomState);
   spawnTurnBlackHoleZone(roomState);
-  logTurn(roomState, `phase zone round=${roomState.roundIndex}`);
-  setTurnPhase(roomState, TURN_PHASE.ZONE, TURN_CONFIG.zoneSeconds, () => {
+  roomState.players.forEach((player) => {
+    createTurnRoundSlots(player, roomState, roomState.roundIndex);
+  });
+  logTurn(roomState, `phase build round=${roomState.roundIndex} buildSeconds=${TURN_CONFIG.buildSeconds}`);
+  setTurnPhase(roomState, TURN_PHASE.BUILD, TURN_CONFIG.buildSeconds, () => {
     startTurnAttackPhase(roomState, 'A');
   });
 }
 
 function startTurnAttackPhase(roomState, camp) {
   roomState.actionCamp = camp;
+  roomState.attackTurnIndex = camp === 'A' ? 1 : 2;
   roomState.waitingForBulletCamp = '';
   roomState.actionSubmitted = false;
-  logTurn(roomState, `phase attack camp=${camp} attackRound=${roomState.attackRoundIndex}`);
+  logTurn(roomState, `phase attack camp=${camp} turn=${roomState.attackTurnIndex}`);
   setTurnPhase(roomState, TURN_PHASE.ATTACK, TURN_CONFIG.attackSeconds, () => {
     advanceTurnAttack(roomState);
   });
@@ -1196,12 +1170,16 @@ function advanceTurnAttack(roomState) {
     startTurnAttackPhase(roomState, 'B');
     return;
   }
-  roomState.attackRoundIndex += 1;
-  if (roomState.attackRoundIndex < TURN_CONFIG.attackRounds) {
-    startTurnAttackPhase(roomState, 'A');
-    return;
-  }
-  startTurnUpgradePhase(roomState);
+  startTurnSettlePhase(roomState);
+}
+
+function startTurnSettlePhase(roomState) {
+  roomState.actionCamp = '';
+  applyTurnRoundSettlement(roomState);
+  logTurn(roomState, `phase settle round=${roomState.roundIndex}`);
+  setTurnPhase(roomState, TURN_PHASE.SETTLE, TURN_CONFIG.settleSeconds, () => {
+    startTurnUpgradePhase(roomState);
+  });
 }
 
 function spawnTurnBlackHoleZone(roomState) {
@@ -1325,11 +1303,16 @@ function getTurnUpgradeOptions(roomState, player) {
   if (player.pendingUpgradeOptions.length > 0) {
     return player.pendingUpgradeOptions;
   }
-  const startIndex = Math.abs((roomState.seed + roomState.roundIndex + player.playerId) % TURN_UPGRADE_POOL.length);
+  const pool = TURN_UPGRADE_POOL.filter((option) => {
+    if (option.maxStacks == null) {
+      return true;
+    }
+    return getTurnUpgradeStack(player, option.id) < option.maxStacks;
+  }).map((option) => ({ ...option }));
+  const shuffled = shuffle(pool);
   const options = [];
-  for (let i = 0; i < TURN_UPGRADE_POOL.length && options.length < 3; i++) {
-    const option = TURN_UPGRADE_POOL[(startIndex + i) % TURN_UPGRADE_POOL.length];
-    options.push({ ...option });
+  for (let i = 0; i < shuffled.length && options.length < 3; i++) {
+    options.push(shuffled[i]);
   }
   player.pendingUpgradeOptions = options;
   return options;
@@ -1350,9 +1333,8 @@ function sendTurnUpgradeOptions(roomState, player) {
 
 function startTurnUpgradePhase(roomState) {
   roomState.actionCamp = '';
-  roomState.zones = [];
   roomState.players.forEach((player) => {
-    player.exp += TURN_CONFIG.baseExp;
+    player.pendingUpgradeOptions = [];
     sendTurnUpgradeOptions(roomState, player);
   });
   logTurn(roomState, `phase upgrade round=${roomState.roundIndex}`);
@@ -1487,10 +1469,80 @@ function isTurnObstaclePositionFree(roomState, x, y, ignoreId) {
   });
 }
 
+function getTurnObstacleRectsAt(x, y, layout) {
+  const grid = TURN_CONFIG.obstacleGrid || 32;
+  const cells = Array.isArray(layout) && layout.length > 0 ? layout : [{ x: 0, y: 0 }];
+  return cells.map((cell) => ({
+    x: Math.round(x + (Number(cell.x) || 0) * grid - grid / 2),
+    y: Math.round(y + (Number(cell.y) || 0) * grid - grid / 2),
+    width: grid,
+    height: grid,
+  }));
+}
+
+function rectOverlaps(a, b) {
+  return a.x < b.x + b.width
+    && a.x + a.width > b.x
+    && a.y < b.y + b.height
+    && a.y + a.height > b.y;
+}
+
+function isTurnBuildPlacementValid(roomState, camp, x, y, layout, ignoreId) {
+  const buildBounds = TURN_MAP_LAYOUT.buildAreas[camp === 'B' ? 'B' : 'A'];
+  const mapBounds = TURN_MAP_LAYOUT.mapRect;
+  const roadA = TURN_MAP_LAYOUT.roadRects.A;
+  const roadB = TURN_MAP_LAYOUT.roadRects.B;
+  const rects = getTurnObstacleRectsAt(x, y, layout);
+  for (let i = 0; i < rects.length; i++) {
+    const rect = rects[i];
+    if (
+      rect.x < buildBounds.minX
+      || rect.y < buildBounds.minY
+      || rect.x + rect.width > buildBounds.maxX
+      || rect.y + rect.height > buildBounds.maxY
+    ) {
+      return false;
+    }
+    if (
+      rect.x < mapBounds.minX
+      || rect.y < mapBounds.minY
+      || rect.x + rect.width > mapBounds.maxX
+      || rect.y + rect.height > mapBounds.maxY
+    ) {
+      return false;
+    }
+    if (rectOverlaps(rect, { x: roadA.minX, y: roadA.minY, width: roadA.maxX - roadA.minX, height: roadA.maxY - roadA.minY })) {
+      return false;
+    }
+    if (rectOverlaps(rect, { x: roadB.minX, y: roadB.minY, width: roadB.maxX - roadB.minX, height: roadB.maxY - roadB.minY })) {
+      return false;
+    }
+    if (getTurnActiveStaticObstacles(roomState).some((obstacle) => rectOverlaps(rect, obstacle))) {
+      return false;
+    }
+    if (roomState.zones.some((zone) => circleRectIntersects(zone, TURN_CONFIG.assistZoneRadius, rect))) {
+      return false;
+    }
+    if (Object.keys(roomState.obstacles).some((id) => {
+      if (id === ignoreId) {
+        return false;
+      }
+      const obstacle = roomState.obstacles[id];
+      return getTurnObstacleRectsAt(obstacle.x, obstacle.y, obstacle.layout).some((existingRect) => rectOverlaps(existingRect, rect));
+    })) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function handleTurnBuildAction(ws, msg) {
   const roomState = getTurnRoom(ws);
   const player = getTurnPlayer(roomState, ws);
   if (!roomState || !player || roomState.phase !== TURN_PHASE.BUILD) {
+    if (roomState) {
+      logTurn(roomState, `buildAction reject: invalid phase, currentPhase=${roomState.phase}`);
+    }
     sendTurnError(ws, '当前不是改造期', 'invalidPhase');
     return;
   }
@@ -1498,32 +1550,42 @@ function handleTurnBuildAction(ws, msg) {
   const op = payload.op === 'move' || payload.op === 'remove' ? payload.op : 'place';
   const point = sanitizeTurnPointForPlayer(player, payload);
   const obstacleId = String(payload.obstacleId || '');
-  const slotType = TURN_OBSTACLE_SLOT_TYPES.indexOf(String(payload.slotType || '')) >= 0 ? String(payload.slotType) : 'normal';
-  const slots = player.inventory.obstacleSlots || (player.inventory.obstacleSlots = createTurnObstacleSlots());
+  const slotId = String(payload.slotId || '');
+  const slots = Array.isArray(player.inventory.roundSlots) ? player.inventory.roundSlots : [];
 
   if (op === 'place') {
     if (!point) {
       sendTurnError(ws, '建造坐标无效', 'invalidPoint');
       return;
     }
-    const slot = slots[slotType];
-    if (!slot || slot.count <= 0) {
+    const slot = findTurnRoundSlot(player, slotId);
+    if (!slot) {
+      logTurn(roomState, `buildAction reject: slot not found, camp=${player.camp} slotId="${slotId}" availableSlots=${(player.inventory.roundSlots || []).map((s) => s.slotId).join(',')}`);
       sendTurnError(ws, '掩体库存不足', 'noInventory');
       return;
     }
-    if ((slotType === 'mirror' && Math.max(0, Number(slot.placedCount) || 0) >= slot.count) || (slotType !== 'mirror' && slot.placedObstacleId)) {
+    if (slot.count <= 0) {
+      logTurn(roomState, `buildAction reject: slot count<=0, camp=${player.camp} slotId="${slotId}"`);
+      sendTurnError(ws, '掩体库存不足', 'noInventory');
+      return;
+    }
+    if (slot.placed || slot.placedObstacleId) {
+      logTurn(roomState, `buildAction reject: slot already placed, camp=${player.camp} slotId="${slotId}" placed=${slot.placed} placedObstacleId=${slot.placedObstacleId}`);
       sendTurnError(ws, '该资源已放置', 'slotAlreadyPlaced');
       return;
     }
-    if (!isTurnObstaclePositionFree(roomState, point.x, point.y)) {
-      sendTurnError(ws, '该位置已有掩体', 'occupied');
+    if (!isTurnBuildPlacementValid(roomState, player.camp, point.x, point.y, slot.layout, '')) {
+      logTurn(roomState, `buildAction reject: position invalid, camp=${player.camp} slotId="${slotId}" point=${point.x},${point.y}`);
+      sendTurnError(ws, '该位置不可放置', 'occupied');
       return;
     }
     const id = obstacleId || `${player.camp}_${roomState.nextObstacleId++}`;
-    const resourceCount = clamp(Math.round(Number(slot.count) || 1), 1, TURN_CONFIG.obstacleSlotMaxResources);
+    const slotType = slot.type;
+    const resourceCount = clamp(Math.round(Number(slot.count) || 1), 1, TURN_CONFIG.slotMaxResource);
     roomState.obstacles[id] = {
       id,
       camp: player.camp,
+      originSlotId: slot.slotId,
       x: Math.round(point.x),
       y: Math.round(point.y),
       hp: getObstacleMaxHp(slotType, resourceCount),
@@ -1536,13 +1598,9 @@ function handleTurnBuildAction(ws, msg) {
       mirrorDir: slotType === 'mirror' ? normalizeMirrorDirection(slot.mirrorDir) : '',
       placedByCamp: player.camp,
     };
-    if (slotType === 'mirror') {
-      slot.placedCount = Math.max(0, Number(slot.placedCount) || 0) + 1;
-    } else {
-      slot.placedObstacleId = id;
-      slot.placedObstacleShapeKey = roomState.obstacles[id].shapeKey;
-    }
-    player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
+    slot.placed = true;
+    slot.placedObstacleId = id;
+    logTurn(roomState, `buildAction place ok: camp=${player.camp} slotId="${slot.slotId}" obstacleId=${id} type=${slotType} at ${roomState.obstacles[id].x},${roomState.obstacles[id].y}`);
   } else if (op === 'move') {
     if (!point || !obstacleId || !roomState.obstacles[obstacleId]) {
       sendTurnError(ws, '移动掩体参数无效', 'invalidObstacle');
@@ -1553,7 +1611,7 @@ function handleTurnBuildAction(ws, msg) {
       sendTurnError(ws, '不能移动对方掩体', 'notOwner');
       return;
     }
-    if (!isTurnObstaclePositionFree(roomState, point.x, point.y, obstacleId)) {
+    if (!isTurnBuildPlacementValid(roomState, player.camp, point.x, point.y, obstacle.layout, obstacleId)) {
       sendTurnError(ws, '目标位置已有掩体', 'occupied');
       return;
     }
@@ -1570,14 +1628,10 @@ function handleTurnBuildAction(ws, msg) {
       return;
     }
     delete roomState.obstacles[obstacleId];
-    if (slots[obstacle.slotType]) {
-      if (obstacle.slotType === 'mirror') {
-        slots[obstacle.slotType].placedCount = Math.max(0, (slots[obstacle.slotType].placedCount || 0) - 1);
-      } else if (slots[obstacle.slotType].placedObstacleId === obstacleId) {
-        slots[obstacle.slotType].placedObstacleId = '';
-      }
+    const slot = findTurnRoundSlot(player, obstacle.originSlotId);
+    if (slot && slot.placedObstacleId === obstacleId) {
+      slot.placedObstacleId = '';
     }
-    player.inventory.obstacles = getTurnObstacleInventoryTotal(player);
   }
 
   broadcastTurn(roomState, {
@@ -1588,7 +1642,7 @@ function handleTurnBuildAction(ws, msg) {
     action: {
       op,
       obstacleId: obstacleId || undefined,
-      slotType: op === 'place' ? slotType : undefined,
+      slotId: op === 'place' ? slotId : undefined,
       x: point ? Math.round(point.x) : undefined,
       y: point ? Math.round(point.y) : undefined,
     },
@@ -1716,26 +1770,26 @@ function evaluateTurnGameEnd(roomState) {
   return true;
 }
 
-function applyTurnEnergyWallRoundEnd(roomState) {
+function applyTurnRoundSettlement(roomState) {
   if (!roomState || !roomState.players) {
     return;
   }
   roomState.players.forEach((player) => {
-    const towers = Object.keys(roomState.obstacles).reduce((total, id) => {
-      const obstacle = roomState.obstacles[id];
-      if (!obstacle || obstacle.camp !== player.camp || obstacle.slotType !== 'energy') {
-        return total;
-      }
-      return total + Math.max(1, Math.round(Number(obstacle.resourceCount) || 1));
-    }, 0);
-    if (towers <= 0) {
-      return;
+    const expBlocks = countTurnLivingResource(roomState, player.camp, 'exp');
+    if (expBlocks > 0) {
+      player.exp += expBlocks * TURN_CONFIG.baseExp;
     }
+    const towers = countTurnLivingResource(roomState, player.camp, 'energy');
     const crystal = roomState.crystals[player.camp];
-    if (!crystal) {
+    if (!crystal || towers <= 0) {
       return;
     }
-    crystal.hp = Math.min(crystal.maxHp, crystal.hp + towers * TURN_CONFIG.energyWallRoundHeal);
+    const enemyBlood = countTurnLivingResource(roomState, getEnemyCamp(player.camp), 'blood');
+    const effectiveTowers = Math.max(0, towers - enemyBlood * TURN_CONFIG.bloodBlockHealPerStack);
+    if (effectiveTowers <= 0) {
+      return;
+    }
+    crystal.hp = Math.min(crystal.maxHp, crystal.hp + effectiveTowers * TURN_CONFIG.energyWallRoundHeal);
   });
 }
 
@@ -1770,9 +1824,11 @@ function handleTurnBulletResult(ws, msg) {
   destroyedIds.forEach((id) => {
     if (roomState.obstacles[id]) {
       const obstacle = roomState.obstacles[id];
-      const slot = player.inventory.obstacleSlots && obstacle ? player.inventory.obstacleSlots[obstacle.slotType] : null;
+      const owner = roomState.players.find((item) => item.camp === obstacle.camp);
+      const slot = owner ? findTurnRoundSlot(owner, obstacle.originSlotId) : null;
       if (slot && slot.placedObstacleId === id) {
         slot.placedObstacleId = '';
+        slot.placed = false;
       }
       delete roomState.obstacles[id];
       awardedExp += obstacle && obstacle.slotType === 'exp' ? TURN_CONFIG.expWallDestroyExp : TURN_CONFIG.obstacleHitExp;
@@ -1811,13 +1867,6 @@ function handleTurnBulletResult(ws, msg) {
   });
   broadcastTurnSnapshot(roomState);
   if (!evaluateTurnGameEnd(roomState)) {
-    if (roomState.actionCamp === 'B') {
-      applyTurnEnergyWallRoundEnd(roomState);
-      broadcastTurnSnapshot(roomState);
-      if (evaluateTurnGameEnd(roomState)) {
-        return;
-      }
-    }
     advanceTurnAttack(roomState);
   }
 }
@@ -1826,9 +1875,9 @@ function applyTurnUpgrade(player, option) {
   if (!option) {
     return;
   }
+  player.upgrades.stacks[option.id] = getTurnUpgradeStack(player, option.id) + 1;
   if (option.id === 'coverResourceUp') {
-    const roomState = getTurnRoom(player.socket);
-    grantRandomTurnObstacleResource(player, roomState);
+    player.upgrades.roundResourceBonus += option.value || 1;
   } else if (option.id === 'bulletBounce') {
     player.upgrades.bulletBounce += option.value || 1;
   } else if (option.id === 'multiShot') {
@@ -1841,11 +1890,6 @@ function applyTurnUpgrade(player, option) {
     if (crystal) {
       crystal.maxHp += option.value || 20;
       crystal.hp += option.value || 20;
-    }
-  } else if (option.id === 'unlockBlackHole') {
-    const zoneType = option.value || 'blackHole';
-    if (player.upgrades.zones.indexOf(zoneType) < 0) {
-      player.upgrades.zones.push(zoneType);
     }
   }
 }
