@@ -182,6 +182,7 @@ export default class TurnGameMain extends cc.Component {
             targetCamp: result.targetCamp || "B",
             targetId: result.targetId || "",
             damage: result.damage || 0,
+            obstacleHits: result.obstacleHits || [],
             destroyedIds: result.destroyedIds || [],
             destroyedCells: result.destroyedCells || [],
             expGain: result.expGain || 0,
@@ -299,6 +300,7 @@ export default class TurnGameMain extends cc.Component {
                 count: slot.count,
                 shapeKey: slot.shapeKey,
                 placed: !!slot.placed,
+                hpText: this._battleMap.getObstacleSlotHpPreview(slot.type, slot.count),
             })),
             this._battleMap.isBuildPhaseActiveForCamp(localCamp),
         );

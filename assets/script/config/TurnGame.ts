@@ -17,6 +17,11 @@ export interface TurnObstacleSlotConfig {
     name: string;
 }
 
+export interface TurnObstacleHpRuleConfig {
+    baseHp: number;
+    maxHp: number;
+}
+
 export interface TurnRoundResourceSlot {
     slotId: string;
     type: TurnObstacleResourceType;
@@ -54,6 +59,9 @@ export interface TurnGameConfig {
     blackHoleStrength: number;
     obstacleBaseHp: number;
     obstacleMaxHp: number;
+    obstacleHpRules: {
+        normal: TurnObstacleHpRuleConfig;
+    };
     obstacleSlotMaxResources: number;
     expWallDestroyExp: number;
     energyWallRoundHeal: number;
@@ -103,6 +111,12 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     blackHoleStrength: 2.7,
     obstacleBaseHp: 10,
     obstacleMaxHp: 50,
+    obstacleHpRules: {
+        normal: {
+            baseHp: 10,
+            maxHp: 50,
+        },
+    },
     obstacleSlotMaxResources: 4,
     expWallDestroyExp: 50,
     energyWallRoundHeal: 10,

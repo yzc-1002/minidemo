@@ -34,7 +34,7 @@ export default class TurnHud extends cc.Component {
     private _buildPaletteCamp: TurnCamp = "A";
     private _buildPaletteCount = 0;
     private _buildPaletteEnabled = false;
-    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string }[] = [];
+    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string }[] = [];
     private _selectedBuildSlotId = "";
     private _buildSlotInfoNodes: cc.Node[] = [];
     private _buildDragNode: cc.Node = null;
@@ -121,7 +121,7 @@ export default class TurnHud extends cc.Component {
         this.inventoryLabel.string = "掩体 A: " + aCount + "  |  B: " + bCount;
     }
 
-    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string }[], enabled: boolean) {
+    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string }[], enabled: boolean) {
         this.ensureBuildPalette();
         this._buildPaletteCamp = camp || "A";
         this._buildPaletteSlots = Array.isArray(slots) ? slots.slice() : [];
@@ -511,7 +511,7 @@ export default class TurnHud extends cc.Component {
         this._buildSlotInfoNodes = [];
     }
 
-    private createBuildSlotInfo(slot: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string }, x: number, y: number) {
+    private createBuildSlotInfo(slot: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string }, x: number, y: number) {
         let root = new cc.Node("BuildSlotInfo");
         root.parent = this._buildPaletteBlock;
         root.setPosition(x, y);
@@ -526,8 +526,12 @@ export default class TurnHud extends cc.Component {
         status.node.color = slot.placed
             ? new cc.Color(180, 188, 200, 255)
             : new cc.Color(170, 240, 180, 255);
+        if (slot.hpText) {
+            let hp = this.createChildLabel(root, slot.hpText, 9, 0, -27);
+            hp.node.color = new cc.Color(255, 221, 132, 255);
+        }
         if (slot.shapeKey) {
-            let shape = this.createChildLabel(root, this.summarizeShape(slot.shapeKey), 9, 0, -27);
+            let shape = this.createChildLabel(root, this.summarizeShape(slot.shapeKey), 9, 0, slot.hpText ? -40 : -27);
             shape.node.color = new cc.Color(180, 196, 220, 255);
         }
     }

@@ -193,6 +193,7 @@ export default class TurnBattleMap extends cc.Component {
         targetCamp: "",
         targetId: "",
         damage: 0,
+        obstacleHits: [] as { obstacleId: string; cellIndex: number; damage: number }[],
         destroyedIds: [] as string[],
         destroyedCells: [] as { obstacleId: string; cellIndex: number }[],
         expGain: 0,
@@ -287,6 +288,7 @@ export default class TurnBattleMap extends cc.Component {
             targetCamp: "",
             targetId: "",
             damage: 0,
+            obstacleHits: [],
             destroyedIds: [],
             destroyedCells: [],
             expGain: 0,
@@ -456,6 +458,7 @@ export default class TurnBattleMap extends cc.Component {
             targetCamp: this._pendingBulletResult.targetCamp,
             targetId: this._pendingBulletResult.targetId,
             damage: this._pendingBulletResult.damage,
+            obstacleHits: this._pendingBulletResult.obstacleHits.slice(),
             destroyedIds: this._pendingBulletResult.destroyedIds.slice(),
             destroyedCells: this._pendingBulletResult.destroyedCells.slice(),
             expGain: this._pendingBulletResult.expGain,
@@ -524,6 +527,16 @@ export default class TurnBattleMap extends cc.Component {
 
     getObstacleSlotStates(camp: TurnCamp): TurnObstacleSlotState[] {
         return (this._obstacleInventory[camp] || []).slice();
+    }
+
+    getObstacleSlotHpPreview(slotType: TurnObstacleResourceType, count: number): string {
+        if (slotType !== "normal") {
+            return "";
+        }
+        let safeCount = Math.max(1, Math.floor(Number(count) || 1));
+        let maxHp = this.getObstacleMaxHp(slotType, safeCount);
+        let perCell = this.getObstacleCellMaxHp(slotType);
+        return "HP " + maxHp + " (" + perCell + "/格)";
     }
 
     getCrystalHp(camp: TurnCamp): number {
@@ -1057,10 +1070,17 @@ export default class TurnBattleMap extends cc.Component {
                 continue;
             }
             let cellIndex = hitInfo.cellIndex;
-            obstacle.cellHp[cellIndex] = Math.max(0, (obstacle.cellHp[cellIndex] || 0) - bullet.damage);
-            obstacle.hp = this.sumObstacleCellHp(obstacle);
+            let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, bullet.damage);
             if (obstacle.slotType === "mirror") {
                 this.reflectBulletOffMirror(bullet, hitInfo.rect, obstacle.mirrorDir);
+            }
+            if (this._serverMode && bullet.camp === "A" && appliedDamage > 0) {
+                this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
+                this._pendingBulletResult.obstacleHits.push({
+                    obstacleId: obstacle.id,
+                    cellIndex: cellIndex,
+                    damage: appliedDamage,
+                });
             }
             if (obstacle.cellHp[cellIndex] <= 0) {
                 obstacle.layout.splice(cellIndex, 1);
@@ -1246,18 +1266,15 @@ export default class TurnBattleMap extends cc.Component {
         let graphics = node.addComponent(cc.Graphics);
         this.drawObstacleGraphics(graphics, camp, true, slotType, layout, mirrorDir);
 
-        // let label = this.createLabel(camp, 16);
-        // label.node.parent = node;
-        // label.node.y = bounds.minY * this._dynamicObstacleSize.height - 18;
-        // label.node.zIndex = 5;
-        // label.node.color = new cc.Color(255, 248, 220, 255);
-        let hp = Math.max(1, Number(snapshot && snapshot.hp) || this.getObstacleMaxHp(slotType, resourceCount));
-        let maxHp = Math.max(hp, Number(snapshot && snapshot.maxHp) || this.getObstacleMaxHp(slotType, resourceCount));
-        let cellMaxHp = slotType === "exp" || slotType === "energy"
-            ? this._config.obstacleBaseHp
-            : this.getObstacleMaxHp(slotType, 1);
+        let label = this.createLabel("", 16);
+        label.node.parent = node;
+        label.node.y = bounds.minY * this._dynamicObstacleSize.height - 18;
+        label.node.zIndex = 5;
+        label.node.color = new cc.Color(255, 248, 220, 255);
+        let maxHp = this.resolveObstacleMaxHp(slotType, resourceCount, Number(snapshot && snapshot.maxHp));
+        let cellMaxHp = this.getObstacleCellMaxHp(slotType);
         let cellHp = this.buildCellHpFromSnapshot(snapshot && snapshot.cellHp, layout.length, cellMaxHp);
-        // label.string = String(hp);
+        let hp = this.resolveObstacleHp(slotType, layout.length, Number(snapshot && snapshot.hp), cellHp, maxHp);
 
         let id = forcedId || String(this._nextObstacleId++);
         if (slot) {
@@ -1283,6 +1300,7 @@ export default class TurnBattleMap extends cc.Component {
             mirrorDir: mirrorDir,
             placedByCamp: camp,
         });
+        this.refreshObstacleHpLabel(this._obstacles[this._obstacles.length - 1]);
         this.getCampStats(camp).energyTowers = this.countPlacedEnergyTowers(camp);
         this.refreshBuildInteractionView();
     }
@@ -2192,6 +2210,7 @@ export default class TurnBattleMap extends cc.Component {
         this._pendingBulletResult.targetCamp = "";
         this._pendingBulletResult.targetId = "";
         this._pendingBulletResult.damage = 0;
+        this._pendingBulletResult.obstacleHits = [];
         this._pendingBulletResult.destroyedIds = [];
         this._pendingBulletResult.destroyedCells = [];
         this._pendingBulletResult.expGain = 0;
@@ -2696,6 +2715,22 @@ export default class TurnBattleMap extends cc.Component {
         return total;
     }
 
+    private applyObstacleCellDamage(obstacle: TurnObstacleState, cellIndex: number, rawDamage: number): number {
+        if (!obstacle || cellIndex < 0 || cellIndex >= obstacle.cellHp.length) {
+            return 0;
+        }
+        let damage = Math.max(0, Math.floor(Number(rawDamage) || 0));
+        if (damage <= 0) {
+            return 0;
+        }
+        let before = Math.max(0, Number(obstacle.cellHp[cellIndex]) || 0);
+        let after = Math.max(0, before - damage);
+        obstacle.cellHp[cellIndex] = after;
+        obstacle.hp = this.sumObstacleCellHp(obstacle);
+        obstacle.maxHp = this.resolveObstacleMaxHp(obstacle.slotType, obstacle.resourceCount, obstacle.maxHp);
+        return before - after;
+    }
+
     private redrawObstacle(obstacle: TurnObstacleState) {
         let graphics = obstacle.node.getComponent(cc.Graphics);
         if (graphics) {
@@ -2708,7 +2743,48 @@ export default class TurnBattleMap extends cc.Component {
         if (slotType === "exp" || slotType === "energy") {
             return this._config.obstacleBaseHp;
         }
+        if (slotType === "normal") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.normal;
+            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+        }
         return Math.min(this._config.obstacleMaxHp, this._config.obstacleBaseHp * Math.max(1, resourceCount));
+    }
+
+    private getObstacleCellMaxHp(slotType: TurnObstacleResourceType): number {
+        if (slotType === "normal") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.normal;
+            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+        }
+        if (slotType === "exp" || slotType === "energy") {
+            return this._config.obstacleBaseHp;
+        }
+        return this.getObstacleMaxHp(slotType, 1);
+    }
+
+    private resolveObstacleMaxHp(slotType: TurnObstacleResourceType, resourceCount: number, snapshotMaxHp?: number): number {
+        let configMax = this.getObstacleMaxHp(slotType, resourceCount);
+        if (!Number.isFinite(snapshotMaxHp)) {
+            return configMax;
+        }
+        return Math.max(1, Math.min(configMax, Math.floor(snapshotMaxHp)));
+    }
+
+    private resolveObstacleHp(slotType: TurnObstacleResourceType, cellCount: number, snapshotHp: number, cellHp: number[], maxHp: number): number {
+        let hpFromCells = 0;
+        for (let i = 0; i < cellHp.length; i++) {
+            hpFromCells += Math.max(0, Number(cellHp[i]) || 0);
+        }
+        if (!Number.isFinite(snapshotHp)) {
+            return Math.max(0, Math.min(maxHp, hpFromCells));
+        }
+        let safeSnapshotHp = Math.max(0, Math.floor(snapshotHp));
+        if (slotType === "normal") {
+            return Math.max(0, Math.min(maxHp, hpFromCells));
+        }
+        let minHp = cellCount > 0 ? 1 : 0;
+        return Math.max(minHp, Math.min(maxHp, safeSnapshotHp));
     }
 
     private refreshObstacleHpLabel(obstacle: TurnObstacleState) {

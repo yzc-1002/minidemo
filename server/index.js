@@ -378,6 +378,12 @@ const TURN_CONFIG = {
   obstacleGrid: 32,
   obstacleBaseHp: 10,
   obstacleMaxHp: 50,
+  obstacleHpRules: {
+    normal: {
+      baseHp: 10,
+      maxHp: 50,
+    },
+  },
   obstacleSlotMaxResources: 4,
 };
 const TURN_PHASE = {
@@ -809,7 +815,66 @@ function getObstacleMaxHp(slotType, resourceCount) {
   if (slotType === 'exp' || slotType === 'energy') {
     return TURN_CONFIG.obstacleBaseHp;
   }
+  if (slotType === 'normal') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.normal;
+    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+  }
   return Math.min(TURN_CONFIG.obstacleMaxHp, TURN_CONFIG.obstacleBaseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+}
+
+function getObstacleCellMaxHp(slotType) {
+  if (slotType === 'normal') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.normal;
+    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+  }
+  if (slotType === 'exp' || slotType === 'energy') {
+    return TURN_CONFIG.obstacleBaseHp;
+  }
+  return getObstacleMaxHp(slotType, 1);
+}
+
+function sumObstacleCellHp(obstacle) {
+  if (!obstacle || !Array.isArray(obstacle.cellHp)) {
+    return 0;
+  }
+  return obstacle.cellHp.reduce((total, hp) => total + Math.max(0, Number(hp) || 0), 0);
+}
+
+function applyObstacleDamage(roomState, obstacleId, cellIndex, damage) {
+  const obstacle = obstacleId ? roomState.obstacles[obstacleId] : null;
+  if (!obstacle || !Array.isArray(obstacle.cellHp) || !Array.isArray(obstacle.layout)) {
+    return null;
+  }
+  if (cellIndex < 0 || cellIndex >= obstacle.cellHp.length || cellIndex >= obstacle.layout.length) {
+    return null;
+  }
+  const safeDamage = Math.max(0, Math.floor(Number(damage) || 0));
+  const before = Math.max(0, Number(obstacle.cellHp[cellIndex]) || 0);
+  const after = Math.max(0, before - safeDamage);
+  obstacle.cellHp[cellIndex] = after;
+  obstacle.hp = sumObstacleCellHp(obstacle);
+  obstacle.maxHp = getObstacleMaxHp(obstacle.slotType || 'normal', obstacle.resourceCount);
+  if (after > 0) {
+    return { obstacle, destroyedCell: false, destroyedObstacle: false };
+  }
+  obstacle.layout.splice(cellIndex, 1);
+  obstacle.cellHp.splice(cellIndex, 1);
+  obstacle.resourceCount = Math.max(0, obstacle.layout.length);
+  obstacle.shapeKey = getObstacleLayoutKey(obstacle.layout);
+  obstacle.hp = sumObstacleCellHp(obstacle);
+  if (obstacle.hp > 0) {
+    return { obstacle, destroyedCell: true, destroyedObstacle: false };
+  }
+  const owner = roomState.players.find((item) => item.camp === obstacle.camp);
+  const slot = owner ? findTurnRoundSlot(owner, obstacle.originSlotId) : null;
+  if (slot && slot.placedObstacleId === obstacleId) {
+    slot.placedObstacleId = '';
+    slot.placed = false;
+  }
+  delete roomState.obstacles[obstacleId];
+  return { obstacle, destroyedCell: true, destroyedObstacle: true };
 }
 
 function getTurnUpgradeStack(player, upgradeId) {
@@ -1593,7 +1658,7 @@ function handleTurnBuildAction(ws, msg) {
       slotType,
       resourceCount,
       layout: normalizeObstacleLayout(slotType, slot.layout, resourceCount),
-      cellHp: normalizeObstacleLayout(slotType, slot.layout, resourceCount).map(() => slotType === 'exp' || slotType === 'energy' ? TURN_CONFIG.obstacleBaseHp : TURN_CONFIG.obstacleBaseHp),
+      cellHp: normalizeObstacleLayout(slotType, slot.layout, resourceCount).map(() => getObstacleCellMaxHp(slotType)),
       shapeKey: slot.shapeKey || getObstacleLayoutKey(slot.layout),
       mirrorDir: slotType === 'mirror' ? normalizeMirrorDirection(slot.mirrorDir) : '',
       placedByCamp: player.camp,
@@ -1801,38 +1866,38 @@ function handleTurnBulletResult(ws, msg) {
     return;
   }
   const payload = getTurnActionPayload(msg);
+  const obstacleHits = Array.isArray(payload.obstacleHits) ? payload.obstacleHits.slice(0, 40) : [];
   const destroyedIds = Array.isArray(payload.destroyedIds) ? payload.destroyedIds.slice(0, 20).map(String) : [];
   const destroyedCells = Array.isArray(payload.destroyedCells) ? payload.destroyedCells.slice(0, 40) : [];
   let awardedExp = 0;
-  destroyedCells.forEach((item) => {
+  const handledDestroyedIds = new Set();
+  obstacleHits.forEach((item) => {
     const obstacleId = item && item.obstacleId != null ? String(item.obstacleId) : '';
     const cellIndex = Math.max(0, Math.floor(Number(item && item.cellIndex) || 0));
-    const obstacle = obstacleId ? roomState.obstacles[obstacleId] : null;
-    if (!obstacle || !Array.isArray(obstacle.layout) || obstacle.layout.length <= 0) {
+    const damage = Math.max(0, Math.floor(Number(item && item.damage) || 0));
+    const applied = applyObstacleDamage(roomState, obstacleId, cellIndex, damage);
+    if (!applied) {
       return;
     }
-    if (cellIndex >= obstacle.layout.length) {
-      return;
+    if (applied.destroyedObstacle && !handledDestroyedIds.has(obstacleId)) {
+      handledDestroyedIds.add(obstacleId);
+      awardedExp += applied.obstacle && applied.obstacle.slotType === 'exp' ? TURN_CONFIG.expWallDestroyExp : TURN_CONFIG.obstacleHitExp;
     }
-    obstacle.layout.splice(cellIndex, 1);
-    if (Array.isArray(obstacle.cellHp)) {
-      obstacle.cellHp.splice(cellIndex, 1);
-    }
-    obstacle.resourceCount = Math.max(0, obstacle.layout.length);
-    obstacle.shapeKey = getObstacleLayoutKey(obstacle.layout);
   });
   destroyedIds.forEach((id) => {
-    if (roomState.obstacles[id]) {
-      const obstacle = roomState.obstacles[id];
-      const owner = roomState.players.find((item) => item.camp === obstacle.camp);
-      const slot = owner ? findTurnRoundSlot(owner, obstacle.originSlotId) : null;
-      if (slot && slot.placedObstacleId === id) {
-        slot.placedObstacleId = '';
-        slot.placed = false;
-      }
-      delete roomState.obstacles[id];
-      awardedExp += obstacle && obstacle.slotType === 'exp' ? TURN_CONFIG.expWallDestroyExp : TURN_CONFIG.obstacleHitExp;
+    if (!id || handledDestroyedIds.has(id) || !roomState.obstacles[id]) {
+      return;
     }
+    const obstacle = roomState.obstacles[id];
+    const owner = roomState.players.find((item) => item.camp === obstacle.camp);
+    const slot = owner ? findTurnRoundSlot(owner, obstacle.originSlotId) : null;
+    if (slot && slot.placedObstacleId === id) {
+      slot.placedObstacleId = '';
+      slot.placed = false;
+    }
+    delete roomState.obstacles[id];
+    handledDestroyedIds.add(id);
+    awardedExp += obstacle && obstacle.slotType === 'exp' ? TURN_CONFIG.expWallDestroyExp : TURN_CONFIG.obstacleHitExp;
   });
 
   const hitType = String(payload.hitType || '');
