@@ -571,6 +571,12 @@ export default class TurnHud extends cc.Component {
         if (type === "bleed") {
             return "滴血块";
         }
+        if (type === "bullet") {
+            return "子弹块";
+        }
+        if (type === "attack") {
+            return "攻击块";
+        }
         return fallback || "普通方块";
     }
 
@@ -586,6 +592,12 @@ export default class TurnHud extends cc.Component {
         }
         if (type === "bleed") {
             return placed ? new cc.Color(140, 78, 78, 200) : new cc.Color(224, 98, 98, 255);
+        }
+        if (type === "bullet") {
+            return placed ? new cc.Color(104, 92, 154, 200) : new cc.Color(166, 140, 255, 255);
+        }
+        if (type === "attack") {
+            return placed ? new cc.Color(158, 98, 76, 200) : new cc.Color(255, 146, 86, 255);
         }
         return placed ? new cc.Color(90, 104, 92, 200) : new cc.Color(99, 156, 106, 255);
     }
@@ -611,6 +623,17 @@ export default class TurnHud extends cc.Component {
         }
         else if (type === "bleed") {
             graphics.circle(x, y, 7);
+        }
+        else if (type === "bullet") {
+            graphics.circle(x, y, 5);
+            graphics.moveTo(x - 8, y);
+            graphics.lineTo(x + 8, y);
+        }
+        else if (type === "attack") {
+            graphics.moveTo(x - 7, y + 7);
+            graphics.lineTo(x + 7, y - 7);
+            graphics.moveTo(x - 7, y - 7);
+            graphics.lineTo(x + 7, y + 7);
         }
         else {
             graphics.rect(x - 8, y - 8, 16, 16);

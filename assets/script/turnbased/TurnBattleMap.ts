@@ -150,6 +150,16 @@ interface TurnCampStats {
     upgradeStacks: { [id: string]: number };
 }
 
+interface TurnAttackSnapshotState {
+    totalShots: number;
+    extraShotsFromUpgrade: number;
+    extraShotsFromBulletBlock: number;
+    bonusDamageFromUpgrade: number;
+    bonusDamageFromAttackBlock: number;
+    bulletDamage: number;
+    bulletBounce: number;
+}
+
 @ccclass
 export default class TurnBattleMap extends cc.Component {
     @property(cc.Node)
@@ -180,6 +190,7 @@ export default class TurnBattleMap extends cc.Component {
     private _actionCamp: TurnCamp = "A";
     private _hasFiredInAction = false;
     private _shotsLeftInAction = 0;
+    private _attackSnapshot: TurnAttackSnapshotState = null;
     private _dragObstacle: TurnObstacleState = null;
     private _dragStartPosition: cc.Vec2 = null;
     private _palettePreview: TurnBuildPreviewState = null;
@@ -273,6 +284,7 @@ export default class TurnBattleMap extends cc.Component {
         this._actionCamp = "A";
         this._hasFiredInAction = false;
         this._shotsLeftInAction = 0;
+        this._attackSnapshot = null;
         this._dragObstacle = null;
         this._dragStartPosition = null;
         this._palettePreview = null;
@@ -367,13 +379,18 @@ export default class TurnBattleMap extends cc.Component {
 
         if (snapshot.phase === "attack") {
             this._hasFiredInAction = false;
-            this._shotsLeftInAction = 1 + this.getCampStats(this._actionCamp).extraShots;
+            this._attackSnapshot = this.buildAttackSnapshotForCamp(this._actionCamp);
+            this._shotsLeftInAction = this._attackSnapshot ? this._attackSnapshot.totalShots : 1;
             if (this._serverMode && this._actionCamp === "A") {
                 this.resetPendingBulletResult();
             }
         }
         else if (snapshot.phase === "waitBullet" && !this.hasActiveBullets()) {
             this.scheduleOnce(this.emitBulletsCleared, 0);
+        }
+        else {
+            this._attackSnapshot = null;
+            this._shotsLeftInAction = 0;
         }
     }
 
@@ -412,6 +429,13 @@ export default class TurnBattleMap extends cc.Component {
         statsB.upgradeStacks = upgradesB.stacks || {};
         statsA.energyTowers = this.countPlacedEnergyTowers("A");
         statsB.energyTowers = this.countPlacedEnergyTowers("B");
+        if (snapshot.attackSnapshots) {
+            let attackSnapshot = snapshot.attackSnapshots[this._actionCamp || "A"];
+            if (snapshot.phase === "attack" && attackSnapshot) {
+                this._attackSnapshot = this.buildAttackSnapshotFromServer(attackSnapshot);
+                this._shotsLeftInAction = Math.max(0, Number(attackSnapshot.shotsLeft) || this._attackSnapshot.totalShots);
+            }
+        }
 
         this.syncCrystalState("A", snapshot.crystals && snapshot.crystals.A);
         this.syncCrystalState("B", snapshot.crystals && snapshot.crystals.B);
@@ -449,7 +473,7 @@ export default class TurnBattleMap extends cc.Component {
         let target = cc.v2(Number(action.aimX) || startPosition.x, Number(action.aimY) || startPosition.y);
         let dir = this.clampAimDirection(camp, startPosition, target);
         this.applyTankAim(camp, startPosition.add(dir.mul(120)), false);
-        this.createBullet(camp, startPosition.add(dir.normalize().mul(44)), dir.normalize());
+        this.createBullet(camp, startPosition.add(dir.normalize().mul(44)), dir.normalize(), this.buildAttackSnapshotFromServer(action));
     }
 
     consumePendingBulletResult() {
@@ -550,6 +574,16 @@ export default class TurnBattleMap extends cc.Component {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let blockGain = this.getSettlementBleedBlockAmount("A", safeCount);
             return "HP " + maxHp + " 禁疗" + blockGain;
+        }
+        if (slotType === "bullet") {
+            let maxHp = this.getObstacleMaxHp(slotType, safeCount);
+            let extraShots = this.getBulletBlockExtraShots("A", safeCount);
+            return "HP " + maxHp + " 额外+" + extraShots + "发";
+        }
+        if (slotType === "attack") {
+            let maxHp = this.getObstacleMaxHp(slotType, safeCount);
+            let bonus = this.getAttackBlockDamageBonus("A", safeCount);
+            return "HP " + maxHp + " 伤害+" + bonus;
         }
         return "";
     }
@@ -994,39 +1028,57 @@ export default class TurnBattleMap extends cc.Component {
 
         if (this._serverMode) {
             let startPosition = this.getNodePosition(tank.root);
-            let totalShots = 1 + this.getCampStats(this._actionCamp).extraShots;
-            let shotIndex = Math.max(0, totalShots - this._shotsLeftInAction);
-            this._shotsLeftInAction = Math.max(0, this._shotsLeftInAction - 1);
+            if (this._hasFiredInAction) {
+                return;
+            }
+            this._hasFiredInAction = true;
             if (this.onAttackIntent) {
                 this.onAttackIntent({
                     fromX: startPosition.x,
                     fromY: startPosition.y,
                     aimX: tank.aim.x,
                     aimY: tank.aim.y,
-                    shotIndex: shotIndex,
+                    shotIndex: 0,
                 });
             }
             return;
         }
 
+        this.fireNextShotInAction();
+    }
+
+    private fireNextShotInAction() {
+        if (this._shotsLeftInAction <= 0 || this._gameFinished || !this._attackSnapshot) {
+            if (this._shotsLeftInAction <= 0 && this.onAttackFired) {
+                this.onAttackFired();
+            }
+            return;
+        }
+        let tank = this._tanks[this._actionCamp];
+        if (!tank) {
+            return;
+        }
         let startPosition = this.getNodePosition(tank.root);
         let dir = this.clampAimDirection(this._actionCamp, startPosition, tank.aim);
-
         this._hasFiredInAction = true;
-        this._shotsLeftInAction -= 1;
-        this.createBullet(this._actionCamp, startPosition.add(dir.mul(44)), dir);
+        this._shotsLeftInAction = Math.max(0, this._shotsLeftInAction - 1);
+        this.createBullet(this._actionCamp, startPosition.add(dir.mul(44)), dir, this._attackSnapshot);
         this.showFloatText("剩余开火 " + this._shotsLeftInAction, startPosition.add(cc.v2(0, 46)), new cc.Color(255, 255, 255, 255));
         this.emitTurnEvent("turn-attack-fired", {
             camp: this._actionCamp,
             from: startPosition,
             dir: dir,
         });
-        if (this._shotsLeftInAction <= 0 && this.onAttackFired) {
-            this.onAttackFired();
+        if (this._shotsLeftInAction <= 0) {
+            if (this.onAttackFired) {
+                this.onAttackFired();
+            }
+            return;
         }
+        this.scheduleOnce(this.fireNextShotInAction.bind(this), 0.5);
     }
 
-    private createBullet(camp: TurnCamp, position: cc.Vec2, dir: cc.Vec2) {
+    private createBullet(camp: TurnCamp, position: cc.Vec2, dir: cc.Vec2, attackSnapshot?: TurnAttackSnapshotState) {
         let node = new cc.Node("TurnBullet" + camp);
         node.parent = this._bulletLayer || this.contentRoot;
         node.setPosition(position.x, position.y);
@@ -1038,15 +1090,18 @@ export default class TurnBattleMap extends cc.Component {
         graphics.fill();
 
         let stats = this.getCampStats(camp);
+        let snapshot = attackSnapshot || this._attackSnapshot;
+        let damage = snapshot ? snapshot.bulletDamage : (this._config.bulletDamage + stats.damageBonus);
+        let bounceLeft = snapshot ? snapshot.bulletBounce : stats.bulletBounce;
         this._bullets.push({
             node: node,
             camp: camp,
             dir: dir,
-            damage: this._config.bulletDamage + stats.damageBonus,
+            damage: damage,
             speed: this._config.bulletSpeed,
             radius: this._config.bulletRadius,
             lifeLeft: 3.5,
-            bounceLeft: stats.bulletBounce,
+            bounceLeft: bounceLeft,
         });
     }
 
@@ -1709,6 +1764,12 @@ export default class TurnBattleMap extends cc.Component {
         if (type === "bleed") {
             return "滴血块";
         }
+        if (type === "bullet") {
+            return "子弹块";
+        }
+        if (type === "attack") {
+            return "攻击块";
+        }
         return "普通方块";
     }
 
@@ -1847,6 +1908,91 @@ export default class TurnBattleMap extends cc.Component {
         return result;
     }
 
+    private countPlacedBulletBlocks(camp: TurnCamp): number {
+        let total = 0;
+        for (let i = 0; i < this._obstacles.length; i++) {
+            let obstacle = this._obstacles[i];
+            if (obstacle.camp === camp && obstacle.slotType === "bullet") {
+                total += Math.max(1, obstacle.resourceCount);
+            }
+        }
+        return total;
+    }
+
+    private countPlacedAttackBlocks(camp: TurnCamp): number {
+        let total = 0;
+        for (let i = 0; i < this._obstacles.length; i++) {
+            let obstacle = this._obstacles[i];
+            if (obstacle.camp === camp && obstacle.slotType === "attack") {
+                total += Math.max(1, obstacle.resourceCount);
+            }
+        }
+        return total;
+    }
+
+    private getBulletBlockExtraShots(camp: TurnCamp, bulletCount: number): number {
+        let count = Math.max(0, Math.floor(Number(bulletCount) || 0));
+        let blocksPerExtraShot = Math.max(1, Number(this._config.bulletSynergy && this._config.bulletSynergy.blocksPerExtraShot) || 4);
+        return Math.floor(count / blocksPerExtraShot);
+    }
+
+    private getAttackBlockMultiplier(attackCount: number): number {
+        let count = Math.max(0, Math.floor(Number(attackCount) || 0));
+        let tiers = this._config.attackSynergy && this._config.attackSynergy.tiers ? this._config.attackSynergy.tiers : [];
+        for (let i = 0; i < tiers.length; i++) {
+            if (count >= Math.max(0, Number(tiers[i].minCount) || 0)) {
+                return Math.max(1, Number(tiers[i].multiplier) || 1);
+            }
+        }
+        return 1;
+    }
+
+    private getAttackBlockDamageBonus(camp: TurnCamp, attackCount: number): number {
+        let count = Math.max(0, Math.floor(Number(attackCount) || 0));
+        if (count <= 0) {
+            return 0;
+        }
+        let damagePerBlock = Math.max(0, Number(this._config.attackSynergy && this._config.attackSynergy.damagePerBlock) || 1);
+        let multiplier = this.getAttackBlockMultiplier(count);
+        return count * damagePerBlock * multiplier;
+    }
+
+    private buildAttackSnapshotForCamp(camp: TurnCamp): TurnAttackSnapshotState {
+        let stats = this.getCampStats(camp);
+        let bulletBlockCount = this.countPlacedBulletBlocks(camp);
+        let attackBlockCount = this.countPlacedAttackBlocks(camp);
+        let extraShotsFromBulletBlock = this.getBulletBlockExtraShots(camp, bulletBlockCount);
+        let bonusDamageFromAttackBlock = this.getAttackBlockDamageBonus(camp, attackBlockCount);
+        let extraShotsFromUpgrade = Math.max(0, Number(stats.extraShots) || 0);
+        let bonusDamageFromUpgrade = Math.max(0, Number(stats.damageBonus) || 0);
+        let bulletBounce = Math.max(0, Number(stats.bulletBounce) || 0);
+        let totalShots = 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock;
+        return {
+            totalShots: Math.max(1, totalShots),
+            extraShotsFromUpgrade: extraShotsFromUpgrade,
+            extraShotsFromBulletBlock: extraShotsFromBulletBlock,
+            bonusDamageFromUpgrade: bonusDamageFromUpgrade,
+            bonusDamageFromAttackBlock: bonusDamageFromAttackBlock,
+            bulletDamage: this._config.bulletDamage + bonusDamageFromUpgrade + bonusDamageFromAttackBlock,
+            bulletBounce: bulletBounce,
+        };
+    }
+
+    private buildAttackSnapshotFromServer(source: any): TurnAttackSnapshotState {
+        if (!source) {
+            return null;
+        }
+        return {
+            totalShots: Math.max(1, Number(source.totalShots) || 1),
+            extraShotsFromUpgrade: Math.max(0, Number(source.extraShotsFromUpgrade) || 0),
+            extraShotsFromBulletBlock: Math.max(0, Number(source.extraShotsFromBulletBlock) || 0),
+            bonusDamageFromUpgrade: Math.max(0, Number(source.bonusDamageFromUpgrade) || 0),
+            bonusDamageFromAttackBlock: Math.max(0, Number(source.bonusDamageFromAttackBlock) || 0),
+            bulletDamage: Math.max(1, Number(source.bulletDamage) || this._config.bulletDamage),
+            bulletBounce: Math.max(0, Number(source.bulletBounce) || 0),
+        };
+    }
+
     private buildExpCellHpList(resourceCount: number, cellCount: number): number[] {
         let safeCells = Math.max(1, Math.floor(Number(cellCount) || 1));
         let maxHp = this.getObstacleMaxHp("exp", resourceCount);
@@ -1881,6 +2027,15 @@ export default class TurnBattleMap extends cc.Component {
         if (slotType === "energy") {
             return new cc.Color(72, 168, 228, 255);
         }
+        if (slotType === "bleed") {
+            return new cc.Color(224, 98, 98, 255);
+        }
+        if (slotType === "bullet") {
+            return new cc.Color(166, 140, 255, 255);
+        }
+        if (slotType === "attack") {
+            return new cc.Color(255, 146, 86, 255);
+        }
         return camp === "A" ? new cc.Color(99, 156, 106, 255) : new cc.Color(161, 96, 108, 255);
     }
 
@@ -1900,6 +2055,20 @@ export default class TurnBattleMap extends cc.Component {
             graphics.lineTo(cx + 1, cy + 1);
             graphics.lineTo(cx - 2, cy + 1);
             graphics.lineTo(cx + 5, cy - 8);
+        }
+        else if (slotType === "bleed") {
+            graphics.circle(cx, cy, 6);
+        }
+        else if (slotType === "bullet") {
+            graphics.circle(cx, cy, 5);
+            graphics.moveTo(cx - 8, cy);
+            graphics.lineTo(cx + 8, cy);
+        }
+        else if (slotType === "attack") {
+            graphics.moveTo(cx - 7, cy + 7);
+            graphics.lineTo(cx + 7, cy - 7);
+            graphics.moveTo(cx - 7, cy - 7);
+            graphics.lineTo(cx + 7, cy + 7);
         }
         graphics.stroke();
     }
@@ -2850,6 +3019,24 @@ export default class TurnBattleMap extends cc.Component {
             let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
             return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
         }
+        if (slotType === "bleed") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.bleed;
+            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+        }
+        if (slotType === "bullet") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.bullet;
+            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+        }
+        if (slotType === "attack") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.attack;
+            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+        }
         return Math.min(this._config.obstacleMaxHp, this._config.obstacleBaseHp * Math.max(1, resourceCount));
     }
 
@@ -2860,6 +3047,18 @@ export default class TurnBattleMap extends cc.Component {
         }
         if (slotType === "energy") {
             let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.energy;
+            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+        }
+        if (slotType === "bleed") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.bleed;
+            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+        }
+        if (slotType === "bullet") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.bullet;
+            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+        }
+        if (slotType === "attack") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.attack;
             return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
         }
         return this.getObstacleMaxHp(slotType, 1);
@@ -2889,6 +3088,15 @@ export default class TurnBattleMap extends cc.Component {
             return Math.max(0, Math.min(maxHp, hpFromCells));
         }
         if (slotType === "energy") {
+            return Math.max(0, Math.min(maxHp, hpFromCells));
+        }
+        if (slotType === "bleed") {
+            return Math.max(0, Math.min(maxHp, hpFromCells));
+        }
+        if (slotType === "bullet") {
+            return Math.max(0, Math.min(maxHp, hpFromCells));
+        }
+        if (slotType === "attack") {
             return Math.max(0, Math.min(maxHp, hpFromCells));
         }
         let minHp = cellCount > 0 ? 1 : 0;

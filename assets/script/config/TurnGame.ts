@@ -2,7 +2,7 @@ export type TurnCamp = "A" | "B";
 export type TurnPhase = "init" | "build" | "attack" | "waitBullet" | "settle" | "upgrade" | "finish";
 export type TurnUpgradeId = "bullet_bounce" | "extra_shot" | "damage_up" | "crystal_hp_up" | "cover_resource_up";
 export type TurnAssistZoneType = "black_hole";
-export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed";
+export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack";
 export type TurnMirrorDirection = "bl" | "br" | "tl" | "tr";
 
 export interface TurnUpgradeConfig {
@@ -31,6 +31,15 @@ export interface TurnSettlementHealRuleConfig {
     healPerBlock: number;
     baseMultiplier: number;
     bloodBlockPerStack: number;
+}
+
+export interface TurnBulletSynergyRuleConfig {
+    blocksPerExtraShot: number;
+}
+
+export interface TurnAttackSynergyTierConfig {
+    minCount: number;
+    multiplier: number;
 }
 
 export interface TurnRoundResourceSlot {
@@ -75,6 +84,8 @@ export interface TurnGameConfig {
         exp: TurnObstacleHpRuleConfig;
         energy: TurnObstacleHpRuleConfig;
         bleed: TurnObstacleHpRuleConfig;
+        bullet: TurnObstacleHpRuleConfig;
+        attack: TurnObstacleHpRuleConfig;
     };
     settlementResourceRules: {
         exp: TurnSettlementResourceRuleConfig;
@@ -83,6 +94,11 @@ export interface TurnGameConfig {
             blockPerBlock: number;
             baseMultiplier: number;
         };
+    };
+    bulletSynergy: TurnBulletSynergyRuleConfig;
+    attackSynergy: {
+        damagePerBlock: number;
+        tiers: TurnAttackSynergyTierConfig[];
     };
     obstacleSlotMaxResources: number;
     expWallDestroyExp: number;
@@ -150,6 +166,14 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
             baseHp: 10,
             maxHp: 30,
         },
+        bullet: {
+            baseHp: 10,
+            maxHp: 30,
+        },
+        attack: {
+            baseHp: 10,
+            maxHp: 30,
+        },
     },
     settlementResourceRules: {
         exp: {
@@ -166,6 +190,18 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
             baseMultiplier: 1,
         },
     },
+    bulletSynergy: {
+        blocksPerExtraShot: 4,
+    },
+    attackSynergy: {
+        damagePerBlock: 1,
+        tiers: [
+            { minCount: 12, multiplier: 6 },
+            { minCount: 8, multiplier: 4 },
+            { minCount: 4, multiplier: 2 },
+            { minCount: 0, multiplier: 1 },
+        ],
+    },
     obstacleSlotMaxResources: 4,
     expWallDestroyExp: 50,
     energyWallRoundHeal: 10,
@@ -176,6 +212,8 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         { type: "exp", name: "经验墙" },
         { type: "energy", name: "能量墙" },
         { type: "bleed", name: "滴血块" },
+        { type: "bullet", name: "子弹块" },
+        { type: "attack", name: "攻击块" },
     ],
     tankMoveSpeed: 360,
     mapWidth: 640,

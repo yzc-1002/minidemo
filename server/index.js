@@ -373,6 +373,7 @@ const TURN_CONFIG = {
   bloodBlockHealPerStack: 1,
   crystalHitExp: 20,
   expNeed: 60,
+  bulletDamage: 20,
   maxBulletResultDamage: 80,
   assistZoneRadius: 74,
   obstacleGrid: 32,
@@ -395,6 +396,14 @@ const TURN_CONFIG = {
       baseHp: 10,
       maxHp: 30,
     },
+    bullet: {
+      baseHp: 10,
+      maxHp: 30,
+    },
+    attack: {
+      baseHp: 10,
+      maxHp: 30,
+    },
   },
   settlementResourceRules: {
     exp: {
@@ -410,6 +419,18 @@ const TURN_CONFIG = {
       blockPerBlock: 1,
       baseMultiplier: 1,
     },
+  },
+  bulletSynergy: {
+    blocksPerExtraShot: 4,
+  },
+  attackSynergy: {
+    damagePerBlock: 1,
+    tiers: [
+      { minCount: 12, multiplier: 6 },
+      { minCount: 8, multiplier: 4 },
+      { minCount: 4, multiplier: 2 },
+      { minCount: 0, multiplier: 1 },
+    ],
   },
   obstacleSlotMaxResources: 4,
 };
@@ -430,7 +451,7 @@ const TURN_UPGRADE_POOL = [
   { id: 'damageUp', type: 'attr', title: '伤害 +10', value: 10, maxStacks: null },
   { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20, maxStacks: null },
 ];
-const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed'];
+const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed', 'bullet', 'attack'];
 const TURN_MIRROR_DIRECTIONS = ['bl', 'br', 'tl', 'tr'];
 const TURN_OBSTACLE_LAYOUT_LIBRARY = {
   1: [
@@ -868,6 +889,18 @@ function getObstacleMaxHp(slotType, resourceCount) {
     const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
     return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
   }
+  if (slotType === 'bullet') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.bullet;
+    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+  }
+  if (slotType === 'attack') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.attack;
+    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+  }
   return Math.min(TURN_CONFIG.obstacleMaxHp, TURN_CONFIG.obstacleBaseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
 }
 
@@ -882,6 +915,14 @@ function getObstacleCellMaxHp(slotType) {
   }
   if (slotType === 'bleed') {
     const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.bleed;
+    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+  }
+  if (slotType === 'bullet') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.bullet;
+    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+  }
+  if (slotType === 'attack') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.attack;
     return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
   }
   return getObstacleMaxHp(slotType, 1);
@@ -1078,6 +1119,62 @@ function countTurnLivingResource(roomState, camp, slotType) {
   }, 0);
 }
 
+function getTurnAttackBlockCount(roomState, camp) {
+  return countTurnLivingResource(roomState, camp, 'attack');
+}
+
+function getTurnBulletBlockCount(roomState, camp) {
+  return countTurnLivingResource(roomState, camp, 'bullet');
+}
+
+function getTurnBulletBlockExtraShots(roomState, camp, bulletBlocks) {
+  const count = Math.max(0, Math.floor(Number(bulletBlocks) || 0));
+  const blocksPerExtraShot = Math.max(1, Number(TURN_CONFIG.bulletSynergy && TURN_CONFIG.bulletSynergy.blocksPerExtraShot) || 4);
+  return Math.floor(count / blocksPerExtraShot);
+}
+
+function getTurnAttackBlockMultiplier(attackBlocks) {
+  const count = Math.max(0, Math.floor(Number(attackBlocks) || 0));
+  const tiers = TURN_CONFIG.attackSynergy && Array.isArray(TURN_CONFIG.attackSynergy.tiers) ? TURN_CONFIG.attackSynergy.tiers : [];
+  for (let i = 0; i < tiers.length; i++) {
+    if (count >= Math.max(0, Number(tiers[i].minCount) || 0)) {
+      return Math.max(1, Number(tiers[i].multiplier) || 1);
+    }
+  }
+  return 1;
+}
+
+function getTurnAttackBlockDamageBonus(roomState, camp, attackBlocks) {
+  const count = Math.max(0, Math.floor(Number(attackBlocks) || 0));
+  if (count <= 0) {
+    return 0;
+  }
+  const damagePerBlock = Math.max(0, Number(TURN_CONFIG.attackSynergy && TURN_CONFIG.attackSynergy.damagePerBlock) || 1);
+  const multiplier = getTurnAttackBlockMultiplier(count);
+  return count * damagePerBlock * multiplier;
+}
+
+function buildTurnAttackSnapshot(roomState, player) {
+  const baseBulletDamage = Math.max(1, Number(TURN_CONFIG.bulletDamage) || 20);
+  const bulletBlocks = getTurnBulletBlockCount(roomState, player.camp);
+  const attackBlocks = getTurnAttackBlockCount(roomState, player.camp);
+  const extraShotsFromUpgrade = Math.max(0, Number(player.upgrades.multiShot) || 0);
+  const extraShotsFromBulletBlock = getTurnBulletBlockExtraShots(roomState, player.camp, bulletBlocks);
+  const bonusDamageFromUpgrade = Math.max(0, Number(player.upgrades.damageAdd) || 0);
+  const bonusDamageFromAttackBlock = getTurnAttackBlockDamageBonus(roomState, player.camp, attackBlocks);
+  const bulletBounce = Math.max(0, Number(player.upgrades.bulletBounce) || 0);
+  return {
+    totalShots: Math.max(1, 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock),
+    extraShotsFromUpgrade,
+    extraShotsFromBulletBlock,
+    bonusDamageFromUpgrade,
+    bonusDamageFromAttackBlock,
+    bulletDamage: Math.max(1, baseBulletDamage + bonusDamageFromUpgrade + bonusDamageFromAttackBlock),
+    bulletBounce,
+    shotsLeft: Math.max(1, 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock),
+  };
+}
+
 function refreshTurnObstacleSlotShape(slot, playerId = 0, roomState = null) {
   if (!slot) {
     return;
@@ -1113,6 +1210,7 @@ function createTurnRoom() {
     timerSync: null,
     waitingForBulletCamp: '',
     actionSubmitted: false,
+    currentAttack: null,
     crystals: {
       A: { camp: 'A', hp: TURN_CONFIG.crystalHp, maxHp: TURN_CONFIG.crystalHp },
       B: { camp: 'B', hp: TURN_CONFIG.crystalHp, maxHp: TURN_CONFIG.crystalHp },
@@ -1249,6 +1347,11 @@ function getTurnStateSnapshot(roomState) {
       };
       return result;
     }, {}),
+    attackSnapshots: roomState.currentAttack
+      ? {
+          [roomState.currentAttack.camp]: { ...roomState.currentAttack.snapshot },
+        }
+      : {},
   };
 }
 
@@ -1341,6 +1444,7 @@ function startTurnAttackPhase(roomState, camp) {
   roomState.attackTurnIndex = camp === 'A' ? 1 : 2;
   roomState.waitingForBulletCamp = '';
   roomState.actionSubmitted = false;
+  roomState.currentAttack = null;
   logTurn(roomState, `phase attack camp=${camp} turn=${roomState.attackTurnIndex}`);
   setTurnPhase(roomState, TURN_PHASE.ATTACK, TURN_CONFIG.attackSeconds, () => {
     advanceTurnAttack(roomState);
@@ -1360,6 +1464,11 @@ function advanceTurnAttack(roomState) {
   if (roomState.finished) {
     return;
   }
+  if (roomState.currentAttack && roomState.currentAttack.timer) {
+    clearTimeout(roomState.currentAttack.timer);
+    roomState.currentAttack.timer = null;
+  }
+  roomState.currentAttack = null;
   roomState.waitingForBulletCamp = '';
   roomState.actionSubmitted = false;
   if (roomState.actionCamp === 'A') {
@@ -1367,6 +1476,46 @@ function advanceTurnAttack(roomState) {
     return;
   }
   startTurnSettlePhase(roomState);
+}
+
+function broadcastTurnAttackShot(roomState) {
+  if (!roomState || !roomState.currentAttack) {
+    return;
+  }
+  const attack = roomState.currentAttack;
+  const shotIndex = Math.max(0, attack.nextShotIndex || 0);
+  attack.snapshot.shotsLeft = Math.max(0, attack.snapshot.totalShots - shotIndex - 1);
+  broadcastTurn(roomState, {
+    type: 'attackAction',
+    roomId: roomState.id,
+    camp: attack.camp,
+    playerId: attack.playerId,
+    attackRoundIndex: roomState.attackRoundIndex,
+    action: {
+      fromX: attack.pose.x,
+      fromY: attack.pose.y,
+      aimX: attack.pose.aimX,
+      aimY: attack.pose.aimY,
+      shotIndex,
+      totalShots: attack.snapshot.totalShots,
+      extraShotsFromUpgrade: attack.snapshot.extraShotsFromUpgrade,
+      extraShotsFromBulletBlock: attack.snapshot.extraShotsFromBulletBlock,
+      bonusDamageFromUpgrade: attack.snapshot.bonusDamageFromUpgrade,
+      bonusDamageFromAttackBlock: attack.snapshot.bonusDamageFromAttackBlock,
+      bulletDamage: attack.snapshot.bulletDamage,
+      bulletBounce: attack.snapshot.bulletBounce,
+      shotsLeft: attack.snapshot.shotsLeft,
+    },
+  });
+  attack.nextShotIndex += 1;
+  if (attack.nextShotIndex >= attack.snapshot.totalShots) {
+    startTurnWaitBulletPhase(roomState, attack.camp);
+    return;
+  }
+  attack.timer = setTimeout(() => {
+    attack.timer = null;
+    broadcastTurnAttackShot(roomState);
+  }, 500);
 }
 
 function startTurnSettlePhase(roomState) {
@@ -1904,28 +2053,18 @@ function handleTurnAttackAction(ws, msg) {
     return;
   }
   const pose = updateTurnTankPose(roomState, player.camp, fromPoint.x, aimPoint.x, aimPoint.y);
-  const maxShotIndex = 1 + Math.max(0, player.upgrades.multiShot);
-  const shotIndex = clamp(Math.floor(Number(payload.shotIndex) || 0), 0, maxShotIndex - 1);
+  const snapshot = buildTurnAttackSnapshot(roomState, player);
   roomState.actionSubmitted = true;
-  broadcastTurn(roomState, {
-    type: 'attackAction',
-    roomId: roomState.id,
+  roomState.currentAttack = {
     camp: player.camp,
     playerId: player.playerId,
-    attackRoundIndex: roomState.attackRoundIndex,
-    action: {
-      fromX: pose.x,
-      fromY: pose.y,
-      aimX: pose.aimX,
-      aimY: pose.aimY,
-      bulletType: String(payload.bulletType || 'normal'),
-      shotIndex,
-      damageAdd: player.upgrades.damageAdd,
-      bulletBounce: player.upgrades.bulletBounce,
-      multiShot: player.upgrades.multiShot,
-    },
-  });
-  startTurnWaitBulletPhase(roomState, player.camp);
+    pose,
+    snapshot,
+    nextShotIndex: 0,
+    timer: null,
+  };
+  broadcastTurnSnapshot(roomState);
+  broadcastTurnAttackShot(roomState);
 }
 
 function getEnemyCamp(camp) {
@@ -2041,7 +2180,10 @@ function handleTurnBulletResult(ws, msg) {
   const targetCamp = TURN_CAMPS.indexOf(payload.targetCamp) >= 0
     ? toCanonicalCamp(player, payload.targetCamp)
     : getEnemyCamp(player.camp);
-  let damage = clamp(Math.floor(Number(payload.damage) || 0), 0, TURN_CONFIG.maxBulletResultDamage + player.upgrades.damageAdd);
+  const attackDamageCap = roomState.currentAttack && roomState.currentAttack.snapshot
+    ? Math.max(1, Number(roomState.currentAttack.snapshot.bulletDamage) || Number(TURN_CONFIG.bulletDamage) || 20)
+    : TURN_CONFIG.maxBulletResultDamage + Math.max(0, Number(player.upgrades.damageAdd) || 0);
+  let damage = clamp(Math.floor(Number(payload.damage) || 0), 0, attackDamageCap);
   if (hitType === 'crystal' && targetCamp !== player.camp && roomState.crystals[targetCamp]) {
     const crystal = roomState.crystals[targetCamp];
     crystal.hp = Math.max(0, crystal.hp - damage);
