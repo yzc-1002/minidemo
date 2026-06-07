@@ -530,13 +530,28 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     getObstacleSlotHpPreview(slotType: TurnObstacleResourceType, count: number): string {
-        if (slotType !== "normal") {
-            return "";
-        }
         let safeCount = Math.max(1, Math.floor(Number(count) || 1));
-        let maxHp = this.getObstacleMaxHp(slotType, safeCount);
-        let perCell = this.getObstacleCellMaxHp(slotType);
-        return "HP " + maxHp + " (" + perCell + "/格)";
+        if (slotType === "normal") {
+            let maxHp = this.getObstacleMaxHp(slotType, safeCount);
+            let perCell = this.getObstacleCellMaxHp(slotType);
+            return "HP " + maxHp + " (" + perCell + "/格)";
+        }
+        if (slotType === "exp") {
+            let maxHp = this.getObstacleMaxHp(slotType, safeCount);
+            let expGain = this.getSettlementExpGain("A", safeCount);
+            return "HP " + maxHp + " 结算+" + expGain + "EXP";
+        }
+        if (slotType === "energy") {
+            let maxHp = this.getObstacleMaxHp(slotType, safeCount);
+            let healGain = this.getSettlementEnergyHealGain("A", safeCount);
+            return "HP " + maxHp + " 结算+" + healGain + "HP";
+        }
+        if (slotType === "bleed") {
+            let maxHp = this.getObstacleMaxHp(slotType, safeCount);
+            let blockGain = this.getSettlementBleedBlockAmount("A", safeCount);
+            return "HP " + maxHp + " 禁疗" + blockGain;
+        }
+        return "";
     }
 
     getCrystalHp(camp: TurnCamp): number {
@@ -1102,7 +1117,7 @@ export default class TurnBattleMap extends cc.Component {
             this._obstacles.splice(i, 1);
             this.clearObstaclePlacedSlot(obstacle);
             if (expGain > 0) {
-                this.addExp(obstacle.slotType === "exp" ? obstacle.placedByCamp : bullet.camp, expGain, this.getNodePosition(bullet.node));
+                this.addExp(bullet.camp, expGain, this.getNodePosition(bullet.node));
             }
             if (this._serverMode && bullet.camp === "A" && this._pendingBulletResult.destroyedIds.indexOf(obstacle.id) < 0) {
                 this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
@@ -1272,8 +1287,7 @@ export default class TurnBattleMap extends cc.Component {
         label.node.zIndex = 5;
         label.node.color = new cc.Color(255, 248, 220, 255);
         let maxHp = this.resolveObstacleMaxHp(slotType, resourceCount, Number(snapshot && snapshot.maxHp));
-        let cellMaxHp = this.getObstacleCellMaxHp(slotType);
-        let cellHp = this.buildCellHpFromSnapshot(snapshot && snapshot.cellHp, layout.length, cellMaxHp);
+        let cellHp = this.buildObstacleCellHp(slotType, resourceCount, layout.length, snapshot && snapshot.cellHp);
         let hp = this.resolveObstacleHp(slotType, layout.length, Number(snapshot && snapshot.hp), cellHp, maxHp);
 
         let id = forcedId || String(this._nextObstacleId++);
@@ -1692,7 +1706,7 @@ export default class TurnBattleMap extends cc.Component {
         if (type === "energy") {
             return "能量墙";
         }
-        if (type === "blood") {
+        if (type === "bleed") {
             return "滴血块";
         }
         return "普通方块";
@@ -1819,6 +1833,32 @@ export default class TurnBattleMap extends cc.Component {
         return result;
     }
 
+    private buildObstacleCellHp(slotType: TurnObstacleResourceType, resourceCount: number, count: number, source: any): number[] {
+        if (slotType !== "exp") {
+            return this.buildCellHpFromSnapshot(source, count, this.getObstacleCellMaxHp(slotType));
+        }
+        let defaultHpList = this.buildExpCellHpList(resourceCount, count);
+        let result: number[] = [];
+        for (let i = 0; i < count; i++) {
+            let fallbackHp = defaultHpList[i] || 1;
+            let hp = Array.isArray(source) ? Math.max(0, Number(source[i]) || 0) : fallbackHp;
+            result.push(hp > 0 ? hp : fallbackHp);
+        }
+        return result;
+    }
+
+    private buildExpCellHpList(resourceCount: number, cellCount: number): number[] {
+        let safeCells = Math.max(1, Math.floor(Number(cellCount) || 1));
+        let maxHp = this.getObstacleMaxHp("exp", resourceCount);
+        let basePerCell = Math.floor(maxHp / safeCells);
+        let remainder = maxHp % safeCells;
+        let result: number[] = [];
+        for (let i = 0; i < safeCells; i++) {
+            result.push(basePerCell + (i < remainder ? 1 : 0));
+        }
+        return result;
+    }
+
     private normalizeMirrorDirection(value: string): TurnMirrorDirection {
         let dir = String(value || "").toLowerCase();
         if (MIRROR_DIRECTIONS.indexOf(dir as TurnMirrorDirection) >= 0) {
@@ -1910,11 +1950,11 @@ export default class TurnBattleMap extends cc.Component {
         return total;
     }
 
-    private countPlacedBloodBlocks(camp: TurnCamp): number {
+    private countPlacedBleedBlocks(camp: TurnCamp): number {
         let total = 0;
         for (let i = 0; i < this._obstacles.length; i++) {
             let obstacle = this._obstacles[i];
-            if (obstacle.camp === camp && obstacle.slotType === "blood") {
+            if (obstacle.camp === camp && obstacle.slotType === "bleed") {
                 total += Math.max(1, obstacle.resourceCount);
             }
         }
@@ -1932,18 +1972,70 @@ export default class TurnBattleMap extends cc.Component {
         return total;
     }
 
+    private getSettlementExpMultiplier(camp: TurnCamp): number {
+        return Math.max(0, Number(this._config.settlementResourceRules && this._config.settlementResourceRules.exp && this._config.settlementResourceRules.exp.baseMultiplier) || 1);
+    }
+
+    private getSettlementExpGain(camp: TurnCamp, expCount: number): number {
+        let count = Math.max(0, Math.floor(Number(expCount) || 0));
+        if (count <= 0) {
+            return 0;
+        }
+        let rule = this._config.settlementResourceRules && this._config.settlementResourceRules.exp;
+        let expPerBlock = Math.max(0, Number(rule && rule.expPerBlock) || 0);
+        let multiplier = this.getSettlementExpMultiplier(camp);
+        return Math.round(count * expPerBlock * multiplier);
+    }
+
+    private getSettlementEnergyHealMultiplier(camp: TurnCamp): number {
+        return Math.max(0, Number(this._config.settlementResourceRules && this._config.settlementResourceRules.energy && this._config.settlementResourceRules.energy.baseMultiplier) || 1);
+    }
+
+    private getSettlementEnergyHealGain(camp: TurnCamp, energyCount: number): number {
+        let count = Math.max(0, Math.floor(Number(energyCount) || 0));
+        if (count <= 0) {
+            return 0;
+        }
+        let rule = this._config.settlementResourceRules && this._config.settlementResourceRules.energy;
+        let healPerBlock = Math.max(0, Number(rule && rule.healPerBlock) || 0);
+        let multiplier = this.getSettlementEnergyHealMultiplier(camp);
+        return Math.round(count * healPerBlock * multiplier);
+    }
+
+    private getSettlementBleedMultiplier(camp: TurnCamp): number {
+        return Math.max(0, Number(this._config.settlementResourceRules && this._config.settlementResourceRules.bleed && this._config.settlementResourceRules.bleed.baseMultiplier) || 1);
+    }
+
+    private getSettlementBleedBlockAmount(camp: TurnCamp, bleedCount: number): number {
+        let count = Math.max(0, Math.floor(Number(bleedCount) || 0));
+        if (count <= 0) {
+            return 0;
+        }
+        let rule = this._config.settlementResourceRules && this._config.settlementResourceRules.bleed;
+        let blockPerBlock = Math.max(0, Number(rule && rule.blockPerBlock) || 0);
+        let multiplier = this.getSettlementBleedMultiplier(camp);
+        return Math.round(count * blockPerBlock * multiplier);
+    }
+
+    private getSettlementEnergyBlockedAmount(enemyCamp: TurnCamp): number {
+        let bleedCount = this.countPlacedBleedBlocks(enemyCamp);
+        return this.getSettlementBleedBlockAmount(enemyCamp, bleedCount);
+    }
+
     private applyRoundSettlementForCamp(camp: TurnCamp) {
         let expCount = this.countPlacedExpBlocks(camp);
-        if (expCount > 0) {
-            this.addExp(camp, expCount * this._config.baseExpPerRound, cc.v2(camp === "A" ? -120 : 120, camp === "A" ? -70 : 70));
+        let expAmount = this.getSettlementExpGain(camp, expCount);
+        if (expAmount > 0) {
+            this.addExp(camp, expAmount, cc.v2(camp === "A" ? -120 : 120, camp === "A" ? -70 : 70));
         }
         let healCount = this.countPlacedEnergyTowers(camp);
         if (healCount <= 0) {
             return;
         }
         let enemyCamp: TurnCamp = camp === "A" ? "B" : "A";
-        let blockedHeal = Math.min(healCount, this.countPlacedBloodBlocks(enemyCamp) * this._config.bloodBlockHealPerStack);
-        let finalHeal = Math.max(0, healCount - blockedHeal) * this._config.energyWallRoundHeal;
+        let totalHeal = this.getSettlementEnergyHealGain(camp, healCount);
+        let blockedHeal = this.getSettlementEnergyBlockedAmount(enemyCamp);
+        let finalHeal = Math.max(0, totalHeal - blockedHeal);
         if (finalHeal <= 0) {
             return;
         }
@@ -2740,11 +2832,20 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private getObstacleMaxHp(slotType: TurnObstacleResourceType, resourceCount: number): number {
-        if (slotType === "exp" || slotType === "energy") {
-            return this._config.obstacleBaseHp;
-        }
         if (slotType === "normal") {
             let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.normal;
+            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+        }
+        if (slotType === "exp") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.exp;
+            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+        }
+        if (slotType === "energy") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.energy;
             let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
             let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
             return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
@@ -2757,8 +2858,9 @@ export default class TurnBattleMap extends cc.Component {
             let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.normal;
             return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
         }
-        if (slotType === "exp" || slotType === "energy") {
-            return this._config.obstacleBaseHp;
+        if (slotType === "energy") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.energy;
+            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
         }
         return this.getObstacleMaxHp(slotType, 1);
     }
@@ -2783,6 +2885,12 @@ export default class TurnBattleMap extends cc.Component {
         if (slotType === "normal") {
             return Math.max(0, Math.min(maxHp, hpFromCells));
         }
+        if (slotType === "exp") {
+            return Math.max(0, Math.min(maxHp, hpFromCells));
+        }
+        if (slotType === "energy") {
+            return Math.max(0, Math.min(maxHp, hpFromCells));
+        }
         let minHp = cellCount > 0 ? 1 : 0;
         return Math.max(minHp, Math.min(maxHp, safeSnapshotHp));
     }
@@ -2798,9 +2906,6 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private getObstacleDestroyExp(obstacle: TurnObstacleState): number {
-        if (obstacle.slotType === "exp") {
-            return this._config.expWallDestroyExp;
-        }
         return this._config.obstacleHitExp;
     }
 

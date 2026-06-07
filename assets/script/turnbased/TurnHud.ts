@@ -568,7 +568,7 @@ export default class TurnHud extends cc.Component {
         if (type === "energy") {
             return "能量墙";
         }
-        if (type === "blood") {
+        if (type === "bleed") {
             return "滴血块";
         }
         return fallback || "普通方块";
@@ -584,7 +584,7 @@ export default class TurnHud extends cc.Component {
         if (type === "energy") {
             return placed ? new cc.Color(76, 120, 155, 200) : new cc.Color(72, 168, 228, 255);
         }
-        if (type === "blood") {
+        if (type === "bleed") {
             return placed ? new cc.Color(140, 78, 78, 200) : new cc.Color(224, 98, 98, 255);
         }
         return placed ? new cc.Color(90, 104, 92, 200) : new cc.Color(99, 156, 106, 255);
@@ -609,7 +609,7 @@ export default class TurnHud extends cc.Component {
             graphics.lineTo(x - 2, y + 1);
             graphics.lineTo(x + 5, y - 8);
         }
-        else if (type === "blood") {
+        else if (type === "bleed") {
             graphics.circle(x, y, 7);
         }
         else {

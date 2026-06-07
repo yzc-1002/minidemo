@@ -383,6 +383,33 @@ const TURN_CONFIG = {
       baseHp: 10,
       maxHp: 50,
     },
+    exp: {
+      baseHp: 10,
+      maxHp: 30,
+    },
+    energy: {
+      baseHp: 10,
+      maxHp: 30,
+    },
+    bleed: {
+      baseHp: 10,
+      maxHp: 30,
+    },
+  },
+  settlementResourceRules: {
+    exp: {
+      expPerBlock: 5,
+      baseMultiplier: 1,
+    },
+    energy: {
+      healPerBlock: 2,
+      baseMultiplier: 1,
+      bloodBlockPerStack: 1,
+    },
+    bleed: {
+      blockPerBlock: 1,
+      baseMultiplier: 1,
+    },
   },
   obstacleSlotMaxResources: 4,
 };
@@ -403,7 +430,7 @@ const TURN_UPGRADE_POOL = [
   { id: 'damageUp', type: 'attr', title: '伤害 +10', value: 10, maxStacks: null },
   { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20, maxStacks: null },
 ];
-const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'blood'];
+const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed'];
 const TURN_MIRROR_DIRECTIONS = ['bl', 'br', 'tl', 'tr'];
 const TURN_OBSTACLE_LAYOUT_LIBRARY = {
   1: [
@@ -761,7 +788,9 @@ function cloneTurnObstacleSlots(source) {
     return [];
   }
   return source.map((slot, index) => {
-    const type = TURN_OBSTACLE_SLOT_TYPES.indexOf(String(slot && slot.type)) >= 0 ? String(slot.type) : 'normal';
+    const rawType = String(slot && slot.type || '');
+    const normalizedType = rawType === 'blood' ? 'bleed' : rawType;
+    const type = TURN_OBSTACLE_SLOT_TYPES.indexOf(normalizedType) >= 0 ? normalizedType : 'normal';
     const count = clamp(Math.round(Number(slot && slot.count) || 1), 1, TURN_CONFIG.slotMaxResource);
     const layout = normalizeObstacleLayout(type, slot && slot.layout, count);
     return {
@@ -788,6 +817,9 @@ function buildObstacleLayout(type, count) {
 }
 
 function normalizeObstacleLayout(type, layout, count) {
+  if (type === 'blood') {
+    type = 'bleed';
+  }
   if (type === 'mirror') {
     return [{ x: 0, y: 0 }];
   }
@@ -812,11 +844,26 @@ function normalizeMirrorDirection(value) {
 }
 
 function getObstacleMaxHp(slotType, resourceCount) {
-  if (slotType === 'exp' || slotType === 'energy') {
-    return TURN_CONFIG.obstacleBaseHp;
-  }
   if (slotType === 'normal') {
     const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.normal;
+    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+  }
+  if (slotType === 'exp') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.exp;
+    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+  }
+  if (slotType === 'energy') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.energy;
+    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+  }
+  if (slotType === 'bleed') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.bleed;
     const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
     const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
     return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
@@ -829,10 +876,94 @@ function getObstacleCellMaxHp(slotType) {
     const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.normal;
     return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
   }
-  if (slotType === 'exp' || slotType === 'energy') {
-    return TURN_CONFIG.obstacleBaseHp;
+  if (slotType === 'energy') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.energy;
+    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+  }
+  if (slotType === 'bleed') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.bleed;
+    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
   }
   return getObstacleMaxHp(slotType, 1);
+}
+
+function buildExpCellHpList(resourceCount, cellCount) {
+  const safeCells = Math.max(1, Math.floor(Number(cellCount) || 1));
+  const maxHp = getObstacleMaxHp('exp', resourceCount);
+  const basePerCell = Math.floor(maxHp / safeCells);
+  const remainder = maxHp % safeCells;
+  const result = [];
+  for (let i = 0; i < safeCells; i++) {
+    result.push(basePerCell + (i < remainder ? 1 : 0));
+  }
+  return result;
+}
+
+function buildObstacleCellHp(slotType, resourceCount, cellCount, source) {
+  if (slotType !== 'exp') {
+    const defaultHp = getObstacleCellMaxHp(slotType);
+    return Array.from({ length: Math.max(1, Math.floor(Number(cellCount) || 1)) }, (_, index) => {
+      const hp = Array.isArray(source) ? Math.max(0, Number(source[index]) || 0) : defaultHp;
+      return hp > 0 ? hp : defaultHp;
+    });
+  }
+  const defaults = buildExpCellHpList(resourceCount, cellCount);
+  return defaults.map((fallbackHp, index) => {
+    const hp = Array.isArray(source) ? Math.max(0, Number(source[index]) || 0) : fallbackHp;
+    return hp > 0 ? hp : fallbackHp;
+  });
+}
+
+function getTurnExpSettlementMultiplier(roomState, camp) {
+  return Math.max(0, Number(TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.exp && TURN_CONFIG.settlementResourceRules.exp.baseMultiplier) || 1);
+}
+
+function getTurnExpSettlementGain(roomState, camp, expBlocks) {
+  const count = Math.max(0, Math.floor(Number(expBlocks) || 0));
+  if (count <= 0) {
+    return 0;
+  }
+  const rule = TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.exp;
+  const expPerBlock = Math.max(0, Number(rule && rule.expPerBlock) || 0);
+  const multiplier = getTurnExpSettlementMultiplier(roomState, camp);
+  return Math.round(count * expPerBlock * multiplier);
+}
+
+function getTurnEnergySettlementMultiplier(roomState, camp) {
+  return Math.max(0, Number(TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.energy && TURN_CONFIG.settlementResourceRules.energy.baseMultiplier) || 1);
+}
+
+function getTurnEnergySettlementGain(roomState, camp, energyBlocks) {
+  const count = Math.max(0, Math.floor(Number(energyBlocks) || 0));
+  if (count <= 0) {
+    return 0;
+  }
+  const rule = TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.energy;
+  const healPerBlock = Math.max(0, Number(rule && rule.healPerBlock) || 0);
+  const multiplier = getTurnEnergySettlementMultiplier(roomState, camp);
+  return Math.round(count * healPerBlock * multiplier);
+}
+
+function getTurnEnergyBlockedStacks(roomState, enemyCamp) {
+  const bleedCount = countTurnLivingResource(roomState, enemyCamp, 'bleed');
+  const rule = TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.energy;
+  const bloodBlockPerStack = Math.max(0, Number(rule && rule.bloodBlockPerStack) || TURN_CONFIG.bloodBlockHealPerStack || 0);
+  return bleedCount * bloodBlockPerStack;
+}
+
+function getTurnBleedSettlementMultiplier(roomState, camp) {
+  return Math.max(0, Number(TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.bleed && TURN_CONFIG.settlementResourceRules.bleed.baseMultiplier) || 1);
+}
+
+function getTurnBleedSettlementBlock(roomState, camp, bleedBlocks) {
+  const count = Math.max(0, Math.floor(Number(bleedBlocks) || 0));
+  if (count <= 0) {
+    return 0;
+  }
+  const rule = TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.bleed;
+  const blockPerBlock = Math.max(0, Number(rule && rule.blockPerBlock) || 0);
+  const multiplier = getTurnBleedSettlementMultiplier(roomState, camp);
+  return Math.round(count * blockPerBlock * multiplier);
 }
 
 function sumObstacleCellHp(obstacle) {
@@ -1658,7 +1789,7 @@ function handleTurnBuildAction(ws, msg) {
       slotType,
       resourceCount,
       layout: normalizeObstacleLayout(slotType, slot.layout, resourceCount),
-      cellHp: normalizeObstacleLayout(slotType, slot.layout, resourceCount).map(() => getObstacleCellMaxHp(slotType)),
+      cellHp: buildObstacleCellHp(slotType, resourceCount, normalizeObstacleLayout(slotType, slot.layout, resourceCount).length),
       shapeKey: slot.shapeKey || getObstacleLayoutKey(slot.layout),
       mirrorDir: slotType === 'mirror' ? normalizeMirrorDirection(slot.mirrorDir) : '',
       placedByCamp: player.camp,
@@ -1841,20 +1972,24 @@ function applyTurnRoundSettlement(roomState) {
   }
   roomState.players.forEach((player) => {
     const expBlocks = countTurnLivingResource(roomState, player.camp, 'exp');
-    if (expBlocks > 0) {
-      player.exp += expBlocks * TURN_CONFIG.baseExp;
+    const expGain = getTurnExpSettlementGain(roomState, player.camp, expBlocks);
+    if (expGain > 0) {
+      player.exp += expGain;
     }
     const towers = countTurnLivingResource(roomState, player.camp, 'energy');
     const crystal = roomState.crystals[player.camp];
     if (!crystal || towers <= 0) {
       return;
     }
-    const enemyBlood = countTurnLivingResource(roomState, getEnemyCamp(player.camp), 'blood');
-    const effectiveTowers = Math.max(0, towers - enemyBlood * TURN_CONFIG.bloodBlockHealPerStack);
-    if (effectiveTowers <= 0) {
+    const totalHeal = getTurnEnergySettlementGain(roomState, player.camp, towers);
+    const enemyCamp = getEnemyCamp(player.camp);
+    const bleedBlocks = countTurnLivingResource(roomState, enemyCamp, 'bleed');
+    const totalBlock = getTurnBleedSettlementBlock(roomState, enemyCamp, bleedBlocks);
+    const healAmount = Math.max(0, totalHeal - totalBlock);
+    if (healAmount <= 0) {
       return;
     }
-    crystal.hp = Math.min(crystal.maxHp, crystal.hp + effectiveTowers * TURN_CONFIG.energyWallRoundHeal);
+    crystal.hp = Math.min(crystal.maxHp, crystal.hp + healAmount);
   });
 }
 
@@ -1881,7 +2016,7 @@ function handleTurnBulletResult(ws, msg) {
     }
     if (applied.destroyedObstacle && !handledDestroyedIds.has(obstacleId)) {
       handledDestroyedIds.add(obstacleId);
-      awardedExp += applied.obstacle && applied.obstacle.slotType === 'exp' ? TURN_CONFIG.expWallDestroyExp : TURN_CONFIG.obstacleHitExp;
+      awardedExp += TURN_CONFIG.obstacleHitExp;
     }
   });
   destroyedIds.forEach((id) => {
@@ -1897,7 +2032,7 @@ function handleTurnBulletResult(ws, msg) {
     }
     delete roomState.obstacles[id];
     handledDestroyedIds.add(id);
-    awardedExp += obstacle && obstacle.slotType === 'exp' ? TURN_CONFIG.expWallDestroyExp : TURN_CONFIG.obstacleHitExp;
+    awardedExp += TURN_CONFIG.obstacleHitExp;
   });
 
   const hitType = String(payload.hitType || '');

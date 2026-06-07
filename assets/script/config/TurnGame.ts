@@ -2,7 +2,7 @@ export type TurnCamp = "A" | "B";
 export type TurnPhase = "init" | "build" | "attack" | "waitBullet" | "settle" | "upgrade" | "finish";
 export type TurnUpgradeId = "bullet_bounce" | "extra_shot" | "damage_up" | "crystal_hp_up" | "cover_resource_up";
 export type TurnAssistZoneType = "black_hole";
-export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "blood";
+export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed";
 export type TurnMirrorDirection = "bl" | "br" | "tl" | "tr";
 
 export interface TurnUpgradeConfig {
@@ -20,6 +20,17 @@ export interface TurnObstacleSlotConfig {
 export interface TurnObstacleHpRuleConfig {
     baseHp: number;
     maxHp: number;
+}
+
+export interface TurnSettlementResourceRuleConfig {
+    expPerBlock: number;
+    baseMultiplier: number;
+}
+
+export interface TurnSettlementHealRuleConfig {
+    healPerBlock: number;
+    baseMultiplier: number;
+    bloodBlockPerStack: number;
 }
 
 export interface TurnRoundResourceSlot {
@@ -61,6 +72,17 @@ export interface TurnGameConfig {
     obstacleMaxHp: number;
     obstacleHpRules: {
         normal: TurnObstacleHpRuleConfig;
+        exp: TurnObstacleHpRuleConfig;
+        energy: TurnObstacleHpRuleConfig;
+        bleed: TurnObstacleHpRuleConfig;
+    };
+    settlementResourceRules: {
+        exp: TurnSettlementResourceRuleConfig;
+        energy: TurnSettlementHealRuleConfig;
+        bleed: {
+            blockPerBlock: number;
+            baseMultiplier: number;
+        };
     };
     obstacleSlotMaxResources: number;
     expWallDestroyExp: number;
@@ -116,6 +138,33 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
             baseHp: 10,
             maxHp: 50,
         },
+        exp: {
+            baseHp: 10,
+            maxHp: 30,
+        },
+        energy: {
+            baseHp: 10,
+            maxHp: 30,
+        },
+        bleed: {
+            baseHp: 10,
+            maxHp: 30,
+        },
+    },
+    settlementResourceRules: {
+        exp: {
+            expPerBlock: 5,
+            baseMultiplier: 1,
+        },
+        energy: {
+            healPerBlock: 2,
+            baseMultiplier: 1,
+            bloodBlockPerStack: 1,
+        },
+        bleed: {
+            blockPerBlock: 1,
+            baseMultiplier: 1,
+        },
     },
     obstacleSlotMaxResources: 4,
     expWallDestroyExp: 50,
@@ -126,7 +175,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         { type: "mirror", name: "镜面墙" },
         { type: "exp", name: "经验墙" },
         { type: "energy", name: "能量墙" },
-        { type: "blood", name: "滴血块" },
+        { type: "bleed", name: "滴血块" },
     ],
     tankMoveSpeed: 360,
     mapWidth: 640,
