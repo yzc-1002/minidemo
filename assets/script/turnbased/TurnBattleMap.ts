@@ -1,4 +1,19 @@
-import { TurnAssistZoneType, TurnCamp, TurnGameConfig, TurnMirrorDirection, TurnObstacleResourceType, TurnPhase, TurnUpgradeConfig, TurnUpgradeId, TURN_GAME_CONFIG } from "../config/TurnGame";
+import {
+    buildTurnAttackBondSnapshot,
+    buildTurnSettlementBondSnapshot,
+    TurnAssistZoneType,
+    TurnAttackBondSnapshot,
+    TurnBondCountMap,
+    TurnCamp,
+    TurnGameConfig,
+    TurnMirrorDirection,
+    TurnObstacleResourceType,
+    TurnPhase,
+    TurnSettlementBondSnapshot,
+    TurnUpgradeConfig,
+    TurnUpgradeId,
+    TURN_GAME_CONFIG,
+} from "../config/TurnGame";
 import { GameMap } from "../GameMap";
 import { TurnStateSnapshot } from "./TurnStateMachine";
 
@@ -150,15 +165,7 @@ interface TurnCampStats {
     upgradeStacks: { [id: string]: number };
 }
 
-interface TurnAttackSnapshotState {
-    totalShots: number;
-    extraShotsFromUpgrade: number;
-    extraShotsFromBulletBlock: number;
-    bonusDamageFromUpgrade: number;
-    bonusDamageFromAttackBlock: number;
-    bulletDamage: number;
-    bulletBounce: number;
-}
+type TurnAttackSnapshotState = TurnAttackBondSnapshot;
 
 @ccclass
 export default class TurnBattleMap extends cc.Component {
@@ -191,6 +198,7 @@ export default class TurnBattleMap extends cc.Component {
     private _hasFiredInAction = false;
     private _shotsLeftInAction = 0;
     private _attackSnapshot: TurnAttackSnapshotState = null;
+    private _settlementSnapshots: { [camp: string]: TurnSettlementBondSnapshot } = { A: null, B: null };
     private _dragObstacle: TurnObstacleState = null;
     private _dragStartPosition: cc.Vec2 = null;
     private _palettePreview: TurnBuildPreviewState = null;
@@ -288,6 +296,7 @@ export default class TurnBattleMap extends cc.Component {
         this._dragObstacle = null;
         this._dragStartPosition = null;
         this._palettePreview = null;
+        this._settlementSnapshots = { A: null, B: null };
         this._nextObstacleId = 1;
         this._nextStaticObstacleId = 1;
         this._nextAssistZoneId = 1;
@@ -379,11 +388,17 @@ export default class TurnBattleMap extends cc.Component {
 
         if (snapshot.phase === "attack") {
             this._hasFiredInAction = false;
-            this._attackSnapshot = this.buildAttackSnapshotForCamp(this._actionCamp);
-            this._shotsLeftInAction = this._attackSnapshot ? this._attackSnapshot.totalShots : 1;
+            this._attackSnapshot = this._serverMode ? null : this.buildAttackSnapshotForCamp(this._actionCamp);
+            this._shotsLeftInAction = this._attackSnapshot ? this._attackSnapshot.totalShots : (this._serverMode ? 1 : 0);
             if (this._serverMode && this._actionCamp === "A") {
                 this.resetPendingBulletResult();
             }
+        }
+        else if (snapshot.phase === "settle" && !this._serverMode) {
+            this._settlementSnapshots = {
+                A: this.buildSettlementSnapshotForCamp("A"),
+                B: this.buildSettlementSnapshotForCamp("B"),
+            };
         }
         else if (snapshot.phase === "waitBullet" && !this.hasActiveBullets()) {
             this.scheduleOnce(this.emitBulletsCleared, 0);
@@ -391,6 +406,9 @@ export default class TurnBattleMap extends cc.Component {
         else {
             this._attackSnapshot = null;
             this._shotsLeftInAction = 0;
+            if (snapshot.phase !== "settle") {
+                this._settlementSnapshots = { A: null, B: null };
+            }
         }
     }
 
@@ -435,6 +453,12 @@ export default class TurnBattleMap extends cc.Component {
                 this._attackSnapshot = this.buildAttackSnapshotFromServer(attackSnapshot);
                 this._shotsLeftInAction = Math.max(0, Number(attackSnapshot.shotsLeft) || this._attackSnapshot.totalShots);
             }
+        }
+        if (snapshot.settlementSnapshots) {
+            this._settlementSnapshots = {
+                A: this.buildSettlementSnapshotFromServer(snapshot.settlementSnapshots.A),
+                B: this.buildSettlementSnapshotFromServer(snapshot.settlementSnapshots.B),
+            };
         }
 
         this.syncCrystalState("A", snapshot.crystals && snapshot.crystals.A);
@@ -562,28 +586,29 @@ export default class TurnBattleMap extends cc.Component {
         }
         if (slotType === "exp") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
-            let expGain = this.getSettlementExpGain("A", safeCount);
-            return "HP " + maxHp + " 结算+" + expGain + "EXP";
+            let settlement = buildTurnSettlementBondSnapshot({ exp: safeCount }, null, this._config);
+            return "HP " + maxHp + " 结算+" + settlement.expGain + "EXP x" + settlement.expMultiplier;
         }
         if (slotType === "energy") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
-            let healGain = this.getSettlementEnergyHealGain("A", safeCount);
-            return "HP " + maxHp + " 结算+" + healGain + "HP";
+            let settlement = buildTurnSettlementBondSnapshot({ energy: safeCount }, null, this._config);
+            return "HP " + maxHp + " 结算+" + settlement.totalHeal + "HP x" + settlement.energyMultiplier;
         }
         if (slotType === "bleed") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
-            let blockGain = this.getSettlementBleedBlockAmount("A", safeCount);
-            return "HP " + maxHp + " 禁疗" + blockGain;
+            let settlement = buildTurnSettlementBondSnapshot({ bleed: safeCount }, null, this._config);
+            return "HP " + maxHp + " 禁疗" + settlement.blockedHeal + " x" + settlement.bleedMultiplier;
         }
         if (slotType === "bullet") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
-            let extraShots = this.getBulletBlockExtraShots("A", safeCount);
+            let attack = buildTurnAttackBondSnapshot({ bullet: safeCount }, null, this._config);
+            let extraShots = attack.extraShotsFromBulletBlock;
             return "HP " + maxHp + " 额外+" + extraShots + "发";
         }
         if (slotType === "attack") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
-            let bonus = this.getAttackBlockDamageBonus("A", safeCount);
-            return "HP " + maxHp + " 伤害+" + bonus;
+            let attack = buildTurnAttackBondSnapshot({ attack: safeCount }, null, this._config);
+            return "HP " + maxHp + " 伤害+" + attack.bonusDamageFromAttackBlock + " x" + attack.attackMultiplier;
         }
         return "";
     }
@@ -607,6 +632,15 @@ export default class TurnBattleMap extends cc.Component {
 
     getActiveAssistZoneCount(): number {
         return this._assistZones.length;
+    }
+
+    getBondHudText(camp: TurnCamp): string {
+        let attack = this._attackSnapshot && this._actionCamp === camp ? this._attackSnapshot : this.buildAttackSnapshotForCamp(camp);
+        let settlement = this._settlementSnapshots[camp] || this.buildSettlementSnapshotForCamp(camp);
+        return [
+            camp + " 攻击: 子弹" + attack.extraShotsFromBulletBlock + " 攻击+" + attack.bonusDamageFromAttackBlock,
+            "结算: EXP+" + settlement.expGain + " 回血" + settlement.finalHeal + " 禁疗" + settlement.blockedHeal,
+        ].join("  |  ");
     }
 
     getAssistAreaBottomLeft(): cc.Vec2 {
@@ -1014,7 +1048,10 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private fireActionTank(targetPosition: cc.Vec2) {
-        if (this._shotsLeftInAction <= 0 || this._gameFinished) {
+        if (this._gameFinished) {
+            return;
+        }
+        if (!this._serverMode && this._shotsLeftInAction <= 0) {
             return;
         }
 
@@ -1908,74 +1945,39 @@ export default class TurnBattleMap extends cc.Component {
         return result;
     }
 
-    private countPlacedBulletBlocks(camp: TurnCamp): number {
+    private countLivingResource(camp: TurnCamp, slotType: TurnObstacleResourceType): number {
         let total = 0;
         for (let i = 0; i < this._obstacles.length; i++) {
             let obstacle = this._obstacles[i];
-            if (obstacle.camp === camp && obstacle.slotType === "bullet") {
+            if (obstacle.camp === camp && obstacle.slotType === slotType) {
                 total += Math.max(1, obstacle.resourceCount);
             }
         }
         return total;
     }
 
-    private countPlacedAttackBlocks(camp: TurnCamp): number {
-        let total = 0;
-        for (let i = 0; i < this._obstacles.length; i++) {
-            let obstacle = this._obstacles[i];
-            if (obstacle.camp === camp && obstacle.slotType === "attack") {
-                total += Math.max(1, obstacle.resourceCount);
-            }
-        }
-        return total;
-    }
-
-    private getBulletBlockExtraShots(camp: TurnCamp, bulletCount: number): number {
-        let count = Math.max(0, Math.floor(Number(bulletCount) || 0));
-        let blocksPerExtraShot = Math.max(1, Number(this._config.bulletSynergy && this._config.bulletSynergy.blocksPerExtraShot) || 4);
-        return Math.floor(count / blocksPerExtraShot);
-    }
-
-    private getAttackBlockMultiplier(attackCount: number): number {
-        let count = Math.max(0, Math.floor(Number(attackCount) || 0));
-        let tiers = this._config.attackSynergy && this._config.attackSynergy.tiers ? this._config.attackSynergy.tiers : [];
-        for (let i = 0; i < tiers.length; i++) {
-            if (count >= Math.max(0, Number(tiers[i].minCount) || 0)) {
-                return Math.max(1, Number(tiers[i].multiplier) || 1);
-            }
-        }
-        return 1;
-    }
-
-    private getAttackBlockDamageBonus(camp: TurnCamp, attackCount: number): number {
-        let count = Math.max(0, Math.floor(Number(attackCount) || 0));
-        if (count <= 0) {
-            return 0;
-        }
-        let damagePerBlock = Math.max(0, Number(this._config.attackSynergy && this._config.attackSynergy.damagePerBlock) || 1);
-        let multiplier = this.getAttackBlockMultiplier(count);
-        return count * damagePerBlock * multiplier;
+    private buildBondCountMap(camp: TurnCamp): TurnBondCountMap {
+        return {
+            bullet: this.countLivingResource(camp, "bullet"),
+            attack: this.countLivingResource(camp, "attack"),
+            exp: this.countLivingResource(camp, "exp"),
+            energy: this.countLivingResource(camp, "energy"),
+            bleed: this.countLivingResource(camp, "bleed"),
+        };
     }
 
     private buildAttackSnapshotForCamp(camp: TurnCamp): TurnAttackSnapshotState {
         let stats = this.getCampStats(camp);
-        let bulletBlockCount = this.countPlacedBulletBlocks(camp);
-        let attackBlockCount = this.countPlacedAttackBlocks(camp);
-        let extraShotsFromBulletBlock = this.getBulletBlockExtraShots(camp, bulletBlockCount);
-        let bonusDamageFromAttackBlock = this.getAttackBlockDamageBonus(camp, attackBlockCount);
-        let extraShotsFromUpgrade = Math.max(0, Number(stats.extraShots) || 0);
-        let bonusDamageFromUpgrade = Math.max(0, Number(stats.damageBonus) || 0);
-        let bulletBounce = Math.max(0, Number(stats.bulletBounce) || 0);
-        let totalShots = 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock;
-        return {
-            totalShots: Math.max(1, totalShots),
-            extraShotsFromUpgrade: extraShotsFromUpgrade,
-            extraShotsFromBulletBlock: extraShotsFromBulletBlock,
-            bonusDamageFromUpgrade: bonusDamageFromUpgrade,
-            bonusDamageFromAttackBlock: bonusDamageFromAttackBlock,
-            bulletDamage: this._config.bulletDamage + bonusDamageFromUpgrade + bonusDamageFromAttackBlock,
-            bulletBounce: bulletBounce,
-        };
+        return buildTurnAttackBondSnapshot(this.buildBondCountMap(camp), {
+            extraShots: stats.extraShots,
+            damageBonus: stats.damageBonus,
+            bulletBounce: stats.bulletBounce,
+        }, this._config);
+    }
+
+    private buildSettlementSnapshotForCamp(camp: TurnCamp): TurnSettlementBondSnapshot {
+        let enemyCamp: TurnCamp = camp === "A" ? "B" : "A";
+        return buildTurnSettlementBondSnapshot(this.buildBondCountMap(camp), this.buildBondCountMap(enemyCamp), this._config);
     }
 
     private buildAttackSnapshotFromServer(source: any): TurnAttackSnapshotState {
@@ -1983,6 +1985,9 @@ export default class TurnBattleMap extends cc.Component {
             return null;
         }
         return {
+            bulletBlockCount: Math.max(0, Number(source.bulletBlockCount) || 0),
+            attackBlockCount: Math.max(0, Number(source.attackBlockCount) || 0),
+            attackMultiplier: Math.max(0, Number(source.attackMultiplier) || 0),
             totalShots: Math.max(1, Number(source.totalShots) || 1),
             extraShotsFromUpgrade: Math.max(0, Number(source.extraShotsFromUpgrade) || 0),
             extraShotsFromBulletBlock: Math.max(0, Number(source.extraShotsFromBulletBlock) || 0),
@@ -1990,6 +1995,26 @@ export default class TurnBattleMap extends cc.Component {
             bonusDamageFromAttackBlock: Math.max(0, Number(source.bonusDamageFromAttackBlock) || 0),
             bulletDamage: Math.max(1, Number(source.bulletDamage) || this._config.bulletDamage),
             bulletBounce: Math.max(0, Number(source.bulletBounce) || 0),
+            shotsLeft: Math.max(0, Number(source.shotsLeft) || 0),
+        };
+    }
+
+    private buildSettlementSnapshotFromServer(source: any): TurnSettlementBondSnapshot {
+        if (!source) {
+            return null;
+        }
+        return {
+            expBlockCount: Math.max(0, Number(source.expBlockCount) || 0),
+            expMultiplier: Math.max(0, Number(source.expMultiplier) || 0),
+            expGain: Math.max(0, Number(source.expGain) || 0),
+            energyBlockCount: Math.max(0, Number(source.energyBlockCount) || 0),
+            energyMultiplier: Math.max(0, Number(source.energyMultiplier) || 0),
+            totalHeal: Math.max(0, Number(source.totalHeal) || 0),
+            blockedHealByEnemy: Math.max(0, Number(source.blockedHealByEnemy) || 0),
+            finalHeal: Math.max(0, Number(source.finalHeal) || 0),
+            bleedBlockCount: Math.max(0, Number(source.bleedBlockCount) || 0),
+            bleedMultiplier: Math.max(0, Number(source.bleedMultiplier) || 0),
+            blockedHeal: Math.max(0, Number(source.blockedHeal) || 0),
         };
     }
 
@@ -2109,112 +2134,36 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private countPlacedEnergyTowers(camp: TurnCamp): number {
-        let total = 0;
-        for (let i = 0; i < this._obstacles.length; i++) {
-            let obstacle = this._obstacles[i];
-            if (obstacle.camp === camp && obstacle.slotType === "energy") {
-                total += Math.max(1, obstacle.resourceCount);
-            }
-        }
-        return total;
+        return this.countLivingResource(camp, "energy");
     }
 
     private countPlacedBleedBlocks(camp: TurnCamp): number {
-        let total = 0;
-        for (let i = 0; i < this._obstacles.length; i++) {
-            let obstacle = this._obstacles[i];
-            if (obstacle.camp === camp && obstacle.slotType === "bleed") {
-                total += Math.max(1, obstacle.resourceCount);
-            }
-        }
-        return total;
+        return this.countLivingResource(camp, "bleed");
     }
 
     private countPlacedExpBlocks(camp: TurnCamp): number {
-        let total = 0;
-        for (let i = 0; i < this._obstacles.length; i++) {
-            let obstacle = this._obstacles[i];
-            if (obstacle.camp === camp && obstacle.slotType === "exp") {
-                total += Math.max(1, obstacle.resourceCount);
-            }
-        }
-        return total;
-    }
-
-    private getSettlementExpMultiplier(camp: TurnCamp): number {
-        return Math.max(0, Number(this._config.settlementResourceRules && this._config.settlementResourceRules.exp && this._config.settlementResourceRules.exp.baseMultiplier) || 1);
-    }
-
-    private getSettlementExpGain(camp: TurnCamp, expCount: number): number {
-        let count = Math.max(0, Math.floor(Number(expCount) || 0));
-        if (count <= 0) {
-            return 0;
-        }
-        let rule = this._config.settlementResourceRules && this._config.settlementResourceRules.exp;
-        let expPerBlock = Math.max(0, Number(rule && rule.expPerBlock) || 0);
-        let multiplier = this.getSettlementExpMultiplier(camp);
-        return Math.round(count * expPerBlock * multiplier);
-    }
-
-    private getSettlementEnergyHealMultiplier(camp: TurnCamp): number {
-        return Math.max(0, Number(this._config.settlementResourceRules && this._config.settlementResourceRules.energy && this._config.settlementResourceRules.energy.baseMultiplier) || 1);
-    }
-
-    private getSettlementEnergyHealGain(camp: TurnCamp, energyCount: number): number {
-        let count = Math.max(0, Math.floor(Number(energyCount) || 0));
-        if (count <= 0) {
-            return 0;
-        }
-        let rule = this._config.settlementResourceRules && this._config.settlementResourceRules.energy;
-        let healPerBlock = Math.max(0, Number(rule && rule.healPerBlock) || 0);
-        let multiplier = this.getSettlementEnergyHealMultiplier(camp);
-        return Math.round(count * healPerBlock * multiplier);
-    }
-
-    private getSettlementBleedMultiplier(camp: TurnCamp): number {
-        return Math.max(0, Number(this._config.settlementResourceRules && this._config.settlementResourceRules.bleed && this._config.settlementResourceRules.bleed.baseMultiplier) || 1);
-    }
-
-    private getSettlementBleedBlockAmount(camp: TurnCamp, bleedCount: number): number {
-        let count = Math.max(0, Math.floor(Number(bleedCount) || 0));
-        if (count <= 0) {
-            return 0;
-        }
-        let rule = this._config.settlementResourceRules && this._config.settlementResourceRules.bleed;
-        let blockPerBlock = Math.max(0, Number(rule && rule.blockPerBlock) || 0);
-        let multiplier = this.getSettlementBleedMultiplier(camp);
-        return Math.round(count * blockPerBlock * multiplier);
-    }
-
-    private getSettlementEnergyBlockedAmount(enemyCamp: TurnCamp): number {
-        let bleedCount = this.countPlacedBleedBlocks(enemyCamp);
-        return this.getSettlementBleedBlockAmount(enemyCamp, bleedCount);
+        return this.countLivingResource(camp, "exp");
     }
 
     private applyRoundSettlementForCamp(camp: TurnCamp) {
-        let expCount = this.countPlacedExpBlocks(camp);
-        let expAmount = this.getSettlementExpGain(camp, expCount);
-        if (expAmount > 0) {
-            this.addExp(camp, expAmount, cc.v2(camp === "A" ? -120 : 120, camp === "A" ? -70 : 70));
+        let settlement = this.buildSettlementSnapshotForCamp(camp);
+        this._settlementSnapshots[camp] = settlement;
+        if (settlement.expGain > 0) {
+            this.addExp(camp, settlement.expGain, cc.v2(camp === "A" ? -120 : 120, camp === "A" ? -70 : 70));
         }
-        let healCount = this.countPlacedEnergyTowers(camp);
-        if (healCount <= 0) {
+        if (settlement.totalHeal <= 0) {
             return;
         }
-        let enemyCamp: TurnCamp = camp === "A" ? "B" : "A";
-        let totalHeal = this.getSettlementEnergyHealGain(camp, healCount);
-        let blockedHeal = this.getSettlementEnergyBlockedAmount(enemyCamp);
-        let finalHeal = Math.max(0, totalHeal - blockedHeal);
-        if (finalHeal <= 0) {
+        if (settlement.finalHeal <= 0) {
             return;
         }
         let crystal = this._crystals[camp];
         if (!crystal) {
             return;
         }
-        crystal.hp = Math.min(crystal.maxHp, crystal.hp + finalHeal);
+        crystal.hp = Math.min(crystal.maxHp, crystal.hp + settlement.finalHeal);
         this.refreshCrystalView(camp);
-        this.showFloatText("+" + finalHeal + " HP", this.getNodePosition(crystal.node).add(cc.v2(0, 52)), new cc.Color(120, 240, 160, 255));
+        this.showFloatText("+" + settlement.finalHeal + " HP", this.getNodePosition(crystal.node).add(cc.v2(0, 52)), new cc.Color(120, 240, 160, 255));
     }
 
     private getCampStats(camp: TurnCamp): TurnCampStats {

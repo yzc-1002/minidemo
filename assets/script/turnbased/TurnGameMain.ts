@@ -290,6 +290,10 @@ export default class TurnGameMain extends cc.Component {
         );
         let activeZones = this._battleMap.getActiveAssistZoneCount();
         this._hud.refreshZones(activeZones, activeZones);
+        this._hud.refreshBonds(
+            this._battleMap.getBondHudText("A"),
+            this._battleMap.getBondHudText("B"),
+        );
         let localCamp = this.getLocalCamp();
         this._hud.refreshBuildPalette(
             localCamp,

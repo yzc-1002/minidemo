@@ -432,6 +432,47 @@ const TURN_CONFIG = {
       { minCount: 0, multiplier: 1 },
     ],
   },
+  bondRules: {
+    bullet: {
+      blocksPerExtraShot: 4,
+    },
+    attack: {
+      amountPerBlock: 1,
+      tiers: [
+        { minCount: 12, multiplier: 6 },
+        { minCount: 8, multiplier: 4 },
+        { minCount: 4, multiplier: 2 },
+        { minCount: 1, multiplier: 1 },
+      ],
+    },
+    exp: {
+      amountPerBlock: 5,
+      tiers: [
+        { minCount: 12, multiplier: 6 },
+        { minCount: 8, multiplier: 4 },
+        { minCount: 4, multiplier: 2 },
+        { minCount: 1, multiplier: 1 },
+      ],
+    },
+    energy: {
+      amountPerBlock: 2,
+      tiers: [
+        { minCount: 12, multiplier: 6 },
+        { minCount: 8, multiplier: 4 },
+        { minCount: 4, multiplier: 2 },
+        { minCount: 1, multiplier: 1 },
+      ],
+    },
+    bleed: {
+      amountPerBlock: 1,
+      tiers: [
+        { minCount: 12, multiplier: 6 },
+        { minCount: 8, multiplier: 4 },
+        { minCount: 4, multiplier: 2 },
+        { minCount: 1, multiplier: 1 },
+      ],
+    },
+  },
   obstacleSlotMaxResources: 4,
 };
 const TURN_PHASE = {
@@ -955,58 +996,6 @@ function buildObstacleCellHp(slotType, resourceCount, cellCount, source) {
   });
 }
 
-function getTurnExpSettlementMultiplier(roomState, camp) {
-  return Math.max(0, Number(TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.exp && TURN_CONFIG.settlementResourceRules.exp.baseMultiplier) || 1);
-}
-
-function getTurnExpSettlementGain(roomState, camp, expBlocks) {
-  const count = Math.max(0, Math.floor(Number(expBlocks) || 0));
-  if (count <= 0) {
-    return 0;
-  }
-  const rule = TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.exp;
-  const expPerBlock = Math.max(0, Number(rule && rule.expPerBlock) || 0);
-  const multiplier = getTurnExpSettlementMultiplier(roomState, camp);
-  return Math.round(count * expPerBlock * multiplier);
-}
-
-function getTurnEnergySettlementMultiplier(roomState, camp) {
-  return Math.max(0, Number(TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.energy && TURN_CONFIG.settlementResourceRules.energy.baseMultiplier) || 1);
-}
-
-function getTurnEnergySettlementGain(roomState, camp, energyBlocks) {
-  const count = Math.max(0, Math.floor(Number(energyBlocks) || 0));
-  if (count <= 0) {
-    return 0;
-  }
-  const rule = TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.energy;
-  const healPerBlock = Math.max(0, Number(rule && rule.healPerBlock) || 0);
-  const multiplier = getTurnEnergySettlementMultiplier(roomState, camp);
-  return Math.round(count * healPerBlock * multiplier);
-}
-
-function getTurnEnergyBlockedStacks(roomState, enemyCamp) {
-  const bleedCount = countTurnLivingResource(roomState, enemyCamp, 'bleed');
-  const rule = TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.energy;
-  const bloodBlockPerStack = Math.max(0, Number(rule && rule.bloodBlockPerStack) || TURN_CONFIG.bloodBlockHealPerStack || 0);
-  return bleedCount * bloodBlockPerStack;
-}
-
-function getTurnBleedSettlementMultiplier(roomState, camp) {
-  return Math.max(0, Number(TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.bleed && TURN_CONFIG.settlementResourceRules.bleed.baseMultiplier) || 1);
-}
-
-function getTurnBleedSettlementBlock(roomState, camp, bleedBlocks) {
-  const count = Math.max(0, Math.floor(Number(bleedBlocks) || 0));
-  if (count <= 0) {
-    return 0;
-  }
-  const rule = TURN_CONFIG.settlementResourceRules && TURN_CONFIG.settlementResourceRules.bleed;
-  const blockPerBlock = Math.max(0, Number(rule && rule.blockPerBlock) || 0);
-  const multiplier = getTurnBleedSettlementMultiplier(roomState, camp);
-  return Math.round(count * blockPerBlock * multiplier);
-}
-
 function sumObstacleCellHp(obstacle) {
   if (!obstacle || !Array.isArray(obstacle.cellHp)) {
     return 0;
@@ -1119,59 +1108,108 @@ function countTurnLivingResource(roomState, camp, slotType) {
   }, 0);
 }
 
-function getTurnAttackBlockCount(roomState, camp) {
-  return countTurnLivingResource(roomState, camp, 'attack');
+function createTurnBondCountMap(source) {
+  return {
+    bullet: Math.max(0, Math.floor(Number(source && source.bullet) || 0)),
+    attack: Math.max(0, Math.floor(Number(source && source.attack) || 0)),
+    exp: Math.max(0, Math.floor(Number(source && source.exp) || 0)),
+    energy: Math.max(0, Math.floor(Number(source && source.energy) || 0)),
+    bleed: Math.max(0, Math.floor(Number(source && source.bleed) || 0)),
+  };
 }
 
-function getTurnBulletBlockCount(roomState, camp) {
-  return countTurnLivingResource(roomState, camp, 'bullet');
+function buildTurnBondCountsFromRoom(roomState, camp) {
+  return createTurnBondCountMap({
+    bullet: countTurnLivingResource(roomState, camp, 'bullet'),
+    attack: countTurnLivingResource(roomState, camp, 'attack'),
+    exp: countTurnLivingResource(roomState, camp, 'exp'),
+    energy: countTurnLivingResource(roomState, camp, 'energy'),
+    bleed: countTurnLivingResource(roomState, camp, 'bleed'),
+  });
 }
 
-function getTurnBulletBlockExtraShots(roomState, camp, bulletBlocks) {
-  const count = Math.max(0, Math.floor(Number(bulletBlocks) || 0));
-  const blocksPerExtraShot = Math.max(1, Number(TURN_CONFIG.bulletSynergy && TURN_CONFIG.bulletSynergy.blocksPerExtraShot) || 4);
-  return Math.floor(count / blocksPerExtraShot);
-}
-
-function getTurnAttackBlockMultiplier(attackBlocks) {
-  const count = Math.max(0, Math.floor(Number(attackBlocks) || 0));
-  const tiers = TURN_CONFIG.attackSynergy && Array.isArray(TURN_CONFIG.attackSynergy.tiers) ? TURN_CONFIG.attackSynergy.tiers : [];
+function getTurnBondMultiplier(type, count) {
+  const safeCount = Math.max(0, Math.floor(Number(count) || 0));
+  if (safeCount <= 0) {
+    return 0;
+  }
+  const rule = TURN_CONFIG.bondRules && TURN_CONFIG.bondRules[type];
+  const tiers = rule && Array.isArray(rule.tiers) ? rule.tiers : [];
   for (let i = 0; i < tiers.length; i++) {
-    if (count >= Math.max(0, Number(tiers[i].minCount) || 0)) {
+    if (safeCount >= Math.max(0, Number(tiers[i].minCount) || 0)) {
       return Math.max(1, Number(tiers[i].multiplier) || 1);
     }
   }
   return 1;
 }
 
-function getTurnAttackBlockDamageBonus(roomState, camp, attackBlocks) {
-  const count = Math.max(0, Math.floor(Number(attackBlocks) || 0));
-  if (count <= 0) {
-    return 0;
-  }
-  const damagePerBlock = Math.max(0, Number(TURN_CONFIG.attackSynergy && TURN_CONFIG.attackSynergy.damagePerBlock) || 1);
-  const multiplier = getTurnAttackBlockMultiplier(count);
-  return count * damagePerBlock * multiplier;
+function getTurnBulletBondExtraShots(count) {
+  const safeCount = Math.max(0, Math.floor(Number(count) || 0));
+  const blocksPerExtraShot = Math.max(1, Number(TURN_CONFIG.bondRules && TURN_CONFIG.bondRules.bullet && TURN_CONFIG.bondRules.bullet.blocksPerExtraShot) || 4);
+  return Math.floor(safeCount / blocksPerExtraShot);
 }
 
-function buildTurnAttackSnapshot(roomState, player) {
+function getTurnBondValue(type, count) {
+  const safeCount = Math.max(0, Math.floor(Number(count) || 0));
+  if (safeCount <= 0) {
+    return 0;
+  }
+  const rule = TURN_CONFIG.bondRules && TURN_CONFIG.bondRules[type];
+  const amountPerBlock = Math.max(0, Number(rule && rule.amountPerBlock) || 0);
+  const multiplier = getTurnBondMultiplier(type, safeCount);
+  return safeCount * amountPerBlock * multiplier;
+}
+
+function buildTurnAttackSnapshotFromCounts(counts, player) {
   const baseBulletDamage = Math.max(1, Number(TURN_CONFIG.bulletDamage) || 20);
-  const bulletBlocks = getTurnBulletBlockCount(roomState, player.camp);
-  const attackBlocks = getTurnAttackBlockCount(roomState, player.camp);
+  const safeCounts = createTurnBondCountMap(counts);
   const extraShotsFromUpgrade = Math.max(0, Number(player.upgrades.multiShot) || 0);
-  const extraShotsFromBulletBlock = getTurnBulletBlockExtraShots(roomState, player.camp, bulletBlocks);
+  const extraShotsFromBulletBlock = getTurnBulletBondExtraShots(safeCounts.bullet);
   const bonusDamageFromUpgrade = Math.max(0, Number(player.upgrades.damageAdd) || 0);
-  const bonusDamageFromAttackBlock = getTurnAttackBlockDamageBonus(roomState, player.camp, attackBlocks);
+  const attackMultiplier = getTurnBondMultiplier('attack', safeCounts.attack);
+  const bonusDamageFromAttackBlock = getTurnBondValue('attack', safeCounts.attack);
   const bulletBounce = Math.max(0, Number(player.upgrades.bulletBounce) || 0);
+  const totalShots = Math.max(1, 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock);
   return {
-    totalShots: Math.max(1, 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock),
+    bulletBlockCount: safeCounts.bullet,
+    attackBlockCount: safeCounts.attack,
+    attackMultiplier,
+    totalShots,
     extraShotsFromUpgrade,
     extraShotsFromBulletBlock,
     bonusDamageFromUpgrade,
     bonusDamageFromAttackBlock,
     bulletDamage: Math.max(1, baseBulletDamage + bonusDamageFromUpgrade + bonusDamageFromAttackBlock),
     bulletBounce,
-    shotsLeft: Math.max(1, 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock),
+    shotsLeft: totalShots,
+  };
+}
+
+function buildTurnAttackSnapshot(roomState, player) {
+  return buildTurnAttackSnapshotFromCounts(buildTurnBondCountsFromRoom(roomState, player.camp), player);
+}
+
+function buildTurnSettlementSnapshot(roomState, camp) {
+  const ownCounts = buildTurnBondCountsFromRoom(roomState, camp);
+  const enemyCounts = buildTurnBondCountsFromRoom(roomState, getEnemyCamp(camp));
+  const expMultiplier = getTurnBondMultiplier('exp', ownCounts.exp);
+  const energyMultiplier = getTurnBondMultiplier('energy', ownCounts.energy);
+  const bleedMultiplier = getTurnBondMultiplier('bleed', ownCounts.bleed);
+  const expGain = getTurnBondValue('exp', ownCounts.exp);
+  const totalHeal = getTurnBondValue('energy', ownCounts.energy);
+  const blockedHealByEnemy = getTurnBondValue('bleed', enemyCounts.bleed);
+  return {
+    expBlockCount: ownCounts.exp,
+    expMultiplier,
+    expGain,
+    energyBlockCount: ownCounts.energy,
+    energyMultiplier,
+    totalHeal,
+    blockedHealByEnemy,
+    finalHeal: Math.max(0, totalHeal - blockedHealByEnemy),
+    bleedBlockCount: ownCounts.bleed,
+    bleedMultiplier,
+    blockedHeal: getTurnBondValue('bleed', ownCounts.bleed),
   };
 }
 
@@ -1211,6 +1249,14 @@ function createTurnRoom() {
     waitingForBulletCamp: '',
     actionSubmitted: false,
     currentAttack: null,
+    roundAttackSnapshots: {
+      A: null,
+      B: null,
+    },
+    settlementSnapshots: {
+      A: null,
+      B: null,
+    },
     crystals: {
       A: { camp: 'A', hp: TURN_CONFIG.crystalHp, maxHp: TURN_CONFIG.crystalHp },
       B: { camp: 'B', hp: TURN_CONFIG.crystalHp, maxHp: TURN_CONFIG.crystalHp },
@@ -1352,6 +1398,12 @@ function getTurnStateSnapshot(roomState) {
           [roomState.currentAttack.camp]: { ...roomState.currentAttack.snapshot },
         }
       : {},
+    settlementSnapshots: roomState.settlementSnapshots
+      ? {
+          A: roomState.settlementSnapshots.A ? { ...roomState.settlementSnapshots.A } : null,
+          B: roomState.settlementSnapshots.B ? { ...roomState.settlementSnapshots.B } : null,
+        }
+      : {},
   };
 }
 
@@ -1427,6 +1479,15 @@ function startTurnBuildPhase(roomState) {
   roomState.attackTurnIndex = 0;
   roomState.waitingForBulletCamp = '';
   roomState.actionSubmitted = false;
+  roomState.currentAttack = null;
+  roomState.roundAttackSnapshots = {
+    A: null,
+    B: null,
+  };
+  roomState.settlementSnapshots = {
+    A: null,
+    B: null,
+  };
   roomState.zones = [];
   randomizeTurnAssistStaticObstacles(roomState);
   spawnTurnBlackHoleZone(roomState);
@@ -1435,6 +1496,9 @@ function startTurnBuildPhase(roomState) {
   });
   logTurn(roomState, `phase build round=${roomState.roundIndex} buildSeconds=${TURN_CONFIG.buildSeconds}`);
   setTurnPhase(roomState, TURN_PHASE.BUILD, TURN_CONFIG.buildSeconds, () => {
+    roomState.players.forEach((player) => {
+      roomState.roundAttackSnapshots[player.camp] = buildTurnAttackSnapshot(roomState, player);
+    });
     startTurnAttackPhase(roomState, 'A');
   });
 }
@@ -2053,7 +2117,9 @@ function handleTurnAttackAction(ws, msg) {
     return;
   }
   const pose = updateTurnTankPose(roomState, player.camp, fromPoint.x, aimPoint.x, aimPoint.y);
-  const snapshot = buildTurnAttackSnapshot(roomState, player);
+  const snapshot = roomState.roundAttackSnapshots && roomState.roundAttackSnapshots[player.camp]
+    ? { ...roomState.roundAttackSnapshots[player.camp] }
+    : buildTurnAttackSnapshot(roomState, player);
   roomState.actionSubmitted = true;
   roomState.currentAttack = {
     camp: player.camp,
@@ -2109,26 +2175,18 @@ function applyTurnRoundSettlement(roomState) {
   if (!roomState || !roomState.players) {
     return;
   }
+  roomState.settlementSnapshots = roomState.settlementSnapshots || { A: null, B: null };
   roomState.players.forEach((player) => {
-    const expBlocks = countTurnLivingResource(roomState, player.camp, 'exp');
-    const expGain = getTurnExpSettlementGain(roomState, player.camp, expBlocks);
-    if (expGain > 0) {
-      player.exp += expGain;
+    const settlement = buildTurnSettlementSnapshot(roomState, player.camp);
+    roomState.settlementSnapshots[player.camp] = settlement;
+    if (settlement.expGain > 0) {
+      player.exp += settlement.expGain;
     }
-    const towers = countTurnLivingResource(roomState, player.camp, 'energy');
     const crystal = roomState.crystals[player.camp];
-    if (!crystal || towers <= 0) {
+    if (!crystal || settlement.finalHeal <= 0) {
       return;
     }
-    const totalHeal = getTurnEnergySettlementGain(roomState, player.camp, towers);
-    const enemyCamp = getEnemyCamp(player.camp);
-    const bleedBlocks = countTurnLivingResource(roomState, enemyCamp, 'bleed');
-    const totalBlock = getTurnBleedSettlementBlock(roomState, enemyCamp, bleedBlocks);
-    const healAmount = Math.max(0, totalHeal - totalBlock);
-    if (healAmount <= 0) {
-      return;
-    }
-    crystal.hp = Math.min(crystal.maxHp, crystal.hp + healAmount);
+    crystal.hp = Math.min(crystal.maxHp, crystal.hp + settlement.finalHeal);
   });
 }
 

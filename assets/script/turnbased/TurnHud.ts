@@ -23,6 +23,9 @@ export default class TurnHud extends cc.Component {
     @property(cc.Label)
     zoneLabel: cc.Label = null;
 
+    @property(cc.Label)
+    bondLabel: cc.Label = null;
+
     private _lastPhase = "";
     private _upgradeRoot: cc.Node = null;
     private _upgradeHintRoot: cc.Node = null;
@@ -62,7 +65,11 @@ export default class TurnHud extends cc.Component {
         this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -200, 190);
         this.expLabel = this.createLabel("A: 0  |  B: 0", 20, -200, 160);
         this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -210, 130);
-        this.zoneLabel = this.createLabel("场上黑洞区: 0", 20, -210, -11125);
+        this.zoneLabel = this.createLabel("场上黑洞区: 0", 20, -210, 100);
+        this.bondLabel = this.createLabel("A 羁绊: -", 18, -190, 70);
+        this.bondLabel.horizontalAlign = cc.Label.HorizontalAlign.LEFT;
+        this.bondLabel.overflow = cc.Label.Overflow.RESIZE_HEIGHT;
+        this.bondLabel.node.width = 580;
         this._upgradeRoot = null;
         this._upgradeHintRoot = null;
         this._settlementRoot = null;
@@ -163,6 +170,13 @@ export default class TurnHud extends cc.Component {
         }
 
         this.zoneLabel.string = "场上黑洞区: " + Math.max(aBlackHole, bBlackHole);
+    }
+
+    refreshBonds(aText: string, bText: string) {
+        if (!this.bondLabel) {
+            return;
+        }
+        this.bondLabel.string = aText + "\n" + bText;
     }
 
     showUpgradeOptions(camp: TurnCamp, options: TurnUpgradeConfig[], onPick: (id: TurnUpgradeId) => void) {

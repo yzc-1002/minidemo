@@ -42,6 +42,72 @@ export interface TurnAttackSynergyTierConfig {
     multiplier: number;
 }
 
+export type TurnBondResourceType = "bullet" | "attack" | "exp" | "energy" | "bleed";
+
+export interface TurnBondTierConfig {
+    minCount: number;
+    multiplier: number;
+}
+
+export interface TurnBondBulletRuleConfig {
+    blocksPerExtraShot: number;
+}
+
+export interface TurnBondValueRuleConfig {
+    amountPerBlock: number;
+    tiers: TurnBondTierConfig[];
+}
+
+export interface TurnBondRulesConfig {
+    bullet: TurnBondBulletRuleConfig;
+    attack: TurnBondValueRuleConfig;
+    exp: TurnBondValueRuleConfig;
+    energy: TurnBondValueRuleConfig;
+    bleed: TurnBondValueRuleConfig;
+}
+
+export interface TurnBondCountMap {
+    bullet: number;
+    attack: number;
+    exp: number;
+    energy: number;
+    bleed: number;
+}
+
+export interface TurnBondUpgradeSnapshot {
+    extraShots: number;
+    damageBonus: number;
+    bulletBounce: number;
+}
+
+export interface TurnAttackBondSnapshot {
+    bulletBlockCount: number;
+    attackBlockCount: number;
+    attackMultiplier: number;
+    totalShots: number;
+    extraShotsFromUpgrade: number;
+    extraShotsFromBulletBlock: number;
+    bonusDamageFromUpgrade: number;
+    bonusDamageFromAttackBlock: number;
+    bulletDamage: number;
+    bulletBounce: number;
+    shotsLeft: number;
+}
+
+export interface TurnSettlementBondSnapshot {
+    expBlockCount: number;
+    expMultiplier: number;
+    expGain: number;
+    energyBlockCount: number;
+    energyMultiplier: number;
+    totalHeal: number;
+    blockedHealByEnemy: number;
+    finalHeal: number;
+    bleedBlockCount: number;
+    bleedMultiplier: number;
+    blockedHeal: number;
+}
+
 export interface TurnRoundResourceSlot {
     slotId: string;
     type: TurnObstacleResourceType;
@@ -100,6 +166,7 @@ export interface TurnGameConfig {
         damagePerBlock: number;
         tiers: TurnAttackSynergyTierConfig[];
     };
+    bondRules: TurnBondRulesConfig;
     obstacleSlotMaxResources: number;
     expWallDestroyExp: number;
     energyWallRoundHeal: number;
@@ -202,6 +269,47 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
             { minCount: 0, multiplier: 1 },
         ],
     },
+    bondRules: {
+        bullet: {
+            blocksPerExtraShot: 4,
+        },
+        attack: {
+            amountPerBlock: 1,
+            tiers: [
+                { minCount: 12, multiplier: 6 },
+                { minCount: 8, multiplier: 4 },
+                { minCount: 4, multiplier: 2 },
+                { minCount: 1, multiplier: 1 },
+            ],
+        },
+        exp: {
+            amountPerBlock: 5,
+            tiers: [
+                { minCount: 12, multiplier: 6 },
+                { minCount: 8, multiplier: 4 },
+                { minCount: 4, multiplier: 2 },
+                { minCount: 1, multiplier: 1 },
+            ],
+        },
+        energy: {
+            amountPerBlock: 2,
+            tiers: [
+                { minCount: 12, multiplier: 6 },
+                { minCount: 8, multiplier: 4 },
+                { minCount: 4, multiplier: 2 },
+                { minCount: 1, multiplier: 1 },
+            ],
+        },
+        bleed: {
+            amountPerBlock: 1,
+            tiers: [
+                { minCount: 12, multiplier: 6 },
+                { minCount: 8, multiplier: 4 },
+                { minCount: 4, multiplier: 2 },
+                { minCount: 1, multiplier: 1 },
+            ],
+        },
+    },
     obstacleSlotMaxResources: 4,
     expWallDestroyExp: 50,
     energyWallRoundHeal: 10,
@@ -259,6 +367,109 @@ export function getRoundResourceTotal(roundIndex: number, extraBonus = 0, config
     let round = Math.max(1, Math.floor(Number(roundIndex) || 1));
     let total = cfg.initialRoundResourceTotal + (round - 1) * cfg.roundResourceGrowth + Math.max(0, Math.floor(Number(extraBonus) || 0));
     return Math.max(cfg.slotCountPerRound, Math.min(cfg.maxRoundResourceTotal, total));
+}
+
+export function createTurnBondCountMap(source?: Partial<TurnBondCountMap>): TurnBondCountMap {
+    return {
+        bullet: Math.max(0, Math.floor(Number(source && source.bullet) || 0)),
+        attack: Math.max(0, Math.floor(Number(source && source.attack) || 0)),
+        exp: Math.max(0, Math.floor(Number(source && source.exp) || 0)),
+        energy: Math.max(0, Math.floor(Number(source && source.energy) || 0)),
+        bleed: Math.max(0, Math.floor(Number(source && source.bleed) || 0)),
+    };
+}
+
+export function getTurnBondCount(counts: Partial<TurnBondCountMap> | null | undefined, type: TurnBondResourceType): number {
+    return Math.max(0, Math.floor(Number(counts && counts[type]) || 0));
+}
+
+export function getTurnBondMultiplier(type: Exclude<TurnBondResourceType, "bullet">, count: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let safeCount = Math.max(0, Math.floor(Number(count) || 0));
+    if (safeCount <= 0) {
+        return 0;
+    }
+    let rule = cfg.bondRules && cfg.bondRules[type];
+    let tiers = rule && Array.isArray(rule.tiers) ? rule.tiers : [];
+    for (let i = 0; i < tiers.length; i++) {
+        if (safeCount >= Math.max(0, Number(tiers[i].minCount) || 0)) {
+            return Math.max(1, Number(tiers[i].multiplier) || 1);
+        }
+    }
+    return 1;
+}
+
+export function getTurnBulletExtraShots(count: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let safeCount = Math.max(0, Math.floor(Number(count) || 0));
+    let blocksPerExtraShot = Math.max(1, Number(cfg.bondRules && cfg.bondRules.bullet && cfg.bondRules.bullet.blocksPerExtraShot) || 4);
+    return Math.floor(safeCount / blocksPerExtraShot);
+}
+
+export function getTurnBondValue(type: Exclude<TurnBondResourceType, "bullet">, count: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let safeCount = Math.max(0, Math.floor(Number(count) || 0));
+    if (safeCount <= 0) {
+        return 0;
+    }
+    let rule = cfg.bondRules && cfg.bondRules[type];
+    let amountPerBlock = Math.max(0, Number(rule && rule.amountPerBlock) || 0);
+    let multiplier = getTurnBondMultiplier(type, safeCount, cfg);
+    return safeCount * amountPerBlock * multiplier;
+}
+
+export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, upgrades?: Partial<TurnBondUpgradeSnapshot>, config?: TurnGameConfig): TurnAttackBondSnapshot {
+    let cfg = config || TURN_GAME_CONFIG;
+    let safeCounts = createTurnBondCountMap(counts);
+    let extraShotsFromUpgrade = Math.max(0, Math.floor(Number(upgrades && upgrades.extraShots) || 0));
+    let bonusDamageFromUpgrade = Math.max(0, Math.floor(Number(upgrades && upgrades.damageBonus) || 0));
+    let bulletBounce = Math.max(0, Math.floor(Number(upgrades && upgrades.bulletBounce) || 0));
+    let extraShotsFromBulletBlock = getTurnBulletExtraShots(safeCounts.bullet, cfg);
+    let attackMultiplier = getTurnBondMultiplier("attack", safeCounts.attack, cfg);
+    let bonusDamageFromAttackBlock = getTurnBondValue("attack", safeCounts.attack, cfg);
+    let totalShots = Math.max(1, 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock);
+    return {
+        bulletBlockCount: safeCounts.bullet,
+        attackBlockCount: safeCounts.attack,
+        attackMultiplier: attackMultiplier,
+        totalShots: totalShots,
+        extraShotsFromUpgrade: extraShotsFromUpgrade,
+        extraShotsFromBulletBlock: extraShotsFromBulletBlock,
+        bonusDamageFromUpgrade: bonusDamageFromUpgrade,
+        bonusDamageFromAttackBlock: bonusDamageFromAttackBlock,
+        bulletDamage: Math.max(1, Number(cfg.bulletDamage) || 1) + bonusDamageFromUpgrade + bonusDamageFromAttackBlock,
+        bulletBounce: bulletBounce,
+        shotsLeft: totalShots,
+    };
+}
+
+export function buildTurnSettlementBondSnapshot(
+    ownCounts: Partial<TurnBondCountMap>,
+    enemyCounts?: Partial<TurnBondCountMap>,
+    config?: TurnGameConfig,
+): TurnSettlementBondSnapshot {
+    let cfg = config || TURN_GAME_CONFIG;
+    let selfCounts = createTurnBondCountMap(ownCounts);
+    let foeCounts = createTurnBondCountMap(enemyCounts);
+    let expMultiplier = getTurnBondMultiplier("exp", selfCounts.exp, cfg);
+    let energyMultiplier = getTurnBondMultiplier("energy", selfCounts.energy, cfg);
+    let bleedMultiplier = getTurnBondMultiplier("bleed", selfCounts.bleed, cfg);
+    let expGain = getTurnBondValue("exp", selfCounts.exp, cfg);
+    let totalHeal = getTurnBondValue("energy", selfCounts.energy, cfg);
+    let blockedHealByEnemy = getTurnBondValue("bleed", foeCounts.bleed, cfg);
+    return {
+        expBlockCount: selfCounts.exp,
+        expMultiplier: expMultiplier,
+        expGain: expGain,
+        energyBlockCount: selfCounts.energy,
+        energyMultiplier: energyMultiplier,
+        totalHeal: totalHeal,
+        blockedHealByEnemy: blockedHealByEnemy,
+        finalHeal: Math.max(0, totalHeal - blockedHealByEnemy),
+        bleedBlockCount: selfCounts.bleed,
+        bleedMultiplier: bleedMultiplier,
+        blockedHeal: getTurnBondValue("bleed", selfCounts.bleed, cfg),
+    };
 }
 
 if (typeof yyp !== "undefined") {
