@@ -384,6 +384,10 @@ const TURN_CONFIG = {
       baseHp: 10,
       maxHp: 50,
     },
+    mirror: {
+      baseHp: 10,
+      maxHp: 10,
+    },
     exp: {
       baseHp: 10,
       maxHp: 30,
@@ -673,9 +677,7 @@ function buildTurnViewPayload(player, payload) {
       const src = next.inventories[camp] || {};
       const slots = cloneTurnObstacleSlots(src.roundSlots).map((slot) => ({
         ...slot,
-        layout: slot.type === 'mirror'
-          ? normalizeObstacleLayout(slot.type, slot.layout, slot.count)
-          : toPlayerViewLayout(player, normalizeObstacleLayout(slot.type, slot.layout, slot.count)),
+        layout: toPlayerViewLayout(player, normalizeObstacleLayout(slot.type, slot.layout, slot.count)),
         mirrorDir: toPlayerViewMirrorDir(player, slot.mirrorDir),
       }));
       inventories[getTurnViewCamp(player, camp)] = {
@@ -869,9 +871,6 @@ function cloneTurnObstacleSlots(source) {
 }
 
 function buildObstacleLayout(type, count) {
-  if (type === 'mirror') {
-    return [{ x: 0, y: 0 }];
-  }
   const safeCount = clamp(Math.round(Number(count) || 1), 1, TURN_CONFIG.obstacleSlotMaxResources);
   const candidates = TURN_OBSTACLE_LAYOUT_LIBRARY[safeCount] || TURN_OBSTACLE_LAYOUT_LIBRARY[1];
   const picked = candidates[Math.floor(Math.random() * candidates.length)] || TURN_OBSTACLE_LAYOUT_LIBRARY[1][0];
@@ -881,9 +880,6 @@ function buildObstacleLayout(type, count) {
 function normalizeObstacleLayout(type, layout, count) {
   if (type === 'blood') {
     type = 'bleed';
-  }
-  if (type === 'mirror') {
-    return [{ x: 0, y: 0 }];
   }
   if (!Array.isArray(layout) || layout.length <= 0) {
     return buildObstacleLayout(type, count);
@@ -911,6 +907,10 @@ function getObstacleMaxHp(slotType, resourceCount) {
     const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
     const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
     return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+  }
+  if (slotType === 'mirror') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.mirror;
+    return Math.max(1, Number(rule && rule.baseHp) || 10);
   }
   if (slotType === 'exp') {
     const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.exp;
@@ -946,6 +946,10 @@ function getObstacleMaxHp(slotType, resourceCount) {
 }
 
 function getObstacleCellMaxHp(slotType) {
+  if (slotType === 'mirror') {
+    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.mirror;
+    return Math.max(1, Number(rule && rule.baseHp) || 10);
+  }
   if (slotType === 'normal') {
     const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.normal;
     return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
@@ -1083,9 +1087,7 @@ function createTurnRoundSlots(player, roomState, displayRound) {
       count,
       layout,
       shapeKey,
-      mirrorDir: type === 'mirror'
-        ? TURN_MIRROR_DIRECTIONS[Math.abs((roomState.seed || Date.now()) + player.playerId + displayRound + index) % TURN_MIRROR_DIRECTIONS.length]
-        : '',
+      mirrorDir: '',
       placed: false,
       placedObstacleId: '',
     };
@@ -1220,8 +1222,7 @@ function refreshTurnObstacleSlotShape(slot, playerId = 0, roomState = null) {
   slot.layout = buildObstacleLayout(slot.type, slot.count);
   slot.shapeKey = getObstacleLayoutKey(slot.layout);
   if (slot.type === 'mirror') {
-    const seed = (roomState ? roomState.seed : Date.now()) + playerId + Math.floor(Math.random() * 7);
-    slot.mirrorDir = TURN_MIRROR_DIRECTIONS[Math.abs(seed) % TURN_MIRROR_DIRECTIONS.length];
+    slot.mirrorDir = '';
   }
 }
 
@@ -2004,7 +2005,7 @@ function handleTurnBuildAction(ws, msg) {
       layout: normalizeObstacleLayout(slotType, slot.layout, resourceCount),
       cellHp: buildObstacleCellHp(slotType, resourceCount, normalizeObstacleLayout(slotType, slot.layout, resourceCount).length),
       shapeKey: slot.shapeKey || getObstacleLayoutKey(slot.layout),
-      mirrorDir: slotType === 'mirror' ? normalizeMirrorDirection(slot.mirrorDir) : '',
+      mirrorDir: '',
       placedByCamp: player.camp,
     };
     slot.placed = true;

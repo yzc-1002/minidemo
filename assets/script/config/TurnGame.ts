@@ -147,6 +147,7 @@ export interface TurnGameConfig {
     obstacleMaxHp: number;
     obstacleHpRules: {
         normal: TurnObstacleHpRuleConfig;
+        mirror: TurnObstacleHpRuleConfig;
         exp: TurnObstacleHpRuleConfig;
         energy: TurnObstacleHpRuleConfig;
         bleed: TurnObstacleHpRuleConfig;
@@ -220,6 +221,10 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         normal: {
             baseHp: 10,
             maxHp: 50,
+        },
+        mirror: {
+            baseHp: 10,
+            maxHp: 10,
         },
         exp: {
             baseHp: 10,
@@ -316,7 +321,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     bloodBlockHealPerStack: 1,
     obstacleSlots: [
         { type: "normal", name: "普通方块" },
-        { type: "mirror", name: "镜面墙" },
+        { type: "mirror", name: "反弹块" },
         { type: "exp", name: "经验墙" },
         { type: "energy", name: "能量墙" },
         { type: "bleed", name: "滴血块" },

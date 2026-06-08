@@ -599,6 +599,10 @@ export default class TurnBattleMap extends cc.Component {
             let settlement = buildTurnSettlementBondSnapshot({ bleed: safeCount }, null, this._config);
             return "HP " + maxHp + " 禁疗" + settlement.blockedHeal + " x" + settlement.bleedMultiplier;
         }
+        if (slotType === "mirror") {
+            let maxHp = this.getObstacleCellMaxHp(slotType);
+            return "每格HP " + maxHp + " 命中反弹并销毁";
+        }
         if (slotType === "bullet") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let attack = buildTurnAttackBondSnapshot({ bullet: safeCount }, null, this._config);
@@ -1179,7 +1183,8 @@ export default class TurnBattleMap extends cc.Component {
             let cellIndex = hitInfo.cellIndex;
             let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, bullet.damage);
             if (obstacle.slotType === "mirror") {
-                this.reflectBulletOffMirror(bullet, hitInfo.rect, obstacle.mirrorDir);
+                this.reflectBulletOffRect(bullet, hitInfo.rect);
+                bullet.bounceLeft = Math.max(0, bullet.bounceLeft - 1);
             }
             if (this._serverMode && bullet.camp === "A" && appliedDamage > 0) {
                 this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
@@ -1202,7 +1207,7 @@ export default class TurnBattleMap extends cc.Component {
             this.redrawObstacle(obstacle);
             this.refreshObstacleHpLabel(obstacle);
             if (obstacle.hp > 0) {
-                return obstacle.slotType !== "mirror";
+                return true;
             }
             let expGain = this.getObstacleDestroyExp(obstacle);
             obstacle.node.destroy();
@@ -1292,21 +1297,6 @@ export default class TurnBattleMap extends cc.Component {
                 bullet.node.y = nearestY + ny * pushDist;
             }
         }
-        bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
-    }
-
-    private reflectBulletOffMirror(bullet: TurnBulletState, rect: cc.Rect, direction: TurnMirrorDirection | "") {
-        let dir = this.normalizeMirrorDirection(direction || "bl");
-        if (dir === "bl" || dir === "tr") {
-            bullet.dir = cc.v2(-bullet.dir.y, -bullet.dir.x).normalize();
-        }
-        else {
-            bullet.dir = cc.v2(bullet.dir.y, bullet.dir.x).normalize();
-        }
-        let position = this.getNodePosition(bullet.node);
-        let nearestX = Math.max(rect.x, Math.min(position.x, rect.x + rect.width));
-        let nearestY = Math.max(rect.y, Math.min(position.y, rect.y + rect.height));
-        bullet.node.setPosition(nearestX + bullet.dir.x * (bullet.radius + 2), nearestY + bullet.dir.y * (bullet.radius + 2));
         bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
     }
 
@@ -1506,10 +1496,6 @@ export default class TurnBattleMap extends cc.Component {
             let cell = cells[i];
             let x = cell.x * cellSize - cellSize / 2;
             let y = cell.y * cellSize - cellSize / 2;
-            if (slotType === "mirror") {
-                this.drawMirrorCell(graphics, x, y, cellSize, valid, mirrorDir || "bl");
-                continue;
-            }
             graphics.fillColor = this.getObstacleFillColor(camp, valid, slotType);
             graphics.roundRect(x, y, cellSize, cellSize, 8);
             graphics.fill();
@@ -1517,7 +1503,7 @@ export default class TurnBattleMap extends cc.Component {
             graphics.lineWidth = 2;
             graphics.roundRect(x, y, cellSize, cellSize, 8);
             graphics.stroke();
-            if (slotType === "exp" || slotType === "energy") {
+            if (slotType === "exp" || slotType === "energy" || slotType === "mirror") {
                 this.drawObstacleIcon(graphics, slotType, x, y, cellSize);
             }
         }
@@ -1784,13 +1770,13 @@ export default class TurnBattleMap extends cc.Component {
         slot.layout = this.buildLayoutForSlot(slot.type, slot.count);
         slot.shapeKey = this.getLayoutKey(slot.layout);
         if (slot.type === "mirror") {
-            slot.mirrorDir = this.pickMirrorDirection(slot.count + Math.floor(Math.random() * 8));
+            slot.mirrorDir = "";
         }
     }
 
     private getSlotDisplayName(type: TurnObstacleResourceType): string {
         if (type === "mirror") {
-            return "镜面墙";
+            return "反弹块";
         }
         if (type === "exp") {
             return "经验墙";
@@ -1835,7 +1821,7 @@ export default class TurnBattleMap extends cc.Component {
                 count: counts[i],
                 layout: layout,
                 shapeKey: this.getLayoutKey(layout),
-                mirrorDir: type === "mirror" ? this.pickMirrorDirection(roundIndex + i) : "",
+                mirrorDir: "",
                 placed: false,
                 placedObstacleId: "",
             });
@@ -1878,9 +1864,6 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private normalizeObstacleLayout(slotType: TurnObstacleResourceType, layout?: cc.Vec2[]): cc.Vec2[] {
-        if (slotType === "mirror") {
-            return [cc.v2(0, 0)];
-        }
         if (layout && layout.length > 0) {
             return layout;
         }
@@ -1888,9 +1871,6 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private buildLayoutFromSnapshot(slotType: TurnObstacleResourceType, layout: any, count: number): cc.Vec2[] {
-        if (slotType === "mirror") {
-            return [cc.v2(0, 0)];
-        }
         if (!Array.isArray(layout) || layout.length <= 0) {
             return this.buildLayoutForSlot(slotType, count);
         }
@@ -1905,9 +1885,6 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private buildLayoutForSlot(slotType: TurnObstacleResourceType, count: number): cc.Vec2[] {
-        if (slotType === "mirror") {
-            return [cc.v2(0, 0)];
-        }
         let safeCount = Math.max(1, Math.min(this._config.obstacleSlotMaxResources, count));
         let candidates = OBSTACLE_LAYOUT_LIBRARY[safeCount] || OBSTACLE_LAYOUT_LIBRARY[1];
         if (!candidates || candidates.length <= 0) {
@@ -2081,6 +2058,12 @@ export default class TurnBattleMap extends cc.Component {
             graphics.lineTo(cx - 2, cy + 1);
             graphics.lineTo(cx + 5, cy - 8);
         }
+        else if (slotType === "mirror") {
+            graphics.moveTo(cx - 8, cy - 8);
+            graphics.lineTo(cx + 8, cy + 8);
+            graphics.moveTo(cx - 8, cy + 8);
+            graphics.lineTo(cx + 8, cy - 8);
+        }
         else if (slotType === "bleed") {
             graphics.circle(cx, cy, 6);
         }
@@ -2094,41 +2077,6 @@ export default class TurnBattleMap extends cc.Component {
             graphics.lineTo(cx + 7, cy - 7);
             graphics.moveTo(cx - 7, cy - 7);
             graphics.lineTo(cx + 7, cy + 7);
-        }
-        graphics.stroke();
-    }
-
-    private drawMirrorCell(graphics: cc.Graphics, x: number, y: number, size: number, valid: boolean, direction: TurnMirrorDirection) {
-        graphics.fillColor = valid ? new cc.Color(180, 196, 236, 255) : new cc.Color(210, 60, 60, 255);
-        if (direction === "bl") {
-            graphics.moveTo(x, y);
-            graphics.lineTo(x + size, y);
-            graphics.lineTo(x, y + size);
-        }
-        else if (direction === "br") {
-            graphics.moveTo(x, y);
-            graphics.lineTo(x + size, y);
-            graphics.lineTo(x + size, y + size);
-        }
-        else if (direction === "tl") {
-            graphics.moveTo(x, y);
-            graphics.lineTo(x, y + size);
-            graphics.lineTo(x + size, y + size);
-        }
-        else {
-            graphics.moveTo(x, y + size);
-            graphics.lineTo(x + size, y + size);
-            graphics.lineTo(x + size, y);
-        }
-        graphics.close();
-        graphics.fill();
-        graphics.strokeColor = new cc.Color(255, 255, 255, 220);
-        graphics.lineWidth = 2;
-        graphics.moveTo(x, y);
-        graphics.lineTo(x + size, y + size);
-        if (direction === "br" || direction === "tl") {
-            graphics.moveTo(x, y + size);
-            graphics.lineTo(x + size, y);
         }
         graphics.stroke();
     }
@@ -2956,6 +2904,10 @@ export default class TurnBattleMap extends cc.Component {
             let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
             return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
         }
+        if (slotType === "mirror") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.mirror;
+            return Math.max(1, Number(rule && rule.baseHp) || 10);
+        }
         if (slotType === "exp") {
             let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.exp;
             let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
@@ -2990,6 +2942,10 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private getObstacleCellMaxHp(slotType: TurnObstacleResourceType): number {
+        if (slotType === "mirror") {
+            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.mirror;
+            return Math.max(1, Number(rule && rule.baseHp) || 10);
+        }
         if (slotType === "normal") {
             let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.normal;
             return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);

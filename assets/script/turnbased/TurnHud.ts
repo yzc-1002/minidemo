@@ -574,7 +574,7 @@ export default class TurnHud extends cc.Component {
 
     private getSlotDisplayName(type: TurnObstacleResourceType, fallback?: string): string {
         if (type === "mirror") {
-            return "镜面墙";
+            return "反弹块";
         }
         if (type === "exp") {
             return "经验墙";
