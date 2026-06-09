@@ -405,15 +405,14 @@ const TURN_CONFIG = {
         name: '扩散',
         minRadius: 58,
         maxRadius: 84,
-        spreadChildCount: 2,
-        spreadAngle: 18,
-        spreadDamageScale: 0.6,
+        spreadSplitCount: 3,
+        spreadSplitStepAngle: 15,
       },
       damageBoost: {
         name: '增伤',
         minRadius: 52,
         maxRadius: 78,
-        damageMultiplier: 1.6,
+        damageBoostMaxMultiplier: 3,
       },
     },
   },
@@ -1223,6 +1222,39 @@ function buildTurnAttackSnapshot(roomState, player) {
   return buildTurnAttackSnapshotFromCounts(buildTurnBondCountsFromRoom(roomState, player.camp), player);
 }
 
+function createTurnServerBullet(roomState, camp, pose, attackSnapshot) {
+  const from = {
+    x: Number(pose && pose.x) || 0,
+    y: Number(pose && pose.y) || 0,
+  };
+  const aim = {
+    x: Number(pose && pose.aimX) || from.x,
+    y: Number(pose && pose.aimY) || from.y,
+  };
+  const dir = normalizeVec({
+    x: aim.x - from.x,
+    y: aim.y - from.y,
+  }, { x: 0, y: camp === 'A' ? 1 : -1 });
+  const start = addVec(from, mulVec(dir, 44));
+  return cloneTurnBulletState({
+    position: start,
+    dir,
+    remainingDamage: Math.max(1, Number(attackSnapshot && attackSnapshot.bulletDamage) || Number(TURN_CONFIG.bulletDamage) || 1),
+    baseDamage: Math.max(1, Number(attackSnapshot && attackSnapshot.bulletDamage) || Number(TURN_CONFIG.bulletDamage) || 1),
+    damageMultiplier: 1,
+    damageBoostLevel: 1,
+    remainingBounce: Math.max(0, Number(attackSnapshot && attackSnapshot.bulletBounce) || 0),
+    hasBounced: false,
+    currentSpreadZoneIds: [],
+    currentDamageBoostZoneIds: [],
+    damageBoostAppliedZoneIds: [],
+    spreadTriggeredZoneIds: [],
+    attackSnapshot: attackSnapshot ? { ...attackSnapshot } : null,
+    camp,
+    lifeLeft: 3.5,
+  });
+}
+
 function buildTurnSettlementSnapshot(roomState, camp) {
   const ownCounts = buildTurnBondCountsFromRoom(roomState, camp);
   const enemyCounts = buildTurnBondCountsFromRoom(roomState, getEnemyCamp(camp));
@@ -1494,6 +1526,76 @@ function randomTurnAssistZoneRadius(zoneType) {
   const minRadius = Math.max(1, Number(config.minRadius) || 1);
   const maxRadius = Math.max(minRadius, Number(config.maxRadius) || minRadius);
   return Math.round(randomBetween(minRadius, maxRadius));
+}
+
+function getTurnZoneCenter(zone) {
+  return {
+    x: Number(zone && zone.x) || 0,
+    y: Number(zone && zone.y) || 0,
+  };
+}
+
+function vecLength(value) {
+  const x = Number(value && value.x) || 0;
+  const y = Number(value && value.y) || 0;
+  return Math.sqrt(x * x + y * y);
+}
+
+function normalizeVec(value, fallback) {
+  const x = Number(value && value.x) || 0;
+  const y = Number(value && value.y) || 0;
+  const length = Math.sqrt(x * x + y * y);
+  if (length <= 0.0001) {
+    return fallback ? { x: fallback.x, y: fallback.y } : { x: 1, y: 0 };
+  }
+  return {
+    x: x / length,
+    y: y / length,
+  };
+}
+
+function addVec(a, b) {
+  return {
+    x: (Number(a && a.x) || 0) + (Number(b && b.x) || 0),
+    y: (Number(a && a.y) || 0) + (Number(b && b.y) || 0),
+  };
+}
+
+function mulVec(value, scalar) {
+  return {
+    x: (Number(value && value.x) || 0) * scalar,
+    y: (Number(value && value.y) || 0) * scalar,
+  };
+}
+
+function cloneTurnBulletState(bullet) {
+  return {
+    position: { x: Number(bullet && bullet.position && bullet.position.x) || 0, y: Number(bullet && bullet.position && bullet.position.y) || 0 },
+    dir: normalizeVec(bullet && bullet.dir, { x: 1, y: 0 }),
+    remainingDamage: Math.max(0, Number(bullet && bullet.remainingDamage) || 0),
+    baseDamage: Math.max(0, Number(bullet && bullet.baseDamage) || 0),
+    damageMultiplier: Math.max(1, Number(bullet && bullet.damageMultiplier) || 1),
+    damageBoostLevel: Math.max(1, Math.floor(Number(bullet && bullet.damageBoostLevel) || 1)),
+    remainingBounce: Math.max(0, Math.floor(Number(bullet && bullet.remainingBounce) || 0)),
+    hasBounced: !!(bullet && bullet.hasBounced),
+    currentSpreadZoneIds: Array.isArray(bullet && bullet.currentSpreadZoneIds) ? bullet.currentSpreadZoneIds.slice() : [],
+    currentDamageBoostZoneIds: Array.isArray(bullet && bullet.currentDamageBoostZoneIds) ? bullet.currentDamageBoostZoneIds.slice() : [],
+    damageBoostAppliedZoneIds: Array.isArray(bullet && bullet.damageBoostAppliedZoneIds) ? bullet.damageBoostAppliedZoneIds.slice() : [],
+    spreadTriggeredZoneIds: Array.isArray(bullet && bullet.spreadTriggeredZoneIds) ? bullet.spreadTriggeredZoneIds.slice() : [],
+    attackSnapshot: bullet && bullet.attackSnapshot ? { ...bullet.attackSnapshot } : null,
+    camp: bullet && bullet.camp ? bullet.camp : 'A',
+    lifeLeft: Number.isFinite(Number(bullet && bullet.lifeLeft)) ? Number(bullet.lifeLeft) : 3.5,
+  };
+}
+
+function rotateDirection(dir, degrees) {
+  const radians = degrees * Math.PI / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return normalizeVec({
+    x: dir.x * cos - dir.y * sin,
+    y: dir.x * sin + dir.y * cos,
+  }, dir);
 }
 
 function isTurnAssistZonePositionValid(roomState, point, radius) {
@@ -2320,6 +2422,297 @@ function applyTurnRoundSettlement(roomState) {
   });
 }
 
+function isPointInsideTurnAssistZone(point, zone) {
+  if (!point || !zone) {
+    return false;
+  }
+  const radius = Math.max(0, Number(zone.radius) || 0);
+  if (radius <= 0) {
+    return false;
+  }
+  return distanceBetweenPoints(point, getTurnZoneCenter(zone)) <= radius;
+}
+
+function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
+  bullet.remainingDamage = Math.max(0, Number(bullet.baseDamage) || 0);
+  let nextSpreadZoneIds = [];
+  let nextDamageBoostZoneIds = [];
+  const zones = Array.isArray(roomState && roomState.zones) ? roomState.zones : [];
+  for (let i = 0; i < zones.length; i++) {
+    const zone = zones[i];
+    if (!zone) {
+      continue;
+    }
+    const radius = Math.max(0, Number(zone.radius) || 0);
+    if (radius <= 0 || !isPointInsideTurnAssistZone(bullet.position, zone)) {
+      continue;
+    }
+    if (zone.zoneType === 'blackHole') {
+      const config = getTurnAssistZoneTypeConfig('blackHole');
+      const center = getTurnZoneCenter(zone);
+      const offset = {
+        x: center.x - bullet.position.x,
+        y: center.y - bullet.position.y,
+      };
+      const distance = vecLength(offset);
+      if (distance > 1 && distance <= radius) {
+        const ratio = 1 - distance / radius;
+        const strength = Math.max(0, Number(config.blackHoleStrength) || 0);
+        bullet.dir = normalizeVec(addVec(bullet.dir, mulVec(normalizeVec(offset, bullet.dir), strength * ratio * dt)), bullet.dir);
+      }
+      continue;
+    }
+    if (zone.zoneType === 'damageBoost') {
+      nextDamageBoostZoneIds.push(zone.id);
+      continue;
+    }
+    if (zone.zoneType === 'spread') {
+      nextSpreadZoneIds.push(zone.id);
+    }
+  }
+  for (let i = 0; i < bullet.currentSpreadZoneIds.length; i++) {
+    const zoneId = bullet.currentSpreadZoneIds[i];
+    if (nextSpreadZoneIds.indexOf(zoneId) >= 0) {
+      continue;
+    }
+    const zone = zones.find((item) => item && item.id === zoneId && item.zoneType === 'spread');
+    if (zone) {
+      bullet.spreadTriggeredZoneIds.push(zoneId);
+      spawnTurnSpreadBullets(bullet, zone, bulletQueue);
+      break;
+    }
+  }
+  for (let i = 0; i < bullet.currentDamageBoostZoneIds.length; i++) {
+    const zoneId = bullet.currentDamageBoostZoneIds[i];
+    if (nextDamageBoostZoneIds.indexOf(zoneId) >= 0) {
+      continue;
+    }
+    applyTurnDamageBoostPassThrough(bullet, zoneId);
+  }
+  bullet.currentSpreadZoneIds = nextSpreadZoneIds;
+  bullet.currentDamageBoostZoneIds = nextDamageBoostZoneIds;
+  bullet.remainingDamage = Math.max(0, Math.round((Number(bullet.baseDamage) || 0) * Math.max(1, Number(bullet.damageMultiplier) || 1)));
+}
+
+function spawnTurnSpreadBullets(sourceBullet, zone, bulletQueue) {
+  const config = getTurnAssistZoneTypeConfig('spread');
+  const splitCount = Math.max(1, Math.floor(Number(config.spreadSplitCount) || 1));
+  const stepAngle = Math.max(0, Number(config.spreadSplitStepAngle) || 0);
+  if (splitCount <= 1) {
+    return;
+  }
+  const centerIndex = (splitCount - 1) * 0.5;
+  for (let i = 0; i < splitCount; i++) {
+    const nextBullet = cloneTurnBulletState(sourceBullet);
+    nextBullet.dir = rotateDirection(sourceBullet.dir, (i - centerIndex) * stepAngle);
+    nextBullet.currentSpreadZoneIds = [];
+    nextBullet.currentDamageBoostZoneIds = [];
+    nextBullet.position = {
+      x: sourceBullet.position.x + nextBullet.dir.x * 10,
+      y: sourceBullet.position.y + nextBullet.dir.y * 10,
+    };
+    bulletQueue.push(nextBullet);
+  }
+}
+
+function applyTurnDamageBoostPassThrough(bullet, zoneId) {
+  const config = getTurnAssistZoneTypeConfig('damageBoost');
+  const maxMultiplier = Math.max(1, Math.floor(Number(config.damageBoostMaxMultiplier) || 1));
+  const nextLevel = Math.min(maxMultiplier, Math.max(1, Math.floor(Number(bullet.damageBoostLevel) || 1)) + 1);
+  bullet.damageBoostLevel = nextLevel;
+  bullet.damageMultiplier = nextLevel;
+  bullet.remainingDamage = Math.max(0, Math.round((Number(bullet.baseDamage) || 0) * bullet.damageMultiplier));
+  if (bullet.damageBoostAppliedZoneIds.indexOf(zoneId) < 0) {
+    bullet.damageBoostAppliedZoneIds.push(zoneId);
+  }
+}
+
+function getTurnDynamicObstacleHit(roomState, point, radius) {
+  const obstacleIds = Object.keys(roomState && roomState.obstacles ? roomState.obstacles : {});
+  for (let i = 0; i < obstacleIds.length; i++) {
+    const obstacle = roomState.obstacles[obstacleIds[i]];
+    const rects = getTurnObstacleRectsAt(obstacle.x, obstacle.y, obstacle.layout);
+    for (let j = 0; j < rects.length; j++) {
+      if (circleRectIntersects(point, radius, rects[j])) {
+        return {
+          obstacle,
+          cellIndex: j,
+          rect: rects[j],
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function reflectTurnBulletDir(bullet, rect) {
+  const position = bullet.position;
+  const nearestX = clamp(position.x, rect.x, rect.x + rect.width);
+  const nearestY = clamp(position.y, rect.y, rect.y + rect.height);
+  const dx = position.x - nearestX;
+  const dy = position.y - nearestY;
+  let nextDir = { x: bullet.dir.x, y: bullet.dir.y };
+  if (dx === 0 && dy === 0) {
+    const leftDist = Math.abs(position.x - rect.x);
+    const rightDist = Math.abs(rect.x + rect.width - position.x);
+    const bottomDist = Math.abs(position.y - rect.y);
+    const topDist = Math.abs(rect.y + rect.height - position.y);
+    const minDist = Math.min(leftDist, rightDist, bottomDist, topDist);
+    if (minDist === leftDist || minDist === rightDist) {
+      nextDir.x *= -1;
+    } else {
+      nextDir.y *= -1;
+    }
+  } else if (Math.abs(dx) >= Math.abs(dy)) {
+    nextDir.x *= -1;
+  } else {
+    nextDir.y *= -1;
+  }
+  bullet.dir = normalizeVec(nextDir, bullet.dir);
+}
+
+function resolveTurnBulletHit(roomState, bullet, result) {
+  const dynamicHit = getTurnDynamicObstacleHit(roomState, bullet.position, Number(TURN_CONFIG.bulletRadius) || 10);
+  if (dynamicHit) {
+    const applied = applyObstacleDamage(roomState, dynamicHit.obstacle.id, dynamicHit.cellIndex, bullet.remainingDamage);
+    if (applied) {
+      result.hitType = result.hitType || 'obstacle';
+      result.obstacleHits.push({
+        obstacleId: dynamicHit.obstacle.id,
+        cellIndex: dynamicHit.cellIndex,
+        damage: bullet.remainingDamage,
+      });
+      if (applied.destroyedCell) {
+        result.destroyedCells.push({
+          obstacleId: dynamicHit.obstacle.id,
+          cellIndex: dynamicHit.cellIndex,
+        });
+      }
+      if (applied.destroyedObstacle && result.destroyedIds.indexOf(dynamicHit.obstacle.id) < 0) {
+        result.destroyedIds.push(dynamicHit.obstacle.id);
+      }
+    }
+    if (dynamicHit.obstacle.slotType === 'mirror' && bullet.remainingBounce > 0) {
+      reflectTurnBulletDir(bullet, dynamicHit.rect);
+      bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
+      bullet.hasBounced = true;
+      return false;
+    }
+    return true;
+  }
+
+  const staticObstacles = getTurnActiveStaticObstacles(roomState);
+  for (let i = 0; i < staticObstacles.length; i++) {
+    const obstacle = staticObstacles[i];
+    if (!circleRectIntersects(bullet.position, Number(TURN_CONFIG.bulletRadius) || 10, obstacle)) {
+      continue;
+    }
+    if (bullet.remainingBounce > 0) {
+      reflectTurnBulletDir(bullet, obstacle);
+      bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
+      bullet.hasBounced = true;
+      return false;
+    }
+    return true;
+  }
+
+  const targetCamp = getEnemyCamp(bullet.camp);
+  const crystal = roomState && roomState.crystals ? roomState.crystals[targetCamp] : null;
+  const crystalCenter = targetCamp === 'A' ? { x: 0, y: -420 } : { x: 0, y: 420 };
+  const crystalRadius = 28;
+  if (crystal && distanceBetweenPoints(bullet.position, crystalCenter) <= crystalRadius + (Number(TURN_CONFIG.bulletRadius) || 10)) {
+    result.hitType = 'crystal';
+    result.targetCamp = targetCamp;
+    result.damage += Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0));
+    return true;
+  }
+  return false;
+}
+
+function keepTurnBulletInMap(bullet) {
+  const rect = TURN_MAP_LAYOUT.mapRect;
+  const radius = Number(TURN_CONFIG.bulletRadius) || 10;
+  const minX = rect.minX + radius;
+  const maxX = rect.maxX - radius;
+  const minY = rect.minY + radius;
+  const maxY = rect.maxY - radius;
+  let bounced = false;
+  if (bullet.position.x < minX || bullet.position.x > maxX) {
+    if (bullet.remainingBounce <= 0) {
+      return false;
+    }
+    bullet.dir.x *= -1;
+    bullet.position.x = clamp(bullet.position.x, minX, maxX);
+    bounced = true;
+  }
+  if (bullet.position.y < minY || bullet.position.y > maxY) {
+    if (bullet.remainingBounce <= 0) {
+      return false;
+    }
+    bullet.dir.y *= -1;
+    bullet.position.y = clamp(bullet.position.y, minY, maxY);
+    bounced = true;
+  }
+  if (bounced) {
+    bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
+    bullet.hasBounced = true;
+    bullet.dir = normalizeVec(bullet.dir, bullet.dir);
+  }
+  return true;
+}
+
+function simulateTurnBulletResults(roomState, player) {
+  const attack = roomState && roomState.currentAttack;
+  if (!roomState || !player || !attack || !attack.pose || !attack.snapshot) {
+    return {
+      hitType: '',
+      targetCamp: '',
+      targetId: '',
+      damage: 0,
+      obstacleHits: [],
+      destroyedIds: [],
+      destroyedCells: [],
+      expGain: 0,
+    };
+  }
+  const bulletQueue = [];
+  const totalShots = Math.max(1, Number(attack.snapshot.totalShots) || 1);
+  for (let i = 0; i < totalShots; i++) {
+    bulletQueue.push(createTurnServerBullet(roomState, player.camp, attack.pose, attack.snapshot));
+  }
+  const result = {
+    hitType: '',
+    targetCamp: '',
+    targetId: '',
+    damage: 0,
+    obstacleHits: [],
+    destroyedIds: [],
+    destroyedCells: [],
+    expGain: 0,
+  };
+  const dt = 1 / 20;
+  const bulletSpeed = 620;
+  const maxTicks = 200;
+  while (bulletQueue.length > 0) {
+    const bullet = bulletQueue.shift();
+    for (let tick = 0; tick < maxTicks; tick++) {
+      bullet.lifeLeft -= dt;
+      if (bullet.lifeLeft <= 0) {
+        break;
+      }
+      applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue);
+      bullet.position = addVec(bullet.position, mulVec(bullet.dir, bulletSpeed * dt));
+      if (!keepTurnBulletInMap(bullet)) {
+        break;
+      }
+      if (resolveTurnBulletHit(roomState, bullet, result)) {
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 function handleTurnBulletResult(ws, msg) {
   const roomState = getTurnRoom(ws);
   const player = getTurnPlayer(roomState, ws);
@@ -2327,65 +2720,15 @@ function handleTurnBulletResult(ws, msg) {
     sendTurnError(ws, '当前不能提交弹道结果', 'invalidPhase');
     return;
   }
-  const payload = getTurnActionPayload(msg);
-  const obstacleHits = Array.isArray(payload.obstacleHits) ? payload.obstacleHits.slice(0, 40) : [];
-  const destroyedIds = Array.isArray(payload.destroyedIds) ? payload.destroyedIds.slice(0, 20).map(String) : [];
-  const destroyedCells = Array.isArray(payload.destroyedCells) ? payload.destroyedCells.slice(0, 40) : [];
+  const simulated = simulateTurnBulletResults(roomState, player);
   let awardedExp = 0;
-  const handledDestroyedIds = new Set();
-  obstacleHits.forEach((item) => {
-    const obstacleId = item && item.obstacleId != null ? String(item.obstacleId) : '';
-    const cellIndex = Math.max(0, Math.floor(Number(item && item.cellIndex) || 0));
-    const damage = Math.max(0, Math.floor(Number(item && item.damage) || 0));
-    const applied = applyObstacleDamage(roomState, obstacleId, cellIndex, damage);
-    if (!applied) {
-      return;
-    }
-    if (applied.destroyedObstacle && !handledDestroyedIds.has(obstacleId)) {
-      handledDestroyedIds.add(obstacleId);
-      awardedExp += TURN_CONFIG.obstacleHitExp;
-    }
-  });
-  destroyedIds.forEach((id) => {
-    if (!id || handledDestroyedIds.has(id) || !roomState.obstacles[id]) {
-      return;
-    }
-    const obstacle = roomState.obstacles[id];
-    const owner = roomState.players.find((item) => item.camp === obstacle.camp);
-    const slot = owner ? findTurnRoundSlot(owner, obstacle.originSlotId) : null;
-    if (slot && slot.placedObstacleId === id) {
-      slot.placedObstacleId = '';
-      slot.placed = false;
-    }
-    delete roomState.obstacles[id];
-    handledDestroyedIds.add(id);
-    awardedExp += TURN_CONFIG.obstacleHitExp;
-  });
-
-  const hitType = String(payload.hitType || '');
-  // `bulletResult` comes from the client in the sender's local A/B view.
-  // Convert it back to canonical server camps before applying damage.
-  const targetCamp = TURN_CAMPS.indexOf(payload.targetCamp) >= 0
-    ? toCanonicalCamp(player, payload.targetCamp)
-    : getEnemyCamp(player.camp);
-  const maxDamageBoost = Math.max(1, Number(getTurnAssistZoneTypeConfig('damageBoost').damageMultiplier) || 1);
-  const spreadConfig = getTurnAssistZoneTypeConfig('spread');
-  const maxSpreadDamageScale = Math.max(0, Number(spreadConfig.spreadDamageScale) || 0);
-  const maxSpreadChildCount = Math.max(0, Math.floor(Number(spreadConfig.spreadChildCount) || 0));
-  const maxCrystalDamageMultiplier = Math.max(maxDamageBoost, 1 + maxSpreadChildCount * maxSpreadDamageScale);
-  const attackDamageCap = roomState.currentAttack && roomState.currentAttack.snapshot
-    ? Math.max(
-        1,
-        Math.ceil((Number(roomState.currentAttack.snapshot.bulletDamage) || Number(TURN_CONFIG.bulletDamage) || 20) * maxCrystalDamageMultiplier),
-      )
-    : TURN_CONFIG.maxBulletResultDamage + Math.max(0, Number(player.upgrades.damageAdd) || 0);
-  let damage = clamp(Math.floor(Number(payload.damage) || 0), 0, attackDamageCap);
-  if (hitType === 'crystal' && targetCamp !== player.camp && roomState.crystals[targetCamp]) {
-    const crystal = roomState.crystals[targetCamp];
-    crystal.hp = Math.max(0, crystal.hp - damage);
+  if (simulated.hitType === 'crystal' && simulated.targetCamp && roomState.crystals[simulated.targetCamp]) {
+    roomState.crystals[simulated.targetCamp].hp = Math.max(0, roomState.crystals[simulated.targetCamp].hp - simulated.damage);
     awardedExp += TURN_CONFIG.crystalHitExp;
-  } else {
-    damage = 0;
+  }
+  if (simulated.obstacleHits.length > 0) {
+    const destroyedObstacleIds = new Set(simulated.destroyedIds);
+    awardedExp += destroyedObstacleIds.size * TURN_CONFIG.obstacleHitExp;
   }
   player.exp += awardedExp;
 
@@ -2395,12 +2738,12 @@ function handleTurnBulletResult(ws, msg) {
     camp: player.camp,
     playerId: player.playerId,
     result: {
-      hitType,
-      targetId: payload.targetId == null ? '' : String(payload.targetId),
-      targetCamp,
-      damage,
+      hitType: simulated.hitType,
+      targetId: simulated.targetId,
+      targetCamp: simulated.targetCamp,
+      damage: simulated.damage,
       expGain: awardedExp,
-      destroyedIds,
+      destroyedIds: simulated.destroyedIds,
     },
   });
   broadcastTurnSnapshot(roomState);

@@ -10,10 +10,9 @@ export interface TurnAssistZoneTypeConfig {
     minRadius: number;
     maxRadius: number;
     blackHoleStrength?: number;
-    damageMultiplier?: number;
-    spreadChildCount?: number;
-    spreadAngle?: number;
-    spreadDamageScale?: number;
+    damageBoostMaxMultiplier?: number;
+    spreadSplitCount?: number;
+    spreadSplitStepAngle?: number;
 }
 
 export interface TurnAssistZoneSpawnRuleConfig {
@@ -261,15 +260,14 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
                 name: "扩散",
                 minRadius: 58,
                 maxRadius: 84,
-                spreadChildCount: 2,
-                spreadAngle: 18,
-                spreadDamageScale: 0.6,
+                spreadSplitCount: 3,
+                spreadSplitStepAngle: 15,
             },
             damage_boost: {
                 name: "增伤",
                 minRadius: 52,
                 maxRadius: 78,
-                damageMultiplier: 1.6,
+                damageBoostMaxMultiplier: 3,
             },
         },
     },

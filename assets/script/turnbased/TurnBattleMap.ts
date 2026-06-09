@@ -140,10 +140,15 @@ interface TurnBulletState {
     dir: cc.Vec2;
     damage: number;
     baseDamage: number;
+    damageMultiplier: number;
+    damageBoostLevel: number;
     speed: number;
     radius: number;
     lifeLeft: number;
     bounceLeft: number;
+    hasBounced: boolean;
+    currentSpreadZoneIds: string[];
+    currentDamageBoostZoneIds: string[];
     damageBoostAppliedZoneIds: string[];
     spreadTriggeredZoneIds: string[];
 }
@@ -1144,10 +1149,15 @@ export default class TurnBattleMap extends cc.Component {
             dir: dir,
             damage: damage,
             baseDamage: damage,
+            damageMultiplier: 1,
+            damageBoostLevel: 1,
             speed: this._config.bulletSpeed,
             radius: this._config.bulletRadius,
             lifeLeft: 3.5,
             bounceLeft: bounceLeft,
+            hasBounced: false,
+            currentSpreadZoneIds: [],
+            currentDamageBoostZoneIds: [],
             damageBoostAppliedZoneIds: [],
             spreadTriggeredZoneIds: [],
         });
@@ -1192,6 +1202,7 @@ export default class TurnBattleMap extends cc.Component {
             if (obstacle.slotType === "mirror") {
                 this.reflectBulletOffRect(bullet, hitInfo.rect);
                 bullet.bounceLeft = Math.max(0, bullet.bounceLeft - 1);
+                bullet.hasBounced = true;
             }
             if (this._serverMode && bullet.camp === "A" && appliedDamage > 0) {
                 this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
@@ -1259,6 +1270,7 @@ export default class TurnBattleMap extends cc.Component {
             if (bullet.bounceLeft > 0) {
                 this.reflectBulletOffRect(bullet, obstacle.rect);
                 bullet.bounceLeft -= 1;
+                bullet.hasBounced = true;
                 return false;
             }
             return true;
@@ -2150,6 +2162,8 @@ export default class TurnBattleMap extends cc.Component {
     private applyAssistZones(bullet: TurnBulletState, dt: number) {
         let bulletPosition = this.getNodePosition(bullet.node);
         bullet.damage = bullet.baseDamage;
+        let nextSpreadZoneIds: string[] = [];
+        let nextDamageBoostZoneIds: string[] = [];
         for (let i = 0; i < this._assistZones.length; i++) {
             let zone = this._assistZones[i];
             let zonePosition = zone.position || this.getNodePosition(zone.node);
@@ -2166,18 +2180,34 @@ export default class TurnBattleMap extends cc.Component {
                 bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
             }
             else if (zone.type === "damage_boost") {
-                let zoneConfig = getTurnAssistZoneTypeConfig(zone.type, this._config);
-                let damageMultiplier = Math.max(1, Number(zoneConfig.damageMultiplier) || 1);
-                bullet.damage = Math.max(bullet.damage, Math.round(bullet.baseDamage * damageMultiplier));
-                if (bullet.damageBoostAppliedZoneIds.indexOf(zone.id) < 0) {
-                    bullet.damageBoostAppliedZoneIds.push(zone.id);
-                }
+                nextDamageBoostZoneIds.push(zone.id);
             }
-            else if (zone.type === "spread" && bullet.spreadTriggeredZoneIds.indexOf(zone.id) < 0) {
-                bullet.spreadTriggeredZoneIds.push(zone.id);
-                this.spawnSpreadBulletsFromZone(bullet, zone);
+            else if (zone.type === "spread") {
+                nextSpreadZoneIds.push(zone.id);
             }
         }
+        for (let i = 0; i < bullet.currentSpreadZoneIds.length; i++) {
+            let zoneId = bullet.currentSpreadZoneIds[i];
+            if (nextSpreadZoneIds.indexOf(zoneId) >= 0) {
+                continue;
+            }
+            let spreadZone = this._assistZones.find((zone) => zone.id === zoneId && zone.type === "spread");
+            if (spreadZone) {
+                bullet.spreadTriggeredZoneIds.push(zoneId);
+                this.spawnSpreadBulletsFromZone(bullet, spreadZone);
+                break;
+            }
+        }
+        for (let i = 0; i < bullet.currentDamageBoostZoneIds.length; i++) {
+            let zoneId = bullet.currentDamageBoostZoneIds[i];
+            if (nextDamageBoostZoneIds.indexOf(zoneId) >= 0) {
+                continue;
+            }
+            this.applyDamageBoostPassThrough(bullet, zoneId);
+        }
+        bullet.currentSpreadZoneIds = nextSpreadZoneIds;
+        bullet.currentDamageBoostZoneIds = nextDamageBoostZoneIds;
+        bullet.damage = Math.max(0, Math.round(bullet.baseDamage * bullet.damageMultiplier));
     }
 
     private keepBulletInMap(bullet: TurnBulletState): boolean {
@@ -2208,6 +2238,7 @@ export default class TurnBattleMap extends cc.Component {
 
         if (bounced) {
             bullet.bounceLeft -= 1;
+            bullet.hasBounced = true;
             bullet.node.setPosition(position.x, position.y);
             bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
         }
@@ -3517,18 +3548,16 @@ export default class TurnBattleMap extends cc.Component {
 
     private spawnSpreadBulletsFromZone(sourceBullet: TurnBulletState, zone: TurnAssistZoneState) {
         let zoneConfig = getTurnAssistZoneTypeConfig("spread", this._config);
-        let childCount = Math.max(0, Math.floor(Number(zoneConfig.spreadChildCount) || 0));
-        let spreadAngle = Math.max(0, Number(zoneConfig.spreadAngle) || 0);
-        let damageScale = Math.max(0, Number(zoneConfig.spreadDamageScale) || 0);
-        if (childCount <= 0 || spreadAngle <= 0 || damageScale <= 0) {
+        let splitCount = Math.max(1, Math.floor(Number(zoneConfig.spreadSplitCount) || 1));
+        let spreadStepAngle = Math.max(0, Number(zoneConfig.spreadSplitStepAngle) || 0);
+        if (splitCount <= 1) {
             return;
         }
         let sourceAngle = this.vectorToAngle(sourceBullet.dir);
         let sourcePos = this.getNodePosition(sourceBullet.node);
-        for (let i = 0; i < childCount; i++) {
-            let sign = i % 2 === 0 ? -1 : 1;
-            let step = Math.floor(i / 2) + 1;
-            let angle = sourceAngle + sign * spreadAngle * step;
+        let centerIndex = (splitCount - 1) * 0.5;
+        for (let i = 0; i < splitCount; i++) {
+            let angle = sourceAngle + (i - centerIndex) * spreadStepAngle;
             let dir = this.angleToVector(angle);
             this.createBullet(sourceBullet.camp, sourcePos.add(dir.mul(10)), dir, {
                 bulletBlockCount: 0,
@@ -3539,16 +3568,35 @@ export default class TurnBattleMap extends cc.Component {
                 extraShotsFromBulletBlock: 0,
                 bonusDamageFromUpgrade: 0,
                 bonusDamageFromAttackBlock: 0,
-                bulletDamage: Math.max(1, Math.round(sourceBullet.baseDamage * damageScale)),
+                bulletDamage: Math.max(1, Math.round(sourceBullet.baseDamage)),
                 bulletBounce: sourceBullet.bounceLeft,
                 shotsLeft: 0,
             });
             let child = this._bullets[this._bullets.length - 1];
             if (child) {
                 child.lifeLeft = Math.min(child.lifeLeft, Math.max(0.6, sourceBullet.lifeLeft * 0.7));
+                child.damage = sourceBullet.damage;
+                child.baseDamage = sourceBullet.baseDamage;
+                child.damageMultiplier = sourceBullet.damageMultiplier;
+                child.damageBoostLevel = sourceBullet.damageBoostLevel;
+                child.bounceLeft = sourceBullet.bounceLeft;
+                child.hasBounced = sourceBullet.hasBounced;
+                child.currentSpreadZoneIds = [];
+                child.currentDamageBoostZoneIds = [];
                 child.damageBoostAppliedZoneIds = sourceBullet.damageBoostAppliedZoneIds.slice();
                 child.spreadTriggeredZoneIds = sourceBullet.spreadTriggeredZoneIds.slice();
             }
+        }
+    }
+
+    private applyDamageBoostPassThrough(bullet: TurnBulletState, zoneId: string) {
+        let zoneConfig = getTurnAssistZoneTypeConfig("damage_boost", this._config);
+        let maxMultiplier = Math.max(1, Math.floor(Number(zoneConfig.damageBoostMaxMultiplier) || 1));
+        let nextLevel = Math.min(maxMultiplier, Math.max(1, Math.floor(Number(bullet.damageBoostLevel) || 1)) + 1);
+        bullet.damageBoostLevel = nextLevel;
+        bullet.damageMultiplier = nextLevel;
+        if (bullet.damageBoostAppliedZoneIds.indexOf(zoneId) < 0) {
+            bullet.damageBoostAppliedZoneIds.push(zoneId);
         }
     }
 
