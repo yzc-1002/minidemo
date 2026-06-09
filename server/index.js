@@ -399,7 +399,9 @@ const TURN_CONFIG = {
         name: '黑洞',
         minRadius: 64,
         maxRadius: 92,
-        blackHoleStrength: 2.7,
+        blackHoleStrength: 9,
+        blackHoleCurvePower: 1.0,
+        blackHoleMaxOffsetPerTick: 8,
       },
       spread: {
         name: '扩散',
@@ -2458,7 +2460,14 @@ function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
       if (distance > 1 && distance <= radius) {
         const ratio = 1 - distance / radius;
         const strength = Math.max(0, Number(config.blackHoleStrength) || 0);
-        bullet.dir = normalizeVec(addVec(bullet.dir, mulVec(normalizeVec(offset, bullet.dir), strength * ratio * dt)), bullet.dir);
+        const curvePower = Math.max(0.1, Number(config.blackHoleCurvePower) || 1);
+        const maxOffsetPerTick = Math.max(0, Number(config.blackHoleMaxOffsetPerTick) || 0);
+        const curvedRatio = Math.pow(Math.max(0, ratio), curvePower);
+        let offsetStep = strength * curvedRatio * dt;
+        if (maxOffsetPerTick > 0) {
+          offsetStep = Math.min(offsetStep, maxOffsetPerTick);
+        }
+        bullet.dir = normalizeVec(addVec(bullet.dir, mulVec(normalizeVec(offset, bullet.dir), offsetStep)), bullet.dir);
       }
       continue;
     }

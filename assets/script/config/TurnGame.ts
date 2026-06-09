@@ -10,6 +10,8 @@ export interface TurnAssistZoneTypeConfig {
     minRadius: number;
     maxRadius: number;
     blackHoleStrength?: number;
+    blackHoleCurvePower?: number;
+    blackHoleMaxOffsetPerTick?: number;
     damageBoostMaxMultiplier?: number;
     spreadSplitCount?: number;
     spreadSplitStepAngle?: number;
@@ -254,7 +256,9 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
                 name: "黑洞",
                 minRadius: 64,
                 maxRadius: 92,
-                blackHoleStrength: 2.7,
+                blackHoleStrength: 9,
+                blackHoleCurvePower: 1.0,
+                blackHoleMaxOffsetPerTick: 8,
             },
             spread: {
                 name: "扩散",

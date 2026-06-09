@@ -2176,7 +2176,14 @@ export default class TurnBattleMap extends cc.Component {
                 let zoneConfig = getTurnAssistZoneTypeConfig(zone.type, this._config);
                 let ratio = 1 - distance / zone.radius;
                 let strength = Math.max(0, Number(zoneConfig.blackHoleStrength) || 0);
-                bullet.dir = bullet.dir.add(offset.normalize().mul(strength * ratio * dt)).normalize();
+                let curvePower = Math.max(0.1, Number(zoneConfig.blackHoleCurvePower) || 1);
+                let maxOffsetPerTick = Math.max(0, Number(zoneConfig.blackHoleMaxOffsetPerTick) || 0);
+                let curvedRatio = Math.pow(Math.max(0, ratio), curvePower);
+                let offsetStep = strength * curvedRatio * dt;
+                if (maxOffsetPerTick > 0) {
+                    offsetStep = Math.min(offsetStep, maxOffsetPerTick);
+                }
+                bullet.dir = bullet.dir.add(offset.normalize().mul(offsetStep)).normalize();
                 bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
             }
             else if (zone.type === "damage_boost") {
