@@ -1,9 +1,37 @@
 export type TurnCamp = "A" | "B";
 export type TurnPhase = "init" | "build" | "attack" | "waitBullet" | "settle" | "upgrade" | "finish";
-export type TurnUpgradeId = "bullet_bounce" | "extra_shot" | "damage_up" | "crystal_hp_up" | "cover_resource_up";
+export type TurnUpgradeId =
+    | "bullet_bounce_add"
+    | "first_bounce_damage_x2"
+    | "round_resource_add"
+    | "normal_hp_add"
+    | "exp_hp_add"
+    | "energy_hp_add"
+    | "bullet_hp_add"
+    | "bleed_hp_add"
+    | "spread_extra_split_add"
+    | "damage_boost_temp_attack_add"
+    | "black_hole_strength_pct";
 export type TurnAssistZoneType = "black_hole" | "spread" | "damage_boost";
 export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack";
 export type TurnMirrorDirection = "bl" | "br" | "tl" | "tr";
+export type TurnUpgradeStackMode = "add" | "multiply";
+export type TurnUpgradeEffectType =
+    | "bullet_bounce"
+    | "first_bounce_damage"
+    | "round_resource"
+    | "resource_hp"
+    | "spread_extra_split"
+    | "damage_boost_temp_attack"
+    | "black_hole_strength";
+
+export interface TurnUpgradeEffectConfig {
+    type: TurnUpgradeEffectType;
+    stackMode: TurnUpgradeStackMode;
+    value: number;
+    targetResourceType?: TurnObstacleResourceType;
+    maxValue?: number;
+}
 
 export interface TurnAssistZoneTypeConfig {
     name: string;
@@ -40,6 +68,7 @@ export interface TurnUpgradeConfig {
     name: string;
     desc: string;
     maxStacks: number | null;
+    effect: TurnUpgradeEffectConfig;
 }
 
 export interface TurnObstacleSlotConfig {
@@ -404,11 +433,17 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         B: cc.rect(-288, 256, 576, 224),
     },
     upgradePool: [
-        { id: "cover_resource_up", name: "回合资源 +1", desc: "后续每回合可生成的总资源数 +1", maxStacks: 9 },
-        { id: "bullet_bounce", name: "反弹 +1", desc: "子弹可以额外反弹一次", maxStacks: 5 },
-        { id: "extra_shot", name: "连发 +1", desc: "一次攻击动作内额外发射 1 发子弹", maxStacks: 3 },
-        { id: "damage_up", name: "伤害 +10", desc: "提高命中时的子弹伤害", maxStacks: null },
-        { id: "crystal_hp_up", name: "水晶 HP +20", desc: "提高己方水晶上限和当前 HP", maxStacks: null },
+        { id: "bullet_bounce_add", name: "反弹 +1", desc: "子弹可以额外反弹一次", maxStacks: 5, effect: { type: "bullet_bounce", stackMode: "add", value: 1 } },
+        { id: "first_bounce_damage_x2", name: "首弹反弹增伤", desc: "第一次反弹后，子弹剩余伤害 x2", maxStacks: 1, effect: { type: "first_bounce_damage", stackMode: "multiply", value: 2 } },
+        { id: "round_resource_add", name: "回合资源 +1", desc: "后续每回合可生成的总资源数 +1", maxStacks: 9, effect: { type: "round_resource", stackMode: "add", value: 1 } },
+        { id: "normal_hp_add", name: "普通方块 HP +10", desc: "普通方块资源血量 +10，最大 50", maxStacks: 4, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "normal", maxValue: 50 } },
+        { id: "exp_hp_add", name: "经验块 HP +10", desc: "经验块血量 +10，最大 30", maxStacks: 2, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "exp", maxValue: 30 } },
+        { id: "energy_hp_add", name: "能量块 HP +10", desc: "能量块血量 +10，最大 30", maxStacks: 2, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "energy", maxValue: 30 } },
+        { id: "bullet_hp_add", name: "子弹块 HP +10", desc: "子弹块血量 +10，最大 30", maxStacks: 2, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "bullet", maxValue: 30 } },
+        { id: "bleed_hp_add", name: "滴血块 HP +10", desc: "滴血块血量 +10，最大 30", maxStacks: 2, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "bleed", maxValue: 30 } },
+        { id: "spread_extra_split_add", name: "扩散分裂 +1", desc: "穿过扩散区域后额外分裂数 +1", maxStacks: null, effect: { type: "spread_extra_split", stackMode: "add", value: 1 } },
+        { id: "damage_boost_temp_attack_add", name: "增伤区域攻击 +10", desc: "穿过伤害翻倍区域后临时额外获得 +10 攻击", maxStacks: null, effect: { type: "damage_boost_temp_attack", stackMode: "add", value: 10 } },
+        { id: "black_hole_strength_pct", name: "黑洞引力 +10%", desc: "黑洞区域引力效果 +10%", maxStacks: null, effect: { type: "black_hole_strength", stackMode: "add", value: 0.1 } },
     ],
 };
 

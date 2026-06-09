@@ -720,25 +720,27 @@ export default class TurnBattleMap extends cc.Component {
         if (stats.exp < stats.expNeed) {
             return;
         }
+        let option: TurnUpgradeConfig = null;
+        for (let i = 0; i < this._config.upgradePool.length; i++) {
+            if (this._config.upgradePool[i].id === upgradeId) {
+                option = this._config.upgradePool[i];
+                break;
+            }
+        }
+        if (!option) {
+            return;
+        }
 
         stats.exp -= stats.expNeed;
         stats.expNeed += 20;
         stats.level += 1;
         stats.upgradeStacks[upgradeId] = Math.max(0, Number(stats.upgradeStacks[upgradeId]) || 0) + 1;
-        if (upgradeId === "bullet_bounce") {
-            stats.bulletBounce += 1;
+        let effect = option.effect;
+        if (effect && effect.type === "bullet_bounce") {
+            stats.bulletBounce += Math.max(0, Number(effect.value) || 0);
         }
-        else if (upgradeId === "cover_resource_up") {
-            stats.roundResourceBonus += 1;
-        }
-        else if (upgradeId === "extra_shot") {
-            stats.extraShots += 1;
-        }
-        else if (upgradeId === "damage_up") {
-            stats.damageBonus += 10;
-        }
-        else if (upgradeId === "crystal_hp_up") {
-            this.increaseCrystalHp(camp, 20);
+        else if (effect && effect.type === "round_resource") {
+            stats.roundResourceBonus += Math.max(0, Number(effect.value) || 0);
         }
 
         this.showFloatText("阵营 " + camp + " 升级", cc.v2(camp === "A" ? -150 : 150, 0), cc.Color.YELLOW);

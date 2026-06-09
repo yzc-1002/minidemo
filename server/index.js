@@ -532,11 +532,17 @@ const TURN_PHASE = {
 };
 const TURN_CAMPS = ['A', 'B'];
 const TURN_UPGRADE_POOL = [
-  { id: 'coverResourceUp', type: 'cover', title: '回合资源 +1', value: 1, maxStacks: 9 },
-  { id: 'bulletBounce', type: 'bullet', title: '反弹 +1', value: 1, maxStacks: 5 },
-  { id: 'multiShot', type: 'bullet', title: '连发 +1', value: 1, maxStacks: 3 },
-  { id: 'damageUp', type: 'attr', title: '伤害 +10', value: 10, maxStacks: null },
-  { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20, maxStacks: null },
+  { id: 'bullet_bounce_add', name: '反弹 +1', desc: '子弹可以额外反弹一次', maxStacks: 5, effect: { type: 'bullet_bounce', stackMode: 'add', value: 1 } },
+  { id: 'first_bounce_damage_x2', name: '首弹反弹增伤', desc: '第一次反弹后，子弹剩余伤害 x2', maxStacks: 1, effect: { type: 'first_bounce_damage', stackMode: 'multiply', value: 2 } },
+  { id: 'round_resource_add', name: '回合资源 +1', desc: '后续每回合可生成的总资源数 +1', maxStacks: 9, effect: { type: 'round_resource', stackMode: 'add', value: 1 } },
+  { id: 'normal_hp_add', name: '普通方块 HP +10', desc: '普通方块资源血量 +10，最大 50', maxStacks: 4, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'normal', maxValue: 50 } },
+  { id: 'exp_hp_add', name: '经验块 HP +10', desc: '经验块血量 +10，最大 30', maxStacks: 2, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'exp', maxValue: 30 } },
+  { id: 'energy_hp_add', name: '能量块 HP +10', desc: '能量块血量 +10，最大 30', maxStacks: 2, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'energy', maxValue: 30 } },
+  { id: 'bullet_hp_add', name: '子弹块 HP +10', desc: '子弹块血量 +10，最大 30', maxStacks: 2, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'bullet', maxValue: 30 } },
+  { id: 'bleed_hp_add', name: '滴血块 HP +10', desc: '滴血块血量 +10，最大 30', maxStacks: 2, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'bleed', maxValue: 30 } },
+  { id: 'spread_extra_split_add', name: '扩散分裂 +1', desc: '穿过扩散区域后额外分裂数 +1', maxStacks: null, effect: { type: 'spread_extra_split', stackMode: 'add', value: 1 } },
+  { id: 'damage_boost_temp_attack_add', name: '增伤区域攻击 +10', desc: '穿过伤害翻倍区域后临时额外获得 +10 攻击', maxStacks: null, effect: { type: 'damage_boost_temp_attack', stackMode: 'add', value: 10 } },
+  { id: 'black_hole_strength_pct', name: '黑洞引力 +10%', desc: '黑洞区域引力效果 +10%', maxStacks: null, effect: { type: 'black_hole_strength', stackMode: 'add', value: 0.1 } },
 ];
 const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed', 'bullet', 'attack'];
 const TURN_OBSTACLE_LAYOUT_LIBRARY = {
@@ -668,11 +674,10 @@ function toPlayerViewLayout(player, layout) {
 }
 
 function mapUpgradeIdFromClient(optionId) {
-  if (optionId === 'cover_resource_up') return 'coverResourceUp';
-  if (optionId === 'bullet_bounce') return 'bulletBounce';
-  if (optionId === 'extra_shot') return 'multiShot';
-  if (optionId === 'damage_up') return 'damageUp';
-  if (optionId === 'crystal_hp_up') return 'crystalHp';
+  // 兼容旧客户端/旧存量升级 ID；主逻辑只使用新的 snake_case ID。
+  // 没有一一等价关系的旧 ID 不做硬映射，避免把旧效果误套到新升级上。
+  if (optionId === 'cover_resource_up' || optionId === 'coverResourceUp') return 'round_resource_add';
+  if (optionId === 'bullet_bounce' || optionId === 'bulletBounce') return 'bullet_bounce_add';
   return optionId;
 }
 
@@ -824,25 +829,17 @@ function buildTurnViewPayload(player, payload) {
   if (Array.isArray(next.options)) {
     next.options = next.options.map((option) => ({
       ...option,
-      id: option.id === 'bulletBounce' ? 'bullet_bounce'
-        : option.id === 'multiShot' ? 'extra_shot'
-        : option.id === 'damageUp' ? 'damage_up'
-        : option.id === 'crystalHp' ? 'crystal_hp_up'
-        : option.id,
-      desc: option.title || option.desc || '',
-      name: option.title || option.name || option.id,
+      id: option.id,
+      desc: option.desc || option.title || '',
+      name: option.name || option.title || option.id,
     }));
   }
   if (next.option) {
     next.option = {
       ...next.option,
-      id: next.option.id === 'bulletBounce' ? 'bullet_bounce'
-        : next.option.id === 'multiShot' ? 'extra_shot'
-        : next.option.id === 'damageUp' ? 'damage_up'
-        : next.option.id === 'crystalHp' ? 'crystal_hp_up'
-        : next.option.id,
-      desc: next.option.title || next.option.desc || '',
-      name: next.option.title || next.option.name || next.option.id,
+      id: next.option.id,
+      desc: next.option.desc || next.option.title || '',
+      name: next.option.name || next.option.title || next.option.id,
     };
   }
   return next;
@@ -2766,21 +2763,11 @@ function applyTurnUpgrade(player, option) {
     return;
   }
   player.upgrades.stacks[option.id] = getTurnUpgradeStack(player, option.id) + 1;
-  if (option.id === 'coverResourceUp') {
-    player.upgrades.roundResourceBonus += option.value || 1;
-  } else if (option.id === 'bulletBounce') {
-    player.upgrades.bulletBounce += option.value || 1;
-  } else if (option.id === 'multiShot') {
-    player.upgrades.multiShot += option.value || 1;
-  } else if (option.id === 'damageUp') {
-    player.upgrades.damageAdd += option.value || 10;
-  } else if (option.id === 'crystalHp') {
-    const roomState = getTurnRoom(player.socket);
-    const crystal = roomState && roomState.crystals[player.camp];
-    if (crystal) {
-      crystal.maxHp += option.value || 20;
-      crystal.hp += option.value || 20;
-    }
+  const effect = option.effect || {};
+  if (effect.type === 'round_resource') {
+    player.upgrades.roundResourceBonus += Math.max(0, Number(effect.value) || 0);
+  } else if (effect.type === 'bullet_bounce') {
+    player.upgrades.bulletBounce += Math.max(0, Number(effect.value) || 0);
   }
 }
 
