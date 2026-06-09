@@ -352,6 +352,16 @@ function circleRectIntersects(circle, radius, rect) {
   const dy = circle.y - nearestY;
   return dx * dx + dy * dy <= radius * radius;
 }
+
+function distanceBetweenPoints(a, b) {
+  if (!a || !b) {
+    return 0;
+  }
+  const dx = (Number(a.x) || 0) - (Number(b.x) || 0);
+  const dy = (Number(a.y) || 0) - (Number(b.y) || 0);
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
 const TURN_CONFIG = {
   buildSeconds: 15,
   attackSeconds: 8,
@@ -375,7 +385,38 @@ const TURN_CONFIG = {
   expNeed: 60,
   bulletDamage: 20,
   maxBulletResultDamage: 80,
-  assistZoneRadius: 74,
+  assistZones: {
+    spawnRule: {
+      round1: 1,
+      round2: 2,
+      round3Plus: 3,
+      maxSimultaneous: 3,
+    },
+    maxPlacementRetries: 24,
+    allowOverlap: false,
+    types: {
+      blackHole: {
+        name: '黑洞',
+        minRadius: 64,
+        maxRadius: 92,
+        blackHoleStrength: 2.7,
+      },
+      spread: {
+        name: '扩散',
+        minRadius: 58,
+        maxRadius: 84,
+        spreadChildCount: 2,
+        spreadAngle: 18,
+        spreadDamageScale: 0.6,
+      },
+      damageBoost: {
+        name: '增伤',
+        minRadius: 52,
+        maxRadius: 78,
+        damageMultiplier: 1.6,
+      },
+    },
+  },
   obstacleGrid: 32,
   obstacleBaseHp: 10,
   obstacleMaxHp: 50,
@@ -497,7 +538,6 @@ const TURN_UPGRADE_POOL = [
   { id: 'crystalHp', type: 'attr', title: '水晶 HP +20', value: 20, maxStacks: null },
 ];
 const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed', 'bullet', 'attack'];
-const TURN_MIRROR_DIRECTIONS = ['bl', 'br', 'tl', 'tr'];
 const TURN_OBSTACLE_LAYOUT_LIBRARY = {
   1: [
     [{ x: 0, y: 0 }],
@@ -553,12 +593,18 @@ function getTurnViewCamp(player, camp) {
   if (!player || !camp) {
     return camp || '';
   }
+  if (camp === 'N') {
+    return 'N';
+  }
   return camp === player.camp ? 'A' : 'B';
 }
 
 function toCanonicalCamp(player, camp) {
   if (!player || !camp) {
     return camp || '';
+  }
+  if (camp === 'N') {
+    return 'N';
   }
   return camp === 'A' ? player.camp : getEnemyCamp(player.camp);
 }
@@ -596,11 +642,15 @@ function toCanonicalPoint(player, point) {
 }
 
 function mapZoneTypeToClient(zoneType) {
-  return zoneType === 'blackHole' ? 'black_hole' : zoneType;
+  if (zoneType === 'blackHole') return 'black_hole';
+  if (zoneType === 'damageBoost') return 'damage_boost';
+  return zoneType;
 }
 
 function mapZoneTypeFromClient(zoneType) {
-  return zoneType === 'black_hole' ? 'blackHole' : zoneType;
+  if (zoneType === 'black_hole') return 'blackHole';
+  if (zoneType === 'damage_boost') return 'damageBoost';
+  return zoneType;
 }
 
 function toPlayerViewLayout(player, layout) {
@@ -614,18 +664,6 @@ function toPlayerViewLayout(player, layout) {
     x: Math.round(Number(cell && cell.x) || 0),
     y: -Math.round(Number(cell && cell.y) || 0),
   }));
-}
-
-function toPlayerViewMirrorDir(player, dir) {
-  const safe = normalizeMirrorDirection(dir);
-  if (!player || player.camp === 'A') {
-    return safe;
-  }
-  if (safe === 'bl') return 'tl';
-  if (safe === 'tl') return 'bl';
-  if (safe === 'br') return 'tr';
-  if (safe === 'tr') return 'br';
-  return safe;
 }
 
 function mapUpgradeIdFromClient(optionId) {
@@ -678,7 +716,7 @@ function buildTurnViewPayload(player, payload) {
       const slots = cloneTurnObstacleSlots(src.roundSlots).map((slot) => ({
         ...slot,
         layout: toPlayerViewLayout(player, normalizeObstacleLayout(slot.type, slot.layout, slot.count)),
-        mirrorDir: toPlayerViewMirrorDir(player, slot.mirrorDir),
+        mirrorDir: '',
       }));
       inventories[getTurnViewCamp(player, camp)] = {
         ...src,
@@ -702,10 +740,8 @@ function buildTurnViewPayload(player, payload) {
         camp: getTurnViewCamp(player, obstacle.camp),
         x: Math.round(point.x),
         y: Math.round(point.y),
-        layout: (obstacle.slotType || 'normal') === 'mirror'
-          ? normalizeObstacleLayout(obstacle.slotType || 'normal', obstacle.layout, obstacle.resourceCount)
-          : toPlayerViewLayout(player, normalizeObstacleLayout(obstacle.slotType || 'normal', obstacle.layout, obstacle.resourceCount)),
-        mirrorDir: toPlayerViewMirrorDir(player, normalizeMirrorDirection(obstacle.mirrorDir)),
+        layout: toPlayerViewLayout(player, normalizeObstacleLayout(obstacle.slotType || 'normal', obstacle.layout, obstacle.resourceCount)),
+        mirrorDir: '',
       };
     });
   }
@@ -863,7 +899,7 @@ function cloneTurnObstacleSlots(source) {
       count,
       layout,
       shapeKey: String(slot && slot.shapeKey ? slot.shapeKey : getObstacleLayoutKey(layout)),
-      mirrorDir: type === 'mirror' ? normalizeMirrorDirection(slot && slot.mirrorDir) : '',
+      mirrorDir: '',
       placed: !!(slot && slot.placed),
       placedObstacleId: slot && slot.placedObstacleId ? String(slot.placedObstacleId) : '',
     };
@@ -896,11 +932,6 @@ function getObstacleLayoutKey(layout) {
     .join('|');
 }
 
-function normalizeMirrorDirection(value) {
-  const dir = String(value || '').toLowerCase();
-  return TURN_MIRROR_DIRECTIONS.indexOf(dir) >= 0 ? dir : 'bl';
-}
-
 function getObstacleMaxHp(slotType, resourceCount) {
   if (slotType === 'normal') {
     const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.normal;
@@ -910,7 +941,8 @@ function getObstacleMaxHp(slotType, resourceCount) {
   }
   if (slotType === 'mirror') {
     const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.mirror;
-    return Math.max(1, Number(rule && rule.baseHp) || 10);
+    const baseHp = Math.max(1, Number(rule && rule.baseHp) || 10);
+    return baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
   if (slotType === 'exp') {
     const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.exp;
@@ -1435,6 +1467,96 @@ function getTurnPhaseDurationSeconds(phase, displayRound) {
   return 0;
 }
 
+function getTurnAssistZoneTypeConfig(zoneType) {
+  const types = TURN_CONFIG.assistZones && TURN_CONFIG.assistZones.types;
+  return (types && types[zoneType]) || (types && types.blackHole) || {};
+}
+
+function getTurnAssistZoneSpawnCount(roundIndex) {
+  const rule = TURN_CONFIG.assistZones && TURN_CONFIG.assistZones.spawnRule;
+  const round = Math.max(1, Math.floor(Number(roundIndex) || 1));
+  const count = round <= 1
+    ? Math.max(0, Number(rule && rule.round1) || 0)
+    : round === 2
+      ? Math.max(0, Number(rule && rule.round2) || 0)
+      : Math.max(0, Number(rule && rule.round3Plus) || 0);
+  const maxSimultaneous = Math.max(0, Number(rule && rule.maxSimultaneous) || 0);
+  return maxSimultaneous > 0 ? Math.min(maxSimultaneous, count) : count;
+}
+
+function randomTurnAssistZoneType() {
+  const candidates = ['blackHole', 'spread', 'damageBoost'];
+  return candidates[Math.floor(Math.random() * candidates.length)] || 'blackHole';
+}
+
+function randomTurnAssistZoneRadius(zoneType) {
+  const config = getTurnAssistZoneTypeConfig(zoneType);
+  const minRadius = Math.max(1, Number(config.minRadius) || 1);
+  const maxRadius = Math.max(minRadius, Number(config.maxRadius) || minRadius);
+  return Math.round(randomBetween(minRadius, maxRadius));
+}
+
+function isTurnAssistZonePositionValid(roomState, point, radius) {
+  if (!roomState || !point || !Number.isFinite(radius) || radius <= 0) {
+    return false;
+  }
+  const assistArea = TURN_MAP_LAYOUT.assistArea;
+  const mapRect = TURN_MAP_LAYOUT.mapRect;
+  if (
+    point.x - radius < assistArea.minX
+    || point.x + radius > assistArea.maxX
+    || point.y - radius < assistArea.minY
+    || point.y + radius > assistArea.maxY
+    || point.x - radius < mapRect.minX
+    || point.x + radius > mapRect.maxX
+    || point.y - radius < mapRect.minY
+    || point.y + radius > mapRect.maxY
+  ) {
+    return false;
+  }
+  const roadA = TURN_MAP_LAYOUT.roadRects.A;
+  const roadB = TURN_MAP_LAYOUT.roadRects.B;
+  if (
+    circleRectIntersects(point, radius, { x: roadA.minX, y: roadA.minY, width: roadA.maxX - roadA.minX, height: roadA.maxY - roadA.minY })
+    || circleRectIntersects(point, radius, { x: roadB.minX, y: roadB.minY, width: roadB.maxX - roadB.minX, height: roadB.maxY - roadB.minY })
+  ) {
+    return false;
+  }
+  const crystalPadding = 12;
+  const crystalA = { x: 0, y: -420, radius: 28 };
+  const crystalB = { x: 0, y: 420, radius: 28 };
+  if (
+    distanceBetweenPoints(point, crystalA) < radius + crystalA.radius + crystalPadding
+    || distanceBetweenPoints(point, crystalB) < radius + crystalB.radius + crystalPadding
+  ) {
+    return false;
+  }
+  const noBuildAreas = [
+    TURN_MAP_LAYOUT.roadRects.A,
+    TURN_MAP_LAYOUT.roadRects.B,
+  ];
+  for (let i = 0; i < noBuildAreas.length; i++) {
+    const rect = noBuildAreas[i];
+    if (circleRectIntersects(point, radius, { x: rect.minX, y: rect.minY, width: rect.maxX - rect.minX, height: rect.maxY - rect.minY })) {
+      return false;
+    }
+  }
+  if (getTurnActiveStaticObstacles(roomState).some((obstacle) => circleRectIntersects(point, radius, obstacle))) {
+    return false;
+  }
+  if (!(TURN_CONFIG.assistZones && TURN_CONFIG.assistZones.allowOverlap)) {
+    const zones = Array.isArray(roomState.zones) ? roomState.zones : [];
+    for (let i = 0; i < zones.length; i++) {
+      const zone = zones[i];
+      const zoneRadius = Math.max(0, Number(zone && zone.radius) || 0);
+      if (distanceBetweenPoints(point, zone) < zoneRadius + radius + 16) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 function setTurnPhase(roomState, phase, durationSeconds, onTimeout) {
   clearTurnTimers(roomState);
   if (roomState.finished) {
@@ -1491,7 +1613,7 @@ function startTurnBuildPhase(roomState) {
   };
   roomState.zones = [];
   randomizeTurnAssistStaticObstacles(roomState);
-  spawnTurnBlackHoleZone(roomState);
+  spawnTurnAssistZones(roomState);
   roomState.players.forEach((player) => {
     createTurnRoundSlots(player, roomState, roomState.roundIndex);
   });
@@ -1592,55 +1714,62 @@ function startTurnSettlePhase(roomState) {
   });
 }
 
-function spawnTurnBlackHoleZone(roomState) {
+function spawnTurnAssistZones(roomState) {
   if (!roomState) {
-    return null;
+    return [];
   }
-  const marginX = TURN_CONFIG.assistZoneRadius + 8;
-  const marginY = TURN_CONFIG.assistZoneRadius + 8;
-  const minX = TURN_MAP_LAYOUT.assistArea.minX + marginX;
-  const maxX = TURN_MAP_LAYOUT.assistArea.maxX - marginX;
-  const minY = TURN_MAP_LAYOUT.assistArea.minY + marginY;
-  const maxY = TURN_MAP_LAYOUT.assistArea.maxY - marginY;
-  let point = null;
-  for (let attempt = 0; attempt < 24; attempt++) {
-    const nextPoint = {
-      x: Math.round(randomBetween(minX, maxX)),
-      y: Math.round(randomBetween(minY, maxY)),
-    };
-    const blocked = getTurnActiveStaticObstacles(roomState).some((obstacle) => circleRectIntersects(nextPoint, TURN_CONFIG.assistZoneRadius, obstacle));
-    if (!blocked) {
-      point = nextPoint;
-      break;
+  const zones = [];
+  const assistArea = TURN_MAP_LAYOUT.assistArea;
+  const spawnCount = getTurnAssistZoneSpawnCount(roomState.roundIndex);
+  const maxRetries = Math.max(1, Number(TURN_CONFIG.assistZones && TURN_CONFIG.assistZones.maxPlacementRetries) || 1);
+  for (let i = 0; i < spawnCount; i++) {
+    const zoneType = randomTurnAssistZoneType();
+    const radius = randomTurnAssistZoneRadius(zoneType);
+    const minX = assistArea.minX + radius + 8;
+    const maxX = assistArea.maxX - radius - 8;
+    const minY = assistArea.minY + radius + 8;
+    const maxY = assistArea.maxY - radius - 8;
+    if (minX > maxX || minY > maxY) {
+      continue;
     }
-  }
-  if (!point) {
-    point = {
-      x: Math.round((minX + maxX) / 2),
-      y: Math.round((minY + maxY) / 2),
+    let point = null;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const nextPoint = {
+        x: Math.round(randomBetween(minX, maxX)),
+        y: Math.round(randomBetween(minY, maxY)),
+      };
+      if (isTurnAssistZonePositionValid(roomState, nextPoint, radius)) {
+        point = nextPoint;
+        break;
+      }
+    }
+    if (!point) {
+      continue;
+    }
+    const zone = {
+      id: `system_zone_${roomState.nextZoneId++}`,
+      camp: 'N',
+      zoneType,
+      x: point.x,
+      y: point.y,
+      radius,
+      extra: {
+        source: 'system',
+        roundIndex: roomState.roundIndex,
+      },
     };
+    roomState.zones.push(zone);
+    zones.push(zone);
+    broadcastTurn(roomState, {
+      type: 'zoneAction',
+      roomId: roomState.id,
+      camp: zone.camp,
+      playerId: 0,
+      zone,
+    });
   }
-  const zone = {
-    id: `system_zone_${roomState.nextZoneId++}`,
-    camp: 'A',
-    zoneType: 'blackHole',
-    x: point.x,
-    y: point.y,
-    extra: {
-      source: 'system',
-      roundIndex: roomState.roundIndex,
-    },
-  };
-  roomState.zones = [zone];
-  broadcastTurn(roomState, {
-    type: 'zoneAction',
-    roomId: roomState.id,
-    camp: zone.camp,
-    playerId: 0,
-    zone,
-  });
   broadcastTurnSnapshot(roomState);
-  return zone;
+  return zones;
 }
 
 function clampTurnTankAim(camp, fromPoint, aimPoint) {
@@ -1930,7 +2059,7 @@ function isTurnBuildPlacementValid(roomState, camp, x, y, layout, ignoreId) {
     if (getTurnActiveStaticObstacles(roomState).some((obstacle) => rectOverlaps(rect, obstacle))) {
       return false;
     }
-    if (roomState.zones.some((zone) => circleRectIntersects(zone, TURN_CONFIG.assistZoneRadius, rect))) {
+    if (roomState.zones.some((zone) => circleRectIntersects(zone, Math.max(0, Number(zone && zone.radius) || 0), rect))) {
       return false;
     }
     if (Object.keys(roomState.obstacles).some((id) => {
@@ -2239,8 +2368,16 @@ function handleTurnBulletResult(ws, msg) {
   const targetCamp = TURN_CAMPS.indexOf(payload.targetCamp) >= 0
     ? toCanonicalCamp(player, payload.targetCamp)
     : getEnemyCamp(player.camp);
+  const maxDamageBoost = Math.max(1, Number(getTurnAssistZoneTypeConfig('damageBoost').damageMultiplier) || 1);
+  const spreadConfig = getTurnAssistZoneTypeConfig('spread');
+  const maxSpreadDamageScale = Math.max(0, Number(spreadConfig.spreadDamageScale) || 0);
+  const maxSpreadChildCount = Math.max(0, Math.floor(Number(spreadConfig.spreadChildCount) || 0));
+  const maxCrystalDamageMultiplier = Math.max(maxDamageBoost, 1 + maxSpreadChildCount * maxSpreadDamageScale);
   const attackDamageCap = roomState.currentAttack && roomState.currentAttack.snapshot
-    ? Math.max(1, Number(roomState.currentAttack.snapshot.bulletDamage) || Number(TURN_CONFIG.bulletDamage) || 20)
+    ? Math.max(
+        1,
+        Math.ceil((Number(roomState.currentAttack.snapshot.bulletDamage) || Number(TURN_CONFIG.bulletDamage) || 20) * maxCrystalDamageMultiplier),
+      )
     : TURN_CONFIG.maxBulletResultDamage + Math.max(0, Number(player.upgrades.damageAdd) || 0);
   let damage = clamp(Math.floor(Number(payload.damage) || 0), 0, attackDamageCap);
   if (hitType === 'crystal' && targetCamp !== player.camp && roomState.crystals[targetCamp]) {

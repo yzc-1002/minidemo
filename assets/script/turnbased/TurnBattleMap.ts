@@ -1,12 +1,13 @@
 import {
     buildTurnAttackBondSnapshot,
     buildTurnSettlementBondSnapshot,
+    getTurnAssistZoneSpawnCount,
+    getTurnAssistZoneTypeConfig,
     TurnAssistZoneType,
     TurnAttackBondSnapshot,
     TurnBondCountMap,
     TurnCamp,
     TurnGameConfig,
-    TurnMirrorDirection,
     TurnObstacleResourceType,
     TurnPhase,
     TurnSettlementBondSnapshot,
@@ -37,7 +38,6 @@ const TURN_POINT_ALIAS: { [name: string]: string } = {
 const STATIC_OBSTACLE_NAME_RE = /qiang|mountain|tree|wall/i;
 const KEY_LEFT_SET = [cc.macro.KEY.left, cc.macro.KEY.a];
 const KEY_RIGHT_SET = [cc.macro.KEY.right, cc.macro.KEY.d];
-const MIRROR_DIRECTIONS: TurnMirrorDirection[] = ["bl", "br", "tl", "tr"];
 const OBSTACLE_LAYOUT_LIBRARY: { [count: number]: cc.Vec2[][] } = {
     1: [
         [cc.v2(0, 0)],
@@ -102,7 +102,7 @@ interface TurnObstacleState {
     layout: cc.Vec2[];
     cellHp: number[];
     shapeKey: string;
-    mirrorDir: TurnMirrorDirection | "";
+    mirrorDir: "";
     placedByCamp: TurnCamp;
 }
 
@@ -123,7 +123,7 @@ interface TurnObstacleSlotState {
     count: number;
     layout: cc.Vec2[];
     shapeKey: string;
-    mirrorDir: TurnMirrorDirection | "";
+    mirrorDir: "";
     placed: boolean;
     placedObstacleId: string;
 }
@@ -139,18 +139,22 @@ interface TurnBulletState {
     camp: TurnCamp;
     dir: cc.Vec2;
     damage: number;
+    baseDamage: number;
     speed: number;
     radius: number;
     lifeLeft: number;
     bounceLeft: number;
+    damageBoostAppliedZoneIds: string[];
+    spreadTriggeredZoneIds: string[];
 }
 
 interface TurnAssistZoneState {
     id: string;
-    camp: TurnCamp;
     type: TurnAssistZoneType;
     node: cc.Node;
     radius: number;
+    position: cc.Vec2;
+    extra?: any;
 }
 
 interface TurnCampStats {
@@ -194,6 +198,7 @@ export default class TurnBattleMap extends cc.Component {
     private _assistZones: TurnAssistZoneState[] = [];
     private _campStats: { [camp: string]: TurnCampStats } = null;
     private _phase: TurnPhase = "init";
+    private _roundIndex = 1;
     private _actionCamp: TurnCamp = "A";
     private _hasFiredInAction = false;
     private _shotsLeftInAction = 0;
@@ -371,17 +376,16 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     refreshForNewRound(roundIndex: number) {
+        this._roundIndex = Math.max(1, Math.floor(Number(roundIndex) || 1));
         this.generateRoundState("A", roundIndex);
         this.generateRoundState("B", roundIndex);
-        this.refreshStaticObstacleSelection();
-        this.renderStaticObstacles();
-        this.spawnRoundAssistZone();
         this.refreshBuildInteractionView();
     }
 
     setTurnSnapshot(snapshot: TurnStateSnapshot) {
         let previousPhase = this._phase;
         this._phase = snapshot.phase;
+        this._roundIndex = Math.max(1, Math.floor(Number(snapshot.roundIndex) || this._roundIndex || 1));
         this.setActionCamp(snapshot.actionCamp);
         this.handlePhaseChanged(previousPhase, snapshot.phase);
         this.refreshBuildInteractionView();
@@ -1139,10 +1143,13 @@ export default class TurnBattleMap extends cc.Component {
             camp: camp,
             dir: dir,
             damage: damage,
+            baseDamage: damage,
             speed: this._config.bulletSpeed,
             radius: this._config.bulletRadius,
             lifeLeft: 3.5,
             bounceLeft: bounceLeft,
+            damageBoostAppliedZoneIds: [],
+            spreadTriggeredZoneIds: [],
         });
     }
 
@@ -1207,7 +1214,7 @@ export default class TurnBattleMap extends cc.Component {
             this.redrawObstacle(obstacle);
             this.refreshObstacleHpLabel(obstacle);
             if (obstacle.hp > 0) {
-                return true;
+                return obstacle.slotType !== "mirror";
             }
             let expGain = this.getObstacleDestroyExp(obstacle);
             obstacle.node.destroy();
@@ -1353,7 +1360,7 @@ export default class TurnBattleMap extends cc.Component {
             slot = this.getObstacleSlotState(camp, String(snapshot.originSlotId));
         }
         let layout = snapshot && snapshot.layout ? this.buildLayoutFromSnapshot(slotType, snapshot.layout, Number(snapshot.resourceCount) || slot.count) : slot.layout;
-        let mirrorDir = snapshot && snapshot.mirrorDir ? this.normalizeMirrorDirection(snapshot.mirrorDir) : slot.mirrorDir;
+        let mirrorDir: "" = "";
         let resourceCount = Math.max(1, Number(snapshot && snapshot.resourceCount) || slot.count);
         let bounds = this.getLayoutBounds(layout);
         let node = new cc.Node("BuildObstacle" + this._nextObstacleId);
@@ -1401,39 +1408,44 @@ export default class TurnBattleMap extends cc.Component {
         this.refreshBuildInteractionView();
     }
 
-    private createAssistZone(camp: TurnCamp, type: TurnAssistZoneType, position: cc.Vec2, forcedId?: string) {
-        let node = new cc.Node("AssistZone" + this._nextAssistZoneId);
+    private createAssistZone(_camp: TurnCamp, type: TurnAssistZoneType, position: cc.Vec2, forcedId?: string, forcedRadius?: number, extra?: any) {
+        let zoneId = forcedId || String(this._nextAssistZoneId++);
+        let typeConfig = getTurnAssistZoneTypeConfig(type, this._config);
+        let radius = Math.max(1, Number(forcedRadius) || Number(typeConfig.minRadius) || 1);
+        let node = new cc.Node("AssistZone" + zoneId);
         node.parent = this._zoneLayer || this.contentRoot;
         node.setPosition(position.x, position.y);
 
         let graphics = node.addComponent(cc.Graphics);
-        graphics.fillColor = new cc.Color(66, 60, 120, 92);
-        graphics.circle(0, 0, this._config.assistZoneRadius);
+        let style = this.getAssistZoneStyle(type);
+        graphics.fillColor = style.fill;
+        graphics.circle(0, 0, radius);
         graphics.fill();
-        graphics.strokeColor = camp === "A" ? new cc.Color(120, 210, 255, 180) : new cc.Color(220, 120, 255, 180);
+        graphics.strokeColor = style.stroke;
         graphics.lineWidth = 3;
-        graphics.circle(0, 0, this._config.assistZoneRadius);
+        graphics.circle(0, 0, radius);
         graphics.stroke();
 
-        let label = this.createLabel(type === "black_hole" ? "黑洞" : "区域", 18);
+        let label = this.createLabel(typeConfig.name || "区域", 18);
         label.node.parent = node;
         label.node.color = new cc.Color(220, 230, 255, 255);
 
         this._assistZones.push({
-            id: forcedId || String(this._nextAssistZoneId++),
-            camp: camp,
+            id: zoneId,
             type: type,
             node: node,
-            radius: this._config.assistZoneRadius,
+            radius: radius,
+            position: cc.v2(position.x, position.y),
+            extra: extra || null,
         });
     }
 
-    private isZonePositionValid(camp: TurnCamp, position: cc.Vec2): boolean {
+    private isZonePositionValid(_type: TurnAssistZoneType, position: cc.Vec2, radius: number): boolean {
         let zoneRect = cc.rect(
-            position.x - this._config.assistZoneRadius,
-            position.y - this._config.assistZoneRadius,
-            this._config.assistZoneRadius * 2,
-            this._config.assistZoneRadius * 2,
+            position.x - radius,
+            position.y - radius,
+            radius * 2,
+            radius * 2,
         );
         if (!this._assistArea || !this.rectContainsRect(this._assistArea, zoneRect) || !this.rectContainsRect(this.getMapRect(), zoneRect)) {
             return false;
@@ -1441,32 +1453,34 @@ export default class TurnBattleMap extends cc.Component {
 
         let roadA = this.getRoadRect("A");
         let roadB = this.getRoadRect("B");
-        if ((roadA && this.circleRectIntersects(position, this._config.assistZoneRadius, roadA))
-            || (roadB && this.circleRectIntersects(position, this._config.assistZoneRadius, roadB))) {
+        if ((roadA && this.circleRectIntersects(position, radius, roadA))
+            || (roadB && this.circleRectIntersects(position, radius, roadB))) {
             return false;
         }
 
         let crystalA = this._crystals.A;
         let crystalB = this._crystals.B;
-        if ((crystalA && position.sub(this.getNodePosition(crystalA.node)).mag() < this._config.assistZoneRadius + crystalA.radius + 12)
-            || (crystalB && position.sub(this.getNodePosition(crystalB.node)).mag() < this._config.assistZoneRadius + crystalB.radius + 12)) {
+        if ((crystalA && position.sub(this.getNodePosition(crystalA.node)).mag() < radius + crystalA.radius + 12)
+            || (crystalB && position.sub(this.getNodePosition(crystalB.node)).mag() < radius + crystalB.radius + 12)) {
             return false;
         }
 
         for (let i = 0; i < this._noBuildAreas.length; i++) {
-            if (this.circleRectIntersects(position, this._config.assistZoneRadius, this._noBuildAreas[i])) {
+            if (this.circleRectIntersects(position, radius, this._noBuildAreas[i])) {
                 return false;
             }
         }
         for (let j = 0; j < this._staticObstacles.length; j++) {
-            if (this.circleRectIntersects(position, this._config.assistZoneRadius, this._staticObstacles[j].rect)) {
+            if (this.circleRectIntersects(position, radius, this._staticObstacles[j].rect)) {
                 return false;
             }
         }
-        for (let k = 0; k < this._assistZones.length; k++) {
-            let zone = this._assistZones[k];
-            if (this.getNodePosition(zone.node).sub(position).mag() < zone.radius + this._config.assistZoneRadius + 16) {
-                return false;
+        if (!(this._config.assistZones && this._config.assistZones.allowOverlap)) {
+            for (let k = 0; k < this._assistZones.length; k++) {
+                let zone = this._assistZones[k];
+                if (zone.position.sub(position).mag() < zone.radius + radius + 16) {
+                    return false;
+                }
             }
         }
         return true;
@@ -1488,7 +1502,7 @@ export default class TurnBattleMap extends cc.Component {
         valid: boolean,
         slotType: TurnObstacleResourceType,
         layout?: cc.Vec2[],
-        mirrorDir?: TurnMirrorDirection | "",
+        mirrorDir?: "",
     ) {
         let cells = this.normalizeObstacleLayout(slotType, layout);
         let cellSize = this._dynamicObstacleSize.width;
@@ -1733,7 +1747,7 @@ export default class TurnBattleMap extends cc.Component {
                 count: count,
                 layout: layout,
                 shapeKey: String(source && source.shapeKey ? source.shapeKey : this.getLayoutKey(layout)),
-                mirrorDir: type === "mirror" ? this.normalizeMirrorDirection(source && (source.mirrorDir || source.direction || "")) : "",
+                mirrorDir: "",
                 placed: !!placedObstacleId,
                 placedObstacleId: placedObstacleId,
             };
@@ -2007,18 +2021,6 @@ export default class TurnBattleMap extends cc.Component {
         return result;
     }
 
-    private normalizeMirrorDirection(value: string): TurnMirrorDirection {
-        let dir = String(value || "").toLowerCase();
-        if (MIRROR_DIRECTIONS.indexOf(dir as TurnMirrorDirection) >= 0) {
-            return dir as TurnMirrorDirection;
-        }
-        return "bl";
-    }
-
-    private pickMirrorDirection(seed: number): TurnMirrorDirection {
-        return MIRROR_DIRECTIONS[Math.abs(seed || 0) % MIRROR_DIRECTIONS.length];
-    }
-
     private getObstacleFillColor(camp: TurnCamp, valid: boolean, slotType: TurnObstacleResourceType): cc.Color {
         if (!valid) {
             return new cc.Color(210, 60, 60, 255);
@@ -2147,22 +2149,34 @@ export default class TurnBattleMap extends cc.Component {
 
     private applyAssistZones(bullet: TurnBulletState, dt: number) {
         let bulletPosition = this.getNodePosition(bullet.node);
+        bullet.damage = bullet.baseDamage;
         for (let i = 0; i < this._assistZones.length; i++) {
             let zone = this._assistZones[i];
-            if (zone.type !== "black_hole") {
-                continue;
-            }
-
-            let zonePosition = this.getNodePosition(zone.node);
+            let zonePosition = zone.position || this.getNodePosition(zone.node);
             let offset = zonePosition.sub(bulletPosition);
             let distance = offset.mag();
             if (distance <= 1 || distance > zone.radius) {
                 continue;
             }
-
-            let ratio = 1 - distance / zone.radius;
-            bullet.dir = bullet.dir.add(offset.normalize().mul(this._config.blackHoleStrength * ratio * dt)).normalize();
-            bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
+            if (zone.type === "black_hole") {
+                let zoneConfig = getTurnAssistZoneTypeConfig(zone.type, this._config);
+                let ratio = 1 - distance / zone.radius;
+                let strength = Math.max(0, Number(zoneConfig.blackHoleStrength) || 0);
+                bullet.dir = bullet.dir.add(offset.normalize().mul(strength * ratio * dt)).normalize();
+                bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
+            }
+            else if (zone.type === "damage_boost") {
+                let zoneConfig = getTurnAssistZoneTypeConfig(zone.type, this._config);
+                let damageMultiplier = Math.max(1, Number(zoneConfig.damageMultiplier) || 1);
+                bullet.damage = Math.max(bullet.damage, Math.round(bullet.baseDamage * damageMultiplier));
+                if (bullet.damageBoostAppliedZoneIds.indexOf(zone.id) < 0) {
+                    bullet.damageBoostAppliedZoneIds.push(zone.id);
+                }
+            }
+            else if (zone.type === "spread" && bullet.spreadTriggeredZoneIds.indexOf(zone.id) < 0) {
+                bullet.spreadTriggeredZoneIds.push(zone.id);
+                this.spawnSpreadBulletsFromZone(bullet, zone);
+            }
         }
     }
 
@@ -2336,7 +2350,14 @@ export default class TurnBattleMap extends cc.Component {
                 continue;
             }
             let id = String(zone.id);
-            this.createAssistZone(zone.camp, "black_hole", cc.v2(Number(zone.x) || 0, Number(zone.y) || 0), id);
+            this.createAssistZone(
+                "A",
+                (zone.zoneType || zone.type || "black_hole") as TurnAssistZoneType,
+                cc.v2(Number(zone.x) || 0, Number(zone.y) || 0),
+                id,
+                Number(zone.radius) || 0,
+                zone.extra || null,
+            );
             let numericId = parseInt(id, 10);
             if (Number.isFinite(numericId)) {
                 maxId = Math.max(maxId, numericId + 1);
@@ -2906,7 +2927,8 @@ export default class TurnBattleMap extends cc.Component {
         }
         if (slotType === "mirror") {
             let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.mirror;
-            return Math.max(1, Number(rule && rule.baseHp) || 10);
+            let baseHp = Math.max(1, Number(rule && rule.baseHp) || 10);
+            return baseHp * Math.max(1, resourceCount);
         }
         if (slotType === "exp") {
             let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.exp;
@@ -3002,6 +3024,9 @@ export default class TurnBattleMap extends cc.Component {
             return Math.max(0, Math.min(maxHp, hpFromCells));
         }
         if (slotType === "attack") {
+            return Math.max(0, Math.min(maxHp, hpFromCells));
+        }
+        if (slotType === "mirror") {
             return Math.max(0, Math.min(maxHp, hpFromCells));
         }
         let minHp = cellCount > 0 ? 1 : 0;
@@ -3402,13 +3427,19 @@ export default class TurnBattleMap extends cc.Component {
 
     private spawnRoundAssistZone() {
         this.clearAssistZones();
-        let point = this.findAssistZoneSpawnPoint();
-        if (!point) {
-            cc.warn("[TurnBattleMap] failed to find assist zone spawn point");
-            return;
+        let spawnCount = getTurnAssistZoneSpawnCount(this.getRoundIndexForAssistZones(), this._config);
+        for (let i = 0; i < spawnCount; i++) {
+            let type = this.pickRandomAssistZoneType();
+            let radius = this.randomAssistZoneRadius(type);
+            let point = this.findAssistZoneSpawnPoint(type, radius);
+            if (!point) {
+                cc.warn("[TurnBattleMap] failed to find assist zone spawn point", type, radius);
+                continue;
+            }
+            this.createAssistZone("A", type, point, null, radius);
+            let zoneConfig = getTurnAssistZoneTypeConfig(type, this._config);
+            this.showFloatText("生成" + (zoneConfig.name || "辅助区"), point.add(cc.v2(0, radius + 18)), new cc.Color(255, 255, 255, 255));
         }
-        this.createAssistZone("A", "black_hole", point);
-        this.showFloatText("放置黑洞区", point.add(cc.v2(0, this._config.assistZoneRadius + 18)), new cc.Color(255, 255, 255, 255));
     }
 
     private clearAssistZones() {
@@ -3418,26 +3449,112 @@ export default class TurnBattleMap extends cc.Component {
         this._assistZones = [];
     }
 
-    private findAssistZoneSpawnPoint(): cc.Vec2 {
+    private findAssistZoneSpawnPoint(type: TurnAssistZoneType, radius: number): cc.Vec2 {
         if (!this._assistArea) {
             return null;
         }
-        let center = cc.v2(this._assistArea.x + this._assistArea.width / 2, this._assistArea.y + this._assistArea.height / 2);
-        if (this.isZonePositionValid("A", center)) {
-            return center;
+        let minX = this._assistArea.x + radius + 8;
+        let maxX = this._assistArea.x + this._assistArea.width - radius - 8;
+        let minY = this._assistArea.y + radius + 8;
+        let maxY = this._assistArea.y + this._assistArea.height - radius - 8;
+        if (minX > maxX || minY > maxY) {
+            return null;
         }
-        let samples = [
-            cc.v2(this._assistArea.x + this._assistArea.width * 0.25, center.y),
-            cc.v2(this._assistArea.x + this._assistArea.width * 0.75, center.y),
-            cc.v2(center.x, this._assistArea.y + this._assistArea.height * 0.3),
-            cc.v2(center.x, this._assistArea.y + this._assistArea.height * 0.7),
-        ];
-        for (let i = 0; i < samples.length; i++) {
-            if (this.isZonePositionValid("A", samples[i])) {
-                return samples[i];
+        let retryCount = Math.max(1, Number(this._config.assistZones && this._config.assistZones.maxPlacementRetries) || 1);
+        for (let i = 0; i < retryCount; i++) {
+            let point = cc.v2(
+                this.randomRange(minX, maxX),
+                this.randomRange(minY, maxY),
+            );
+            if (this.isZonePositionValid(type, point, radius)) {
+                return point;
             }
         }
         return null;
+    }
+
+    private getRoundIndexForAssistZones(): number {
+        return Math.max(1, Math.floor(Number(this._roundIndex) || 1));
+    }
+
+    private pickRandomAssistZoneType(): TurnAssistZoneType {
+        let candidates: TurnAssistZoneType[] = ["black_hole", "spread", "damage_boost"];
+        return candidates[Math.floor(Math.random() * candidates.length)] || "black_hole";
+    }
+
+    private randomAssistZoneRadius(type: TurnAssistZoneType): number {
+        let typeConfig = getTurnAssistZoneTypeConfig(type, this._config);
+        let minRadius = Math.max(1, Number(typeConfig.minRadius) || 1);
+        let maxRadius = Math.max(minRadius, Number(typeConfig.maxRadius) || minRadius);
+        return Math.round(this.randomRange(minRadius, maxRadius));
+    }
+
+    private randomRange(min: number, max: number): number {
+        if (max <= min) {
+            return min;
+        }
+        return min + Math.random() * (max - min);
+    }
+
+    private getAssistZoneStyle(type: TurnAssistZoneType): { fill: cc.Color; stroke: cc.Color } {
+        if (type === "spread") {
+            return {
+                fill: new cc.Color(44, 112, 150, 92),
+                stroke: new cc.Color(126, 224, 255, 210),
+            };
+        }
+        if (type === "damage_boost") {
+            return {
+                fill: new cc.Color(136, 58, 48, 92),
+                stroke: new cc.Color(255, 170, 92, 210),
+            };
+        }
+        return {
+            fill: new cc.Color(66, 60, 120, 92),
+            stroke: new cc.Color(190, 140, 255, 210),
+        };
+    }
+
+    private spawnSpreadBulletsFromZone(sourceBullet: TurnBulletState, zone: TurnAssistZoneState) {
+        let zoneConfig = getTurnAssistZoneTypeConfig("spread", this._config);
+        let childCount = Math.max(0, Math.floor(Number(zoneConfig.spreadChildCount) || 0));
+        let spreadAngle = Math.max(0, Number(zoneConfig.spreadAngle) || 0);
+        let damageScale = Math.max(0, Number(zoneConfig.spreadDamageScale) || 0);
+        if (childCount <= 0 || spreadAngle <= 0 || damageScale <= 0) {
+            return;
+        }
+        let sourceAngle = this.vectorToAngle(sourceBullet.dir);
+        let sourcePos = this.getNodePosition(sourceBullet.node);
+        for (let i = 0; i < childCount; i++) {
+            let sign = i % 2 === 0 ? -1 : 1;
+            let step = Math.floor(i / 2) + 1;
+            let angle = sourceAngle + sign * spreadAngle * step;
+            let dir = this.angleToVector(angle);
+            this.createBullet(sourceBullet.camp, sourcePos.add(dir.mul(10)), dir, {
+                bulletBlockCount: 0,
+                attackBlockCount: 0,
+                attackMultiplier: 1,
+                totalShots: 1,
+                extraShotsFromUpgrade: 0,
+                extraShotsFromBulletBlock: 0,
+                bonusDamageFromUpgrade: 0,
+                bonusDamageFromAttackBlock: 0,
+                bulletDamage: Math.max(1, Math.round(sourceBullet.baseDamage * damageScale)),
+                bulletBounce: sourceBullet.bounceLeft,
+                shotsLeft: 0,
+            });
+            let child = this._bullets[this._bullets.length - 1];
+            if (child) {
+                child.lifeLeft = Math.min(child.lifeLeft, Math.max(0.6, sourceBullet.lifeLeft * 0.7));
+                child.damageBoostAppliedZoneIds = sourceBullet.damageBoostAppliedZoneIds.slice();
+                child.spreadTriggeredZoneIds = sourceBullet.spreadTriggeredZoneIds.slice();
+            }
+        }
+    }
+
+    private angleToVector(angle: number): cc.Vec2 {
+        let radians = angle * Math.PI / 180;
+        return cc.v2(Math.cos(radians), Math.sin(radians)).normalize();
     }
 
     private updateKeyboardTankMove(dt: number) {

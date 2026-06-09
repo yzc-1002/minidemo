@@ -1,9 +1,38 @@
 export type TurnCamp = "A" | "B";
 export type TurnPhase = "init" | "build" | "attack" | "waitBullet" | "settle" | "upgrade" | "finish";
 export type TurnUpgradeId = "bullet_bounce" | "extra_shot" | "damage_up" | "crystal_hp_up" | "cover_resource_up";
-export type TurnAssistZoneType = "black_hole";
+export type TurnAssistZoneType = "black_hole" | "spread" | "damage_boost";
 export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack";
 export type TurnMirrorDirection = "bl" | "br" | "tl" | "tr";
+
+export interface TurnAssistZoneTypeConfig {
+    name: string;
+    minRadius: number;
+    maxRadius: number;
+    blackHoleStrength?: number;
+    damageMultiplier?: number;
+    spreadChildCount?: number;
+    spreadAngle?: number;
+    spreadDamageScale?: number;
+}
+
+export interface TurnAssistZoneSpawnRuleConfig {
+    round1: number;
+    round2: number;
+    round3Plus: number;
+    maxSimultaneous: number;
+}
+
+export interface TurnAssistZoneConfig {
+    spawnRule: TurnAssistZoneSpawnRuleConfig;
+    maxPlacementRetries: number;
+    allowOverlap: boolean;
+    types: {
+        black_hole: TurnAssistZoneTypeConfig;
+        spread: TurnAssistZoneTypeConfig;
+        damage_boost: TurnAssistZoneTypeConfig;
+    };
+}
 
 export interface TurnUpgradeConfig {
     id: TurnUpgradeId;
@@ -141,8 +170,7 @@ export interface TurnGameConfig {
     bulletSpeed: number;
     bulletRadius: number;
     obstacleRadius: number;
-    assistZoneRadius: number;
-    blackHoleStrength: number;
+    assistZones: TurnAssistZoneConfig;
     obstacleBaseHp: number;
     obstacleMaxHp: number;
     obstacleHpRules: {
@@ -213,8 +241,38 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     bulletSpeed: 620,
     bulletRadius: 10,
     obstacleRadius: 26,
-    assistZoneRadius: 74,
-    blackHoleStrength: 2.7,
+    assistZones: {
+        spawnRule: {
+            round1: 1,
+            round2: 2,
+            round3Plus: 3,
+            maxSimultaneous: 3,
+        },
+        maxPlacementRetries: 24,
+        allowOverlap: false,
+        types: {
+            black_hole: {
+                name: "黑洞",
+                minRadius: 64,
+                maxRadius: 92,
+                blackHoleStrength: 2.7,
+            },
+            spread: {
+                name: "扩散",
+                minRadius: 58,
+                maxRadius: 84,
+                spreadChildCount: 2,
+                spreadAngle: 18,
+                spreadDamageScale: 0.6,
+            },
+            damage_boost: {
+                name: "增伤",
+                minRadius: 52,
+                maxRadius: 78,
+                damageMultiplier: 1.6,
+            },
+        },
+    },
     obstacleBaseHp: 10,
     obstacleMaxHp: 50,
     obstacleHpRules: {
@@ -355,6 +413,25 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
 export function getRoundObstacleGain(roundIndex: number, config?: TurnGameConfig): number {
     let cfg = config || TURN_GAME_CONFIG;
     return getRoundResourceTotal(roundIndex, 0, cfg) - getRoundResourceTotal(Math.max(1, roundIndex - 1), 0, cfg);
+}
+
+export function getTurnAssistZoneSpawnCount(roundIndex: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let rule = cfg.assistZones && cfg.assistZones.spawnRule;
+    let round = Math.max(1, Math.floor(Number(roundIndex) || 1));
+    let count = round <= 1
+        ? Math.max(0, Number(rule && rule.round1) || 0)
+        : round === 2
+            ? Math.max(0, Number(rule && rule.round2) || 0)
+            : Math.max(0, Number(rule && rule.round3Plus) || 0);
+    let maxSimultaneous = Math.max(0, Number(rule && rule.maxSimultaneous) || 0);
+    return maxSimultaneous > 0 ? Math.min(maxSimultaneous, count) : count;
+}
+
+export function getTurnAssistZoneTypeConfig(type: TurnAssistZoneType, config?: TurnGameConfig): TurnAssistZoneTypeConfig {
+    let cfg = config || TURN_GAME_CONFIG;
+    let types = cfg.assistZones && cfg.assistZones.types;
+    return types && types[type] ? types[type] : types.black_hole;
 }
 
 export function getRoundBuildSeconds(roundIndex: number, config?: TurnGameConfig): number {

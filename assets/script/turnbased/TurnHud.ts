@@ -65,7 +65,7 @@ export default class TurnHud extends cc.Component {
         this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -200, 190);
         this.expLabel = this.createLabel("A: 0  |  B: 0", 20, -200, 160);
         this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -210, 130);
-        this.zoneLabel = this.createLabel("场上黑洞区: 0", 20, -210, 100);
+        this.zoneLabel = this.createLabel("场上辅助区: 0", 20, -210, 100);
         this.bondLabel = this.createLabel("A 羁绊: -", 18, -190, 70);
         this.bondLabel.horizontalAlign = cc.Label.HorizontalAlign.LEFT;
         this.bondLabel.overflow = cc.Label.Overflow.RESIZE_HEIGHT;
@@ -164,12 +164,12 @@ export default class TurnHud extends cc.Component {
         this.expLabel.string = "A Lv." + aLevel + ": " + aExp + "/" + aExpNeed + "  |  B Lv." + bLevel + ": " + bExp + "/" + bExpNeed;
     }
 
-    refreshZones(aBlackHole: number, bBlackHole: number) {
+    refreshZones(aZoneCount: number, bZoneCount: number) {
         if (!this.zoneLabel) {
             return;
         }
 
-        this.zoneLabel.string = "场上黑洞区: " + Math.max(aBlackHole, bBlackHole);
+        this.zoneLabel.string = "场上辅助区: " + Math.max(aZoneCount, bZoneCount);
     }
 
     refreshBonds(aText: string, bText: string) {
