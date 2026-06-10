@@ -798,7 +798,11 @@ export default class TurnHud extends cc.Component {
         graphics.roundRect(-205, -28, 410, 56, 8);
         graphics.stroke();
 
-        let label = this.createLabel(option.name + "  " + option.desc, 18, 0, -3);
+        let currentStacks = Math.max(0, Math.floor(Number((option as any).currentStacks) || 0));
+        let stackText = option.maxStacks == null
+            ? "Lv." + currentStacks
+            : "Lv." + currentStacks + "/" + option.maxStacks;
+        let label = this.createLabel("[" + stackText + "] " + option.name + "  " + option.desc, 18, 0, -3);
         label.node.parent = node;
         node.on(cc.Node.EventType.TOUCH_END, function (event: cc.Event.EventTouch) {
             event.stopPropagation();

@@ -137,6 +137,10 @@ export interface TurnBondUpgradeSnapshot {
     extraShots: number;
     damageBonus: number;
     bulletBounce: number;
+    firstBounceDamageMultiplier?: number;
+    spreadExtraSplit?: number;
+    damageBoostTempAttack?: number;
+    blackHoleStrengthMultiplier?: number;
 }
 
 export interface TurnAttackBondSnapshot {
@@ -150,6 +154,10 @@ export interface TurnAttackBondSnapshot {
     bonusDamageFromAttackBlock: number;
     bulletDamage: number;
     bulletBounce: number;
+    firstBounceDamageMultiplier: number;
+    spreadExtraSplit: number;
+    damageBoostTempAttack: number;
+    blackHoleStrengthMultiplier: number;
     shotsLeft: number;
 }
 
@@ -176,6 +184,24 @@ export interface TurnRoundResourceSlot {
     mirrorDir: TurnMirrorDirection | "";
     placed: boolean;
     placedObstacleId: string;
+}
+
+export interface TurnResourceHpBonusByType {
+    normal: number;
+    exp: number;
+    energy: number;
+    bullet: number;
+    bleed: number;
+}
+
+export interface TurnDerivedUpgradeState {
+    bulletBounceBonus: number;
+    firstBounceDamageMultiplier: number;
+    roundResourceBonus: number;
+    resourceHpBonusByType: TurnResourceHpBonusByType;
+    spreadExtraSplit: number;
+    damageBoostTempAttack: number;
+    blackHoleStrengthMultiplier: number;
 }
 
 export interface TurnGameConfig {
@@ -543,6 +569,10 @@ export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, u
     let extraShotsFromUpgrade = Math.max(0, Math.floor(Number(upgrades && upgrades.extraShots) || 0));
     let bonusDamageFromUpgrade = Math.max(0, Math.floor(Number(upgrades && upgrades.damageBonus) || 0));
     let bulletBounce = Math.max(0, Math.floor(Number(upgrades && upgrades.bulletBounce) || 0));
+    let firstBounceDamageMultiplier = Math.max(1, Number(upgrades && upgrades.firstBounceDamageMultiplier) || 1);
+    let spreadExtraSplit = Math.max(0, Math.floor(Number(upgrades && upgrades.spreadExtraSplit) || 0));
+    let damageBoostTempAttack = Math.max(0, Math.floor(Number(upgrades && upgrades.damageBoostTempAttack) || 0));
+    let blackHoleStrengthMultiplier = Math.max(1, Number(upgrades && upgrades.blackHoleStrengthMultiplier) || 1);
     let extraShotsFromBulletBlock = getTurnBulletExtraShots(safeCounts.bullet, cfg);
     let attackMultiplier = getTurnBondMultiplier("attack", safeCounts.attack, cfg);
     let bonusDamageFromAttackBlock = getTurnBondValue("attack", safeCounts.attack, cfg);
@@ -558,6 +588,10 @@ export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, u
         bonusDamageFromAttackBlock: bonusDamageFromAttackBlock,
         bulletDamage: Math.max(1, Number(cfg.bulletDamage) || 1) + bonusDamageFromUpgrade + bonusDamageFromAttackBlock,
         bulletBounce: bulletBounce,
+        firstBounceDamageMultiplier: firstBounceDamageMultiplier,
+        spreadExtraSplit: spreadExtraSplit,
+        damageBoostTempAttack: damageBoostTempAttack,
+        blackHoleStrengthMultiplier: blackHoleStrengthMultiplier,
         shotsLeft: totalShots,
     };
 }

@@ -7,11 +7,14 @@ import {
     TurnAttackBondSnapshot,
     TurnBondCountMap,
     TurnCamp,
+    TurnDerivedUpgradeState,
     TurnGameConfig,
     TurnObstacleResourceType,
     TurnPhase,
-    TurnSettlementBondSnapshot,
+    TurnResourceHpBonusByType,
     TurnUpgradeConfig,
+    TurnSettlementBondSnapshot,
+    TurnUpgradeEffectType,
     TurnUpgradeId,
     TURN_GAME_CONFIG,
 } from "../config/TurnGame";
@@ -151,6 +154,11 @@ interface TurnBulletState {
     currentDamageBoostZoneIds: string[];
     damageBoostAppliedZoneIds: string[];
     spreadTriggeredZoneIds: string[];
+    firstBounceDamageBoostApplied: boolean;
+    firstBounceDamageMultiplier: number;
+    spreadExtraSplit: number;
+    damageBoostTempAttack: number;
+    blackHoleStrengthMultiplier: number;
 }
 
 interface TurnAssistZoneState {
@@ -172,6 +180,7 @@ interface TurnCampStats {
     energyTowers: number;
     roundResourceBonus: number;
     upgradeStacks: { [id: string]: number };
+    derivedUpgrades: TurnDerivedUpgradeState;
 }
 
 type TurnAttackSnapshotState = TurnAttackBondSnapshot;
@@ -448,12 +457,14 @@ export default class TurnBattleMap extends cc.Component {
         statsB.damageBonus = Math.max(0, Number(upgradesB.damageAdd) || 0);
         statsA.extraShots = Math.max(0, Number(upgradesA.multiShot) || 0);
         statsB.extraShots = Math.max(0, Number(upgradesB.multiShot) || 0);
-        statsA.bulletBounce = Math.max(0, Number(upgradesA.bulletBounce) || 0);
-        statsB.bulletBounce = Math.max(0, Number(upgradesB.bulletBounce) || 0);
-        statsA.roundResourceBonus = Math.max(0, Number(upgradesA.roundResourceBonus) || 0);
-        statsB.roundResourceBonus = Math.max(0, Number(upgradesB.roundResourceBonus) || 0);
         statsA.upgradeStacks = upgradesA.stacks || {};
         statsB.upgradeStacks = upgradesB.stacks || {};
+        statsA.derivedUpgrades = upgradesA.derived || this.buildDerivedUpgradeState(statsA.upgradeStacks);
+        statsB.derivedUpgrades = upgradesB.derived || this.buildDerivedUpgradeState(statsB.upgradeStacks);
+        statsA.bulletBounce = upgradesA.bulletBounce != null ? Math.max(0, Number(upgradesA.bulletBounce) || 0) : statsA.derivedUpgrades.bulletBounceBonus;
+        statsB.bulletBounce = upgradesB.bulletBounce != null ? Math.max(0, Number(upgradesB.bulletBounce) || 0) : statsB.derivedUpgrades.bulletBounceBonus;
+        statsA.roundResourceBonus = upgradesA.roundResourceBonus != null ? Math.max(0, Number(upgradesA.roundResourceBonus) || 0) : statsA.derivedUpgrades.roundResourceBonus;
+        statsB.roundResourceBonus = upgradesB.roundResourceBonus != null ? Math.max(0, Number(upgradesB.roundResourceBonus) || 0) : statsB.derivedUpgrades.roundResourceBonus;
         statsA.energyTowers = this.countPlacedEnergyTowers("A");
         statsB.energyTowers = this.countPlacedEnergyTowers("B");
         if (snapshot.attackSnapshots) {
@@ -698,7 +709,7 @@ export default class TurnBattleMap extends cc.Component {
             if (option.maxStacks != null && stacks >= option.maxStacks) {
                 continue;
             }
-            pool.push(option);
+            pool.push(Object.assign({}, option, { currentStacks: stacks }));
         }
 
         let options: TurnUpgradeConfig[] = [];
@@ -720,27 +731,19 @@ export default class TurnBattleMap extends cc.Component {
         if (stats.exp < stats.expNeed) {
             return;
         }
-        let option: TurnUpgradeConfig = null;
-        for (let i = 0; i < this._config.upgradePool.length; i++) {
-            if (this._config.upgradePool[i].id === upgradeId) {
-                option = this._config.upgradePool[i];
-                break;
-            }
-        }
+        let option = this.getUpgradeConfig(upgradeId);
         if (!option) {
             return;
         }
+        let previousStacks = Object.assign({}, stats.upgradeStacks);
 
         stats.exp -= stats.expNeed;
         stats.expNeed += 20;
         stats.level += 1;
         stats.upgradeStacks[upgradeId] = Math.max(0, Number(stats.upgradeStacks[upgradeId]) || 0) + 1;
-        let effect = option.effect;
-        if (effect && effect.type === "bullet_bounce") {
-            stats.bulletBounce += Math.max(0, Number(effect.value) || 0);
-        }
-        else if (effect && effect.type === "round_resource") {
-            stats.roundResourceBonus += Math.max(0, Number(effect.value) || 0);
+        this.refreshDerivedUpgradeState(camp);
+        if (option.effect && option.effect.type === "resource_hp") {
+            this.refreshCampResourceHpByUpgrade(camp, option.effect.targetResourceType, previousStacks);
         }
 
         this.showFloatText("阵营 " + camp + " 升级", cc.v2(camp === "A" ? -150 : 150, 0), cc.Color.YELLOW);
@@ -1145,6 +1148,7 @@ export default class TurnBattleMap extends cc.Component {
         let snapshot = attackSnapshot || this._attackSnapshot;
         let damage = snapshot ? snapshot.bulletDamage : (this._config.bulletDamage + stats.damageBonus);
         let bounceLeft = snapshot ? snapshot.bulletBounce : stats.bulletBounce;
+        let derived = stats.derivedUpgrades || this.buildDerivedUpgradeState(stats.upgradeStacks);
         this._bullets.push({
             node: node,
             camp: camp,
@@ -1162,6 +1166,11 @@ export default class TurnBattleMap extends cc.Component {
             currentDamageBoostZoneIds: [],
             damageBoostAppliedZoneIds: [],
             spreadTriggeredZoneIds: [],
+            firstBounceDamageBoostApplied: false,
+            firstBounceDamageMultiplier: snapshot ? snapshot.firstBounceDamageMultiplier : derived.firstBounceDamageMultiplier,
+            spreadExtraSplit: snapshot ? snapshot.spreadExtraSplit : derived.spreadExtraSplit,
+            damageBoostTempAttack: snapshot ? snapshot.damageBoostTempAttack : derived.damageBoostTempAttack,
+            blackHoleStrengthMultiplier: snapshot ? snapshot.blackHoleStrengthMultiplier : derived.blackHoleStrengthMultiplier,
         });
     }
 
@@ -1201,10 +1210,11 @@ export default class TurnBattleMap extends cc.Component {
             }
             let cellIndex = hitInfo.cellIndex;
             let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, bullet.damage);
-            if (obstacle.slotType === "mirror") {
+            if (obstacle.slotType === "mirror" && bullet.bounceLeft > 0) {
                 this.reflectBulletOffRect(bullet, hitInfo.rect);
                 bullet.bounceLeft = Math.max(0, bullet.bounceLeft - 1);
                 bullet.hasBounced = true;
+                this.applyFirstBounceDamageBoostIfNeeded(bullet);
             }
             if (this._serverMode && bullet.camp === "A" && appliedDamage > 0) {
                 this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
@@ -1273,6 +1283,7 @@ export default class TurnBattleMap extends cc.Component {
                 this.reflectBulletOffRect(bullet, obstacle.rect);
                 bullet.bounceLeft -= 1;
                 bullet.hasBounced = true;
+                this.applyFirstBounceDamageBoostIfNeeded(bullet);
                 return false;
             }
             return true;
@@ -1389,8 +1400,8 @@ export default class TurnBattleMap extends cc.Component {
         label.node.y = bounds.minY * this._dynamicObstacleSize.height - 18;
         label.node.zIndex = 5;
         label.node.color = new cc.Color(255, 248, 220, 255);
-        let maxHp = this.resolveObstacleMaxHp(slotType, resourceCount, Number(snapshot && snapshot.maxHp));
-        let cellHp = this.buildObstacleCellHp(slotType, resourceCount, layout.length, snapshot && snapshot.cellHp);
+        let maxHp = this.resolveObstacleMaxHp(slotType, resourceCount, Number(snapshot && snapshot.maxHp), camp);
+        let cellHp = this.buildObstacleCellHp(slotType, resourceCount, layout.length, snapshot && snapshot.cellHp, camp);
         let hp = this.resolveObstacleHp(slotType, layout.length, Number(snapshot && snapshot.hp), cellHp, maxHp);
 
         let id = forcedId || String(this._nextObstacleId++);
@@ -1699,7 +1710,100 @@ export default class TurnBattleMap extends cc.Component {
             energyTowers: 0,
             roundResourceBonus: 0,
             upgradeStacks: {},
+            derivedUpgrades: this.buildDerivedUpgradeState({}),
         };
+    }
+
+    private getUpgradeConfig(upgradeId: string): TurnUpgradeConfig {
+        for (let i = 0; i < this._config.upgradePool.length; i++) {
+            if (this._config.upgradePool[i].id === upgradeId) {
+                return this._config.upgradePool[i];
+            }
+        }
+        return null;
+    }
+
+    private getUpgradeConfigsByEffect(type: TurnUpgradeEffectType, targetResourceType?: TurnObstacleResourceType): TurnUpgradeConfig[] {
+        let result: TurnUpgradeConfig[] = [];
+        for (let i = 0; i < this._config.upgradePool.length; i++) {
+            let option = this._config.upgradePool[i];
+            let effect = option && option.effect;
+            if (!effect || effect.type !== type) {
+                continue;
+            }
+            if (targetResourceType && effect.targetResourceType !== targetResourceType) {
+                continue;
+            }
+            result.push(option);
+        }
+        return result;
+    }
+
+    private getUpgradeStack(stacks: { [id: string]: number }, id: string): number {
+        return Math.max(0, Math.floor(Number(stacks && stacks[id]) || 0));
+    }
+
+    private getUpgradeAddValue(stacks: { [id: string]: number }, type: TurnUpgradeEffectType, targetResourceType?: TurnObstacleResourceType): number {
+        let total = 0;
+        let options = this.getUpgradeConfigsByEffect(type, targetResourceType);
+        for (let i = 0; i < options.length; i++) {
+            let option = options[i];
+            let effect = option.effect;
+            let stack = this.getUpgradeStack(stacks, option.id);
+            if (stack <= 0 || !effect || effect.stackMode !== "add") {
+                continue;
+            }
+            let effectiveStack = option.maxStacks == null ? stack : Math.min(stack, Math.max(0, Number(option.maxStacks) || 0));
+            total += effectiveStack * (Number(effect.value) || 0);
+        }
+        return total;
+    }
+
+    private getUpgradeMultiplyValue(stacks: { [id: string]: number }, type: TurnUpgradeEffectType, targetResourceType?: TurnObstacleResourceType): number {
+        let multiplier = 1;
+        let options = this.getUpgradeConfigsByEffect(type, targetResourceType);
+        for (let i = 0; i < options.length; i++) {
+            let option = options[i];
+            let effect = option.effect;
+            let stack = this.getUpgradeStack(stacks, option.id);
+            if (stack <= 0 || !effect) {
+                continue;
+            }
+            let effectiveStack = option.maxStacks == null ? stack : Math.min(stack, Math.max(0, Number(option.maxStacks) || 0));
+            if (effect.stackMode === "multiply") {
+                multiplier *= Math.pow(Math.max(0, Number(effect.value) || 1), effectiveStack);
+            }
+            else if (effect.stackMode === "add") {
+                multiplier *= 1 + effectiveStack * (Number(effect.value) || 0);
+            }
+        }
+        return Math.max(1, multiplier);
+    }
+
+    private buildDerivedUpgradeState(stacks: { [id: string]: number }): TurnDerivedUpgradeState {
+        let resourceHpBonusByType: TurnResourceHpBonusByType = {
+            normal: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "resource_hp", "normal"))),
+            exp: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "resource_hp", "exp"))),
+            energy: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "resource_hp", "energy"))),
+            bullet: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "resource_hp", "bullet"))),
+            bleed: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "resource_hp", "bleed"))),
+        };
+        return {
+            bulletBounceBonus: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "bullet_bounce"))),
+            firstBounceDamageMultiplier: this.getUpgradeMultiplyValue(stacks, "first_bounce_damage"),
+            roundResourceBonus: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "round_resource"))),
+            resourceHpBonusByType: resourceHpBonusByType,
+            spreadExtraSplit: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "spread_extra_split"))),
+            damageBoostTempAttack: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "damage_boost_temp_attack"))),
+            blackHoleStrengthMultiplier: this.getUpgradeMultiplyValue(stacks, "black_hole_strength"),
+        };
+    }
+
+    private refreshDerivedUpgradeState(camp: TurnCamp) {
+        let stats = this.getCampStats(camp);
+        stats.derivedUpgrades = this.buildDerivedUpgradeState(stats.upgradeStacks || {});
+        stats.bulletBounce = stats.derivedUpgrades.bulletBounceBonus;
+        stats.roundResourceBonus = stats.derivedUpgrades.roundResourceBonus;
     }
 
     private getObstacleSlotState(camp: TurnCamp, slotId: string): TurnObstacleSlotState {
@@ -1936,11 +2040,11 @@ export default class TurnBattleMap extends cc.Component {
         return result;
     }
 
-    private buildObstacleCellHp(slotType: TurnObstacleResourceType, resourceCount: number, count: number, source: any): number[] {
+    private buildObstacleCellHp(slotType: TurnObstacleResourceType, resourceCount: number, count: number, source: any, camp?: TurnCamp): number[] {
         if (slotType !== "exp") {
-            return this.buildCellHpFromSnapshot(source, count, this.getObstacleCellMaxHp(slotType));
+            return this.buildCellHpFromSnapshot(source, count, this.getObstacleCellMaxHp(slotType, camp));
         }
-        let defaultHpList = this.buildExpCellHpList(resourceCount, count);
+        let defaultHpList = this.buildExpCellHpList(resourceCount, count, camp);
         let result: number[] = [];
         for (let i = 0; i < count; i++) {
             let fallbackHp = defaultHpList[i] || 1;
@@ -1977,6 +2081,10 @@ export default class TurnBattleMap extends cc.Component {
             extraShots: stats.extraShots,
             damageBonus: stats.damageBonus,
             bulletBounce: stats.bulletBounce,
+            firstBounceDamageMultiplier: stats.derivedUpgrades.firstBounceDamageMultiplier,
+            spreadExtraSplit: stats.derivedUpgrades.spreadExtraSplit,
+            damageBoostTempAttack: stats.derivedUpgrades.damageBoostTempAttack,
+            blackHoleStrengthMultiplier: stats.derivedUpgrades.blackHoleStrengthMultiplier,
         }, this._config);
     }
 
@@ -2000,6 +2108,10 @@ export default class TurnBattleMap extends cc.Component {
             bonusDamageFromAttackBlock: Math.max(0, Number(source.bonusDamageFromAttackBlock) || 0),
             bulletDamage: Math.max(1, Number(source.bulletDamage) || this._config.bulletDamage),
             bulletBounce: Math.max(0, Number(source.bulletBounce) || 0),
+            firstBounceDamageMultiplier: Math.max(1, Number(source.firstBounceDamageMultiplier) || 1),
+            spreadExtraSplit: Math.max(0, Number(source.spreadExtraSplit) || 0),
+            damageBoostTempAttack: Math.max(0, Number(source.damageBoostTempAttack) || 0),
+            blackHoleStrengthMultiplier: Math.max(1, Number(source.blackHoleStrengthMultiplier) || 1),
             shotsLeft: Math.max(0, Number(source.shotsLeft) || 0),
         };
     }
@@ -2023,9 +2135,9 @@ export default class TurnBattleMap extends cc.Component {
         };
     }
 
-    private buildExpCellHpList(resourceCount: number, cellCount: number): number[] {
+    private buildExpCellHpList(resourceCount: number, cellCount: number, camp?: TurnCamp): number[] {
         let safeCells = Math.max(1, Math.floor(Number(cellCount) || 1));
-        let maxHp = this.getObstacleMaxHp("exp", resourceCount);
+        let maxHp = this.getObstacleMaxHp("exp", resourceCount, camp);
         let basePerCell = Math.floor(maxHp / safeCells);
         let remainder = maxHp % safeCells;
         let result: number[] = [];
@@ -2033,6 +2145,33 @@ export default class TurnBattleMap extends cc.Component {
             result.push(basePerCell + (i < remainder ? 1 : 0));
         }
         return result;
+    }
+
+    private refreshCampResourceHpByUpgrade(camp: TurnCamp, targetResourceType?: TurnObstacleResourceType, previousStacks?: { [id: string]: number }) {
+        if (!targetResourceType || targetResourceType === "mirror" || targetResourceType === "attack") {
+            return;
+        }
+        let stats = this.getCampStats(camp);
+        let currentDerived = stats.derivedUpgrades;
+        let previousDerived = this.buildDerivedUpgradeState(previousStacks || {});
+        for (let i = 0; i < this._obstacles.length; i++) {
+            let obstacle = this._obstacles[i];
+            if (!obstacle || obstacle.camp !== camp || obstacle.slotType !== targetResourceType) {
+                continue;
+            }
+            stats.derivedUpgrades = previousDerived;
+            let previousCellHp = this.buildObstacleCellHp(obstacle.slotType, obstacle.resourceCount, obstacle.layout.length, null, camp);
+            stats.derivedUpgrades = currentDerived;
+            let nextCellHp = this.buildObstacleCellHp(obstacle.slotType, obstacle.resourceCount, obstacle.layout.length, null, camp);
+            for (let j = 0; j < obstacle.cellHp.length && j < nextCellHp.length; j++) {
+                let delta = Math.max(0, nextCellHp[j] - (previousCellHp[j] || 0));
+                obstacle.cellHp[j] = Math.min(nextCellHp[j], Math.max(0, obstacle.cellHp[j]) + delta);
+            }
+            obstacle.maxHp = this.getObstacleMaxHp(obstacle.slotType, obstacle.resourceCount, camp);
+            obstacle.hp = this.sumObstacleCellHp(obstacle);
+            this.refreshObstacleHpLabel(obstacle);
+        }
+        stats.derivedUpgrades = currentDerived;
     }
 
     private getObstacleFillColor(camp: TurnCamp, valid: boolean, slotType: TurnObstacleResourceType): cc.Color {
@@ -2177,7 +2316,7 @@ export default class TurnBattleMap extends cc.Component {
             if (zone.type === "black_hole") {
                 let zoneConfig = getTurnAssistZoneTypeConfig(zone.type, this._config);
                 let ratio = 1 - distance / zone.radius;
-                let strength = Math.max(0, Number(zoneConfig.blackHoleStrength) || 0);
+                let strength = Math.max(0, Number(zoneConfig.blackHoleStrength) || 0) * Math.max(1, Number(bullet.blackHoleStrengthMultiplier) || 1);
                 let curvePower = Math.max(0.1, Number(zoneConfig.blackHoleCurvePower) || 1);
                 let maxOffsetPerTick = Math.max(0, Number(zoneConfig.blackHoleMaxOffsetPerTick) || 0);
                 let curvedRatio = Math.pow(Math.max(0, ratio), curvePower);
@@ -2200,6 +2339,9 @@ export default class TurnBattleMap extends cc.Component {
             if (nextSpreadZoneIds.indexOf(zoneId) >= 0) {
                 continue;
             }
+            if (bullet.spreadTriggeredZoneIds.length > 0) {
+                continue;
+            }
             let spreadZone = this._assistZones.find((zone) => zone.id === zoneId && zone.type === "spread");
             if (spreadZone) {
                 bullet.spreadTriggeredZoneIds.push(zoneId);
@@ -2217,6 +2359,16 @@ export default class TurnBattleMap extends cc.Component {
         bullet.currentSpreadZoneIds = nextSpreadZoneIds;
         bullet.currentDamageBoostZoneIds = nextDamageBoostZoneIds;
         bullet.damage = Math.max(0, Math.round(bullet.baseDamage * bullet.damageMultiplier));
+    }
+
+    private applyFirstBounceDamageBoostIfNeeded(bullet: TurnBulletState) {
+        let multiplier = Math.max(1, Number(bullet.firstBounceDamageMultiplier) || 1);
+        if (!bullet || bullet.firstBounceDamageBoostApplied || multiplier <= 1) {
+            return;
+        }
+        bullet.baseDamage = Math.max(0, Math.round((Number(bullet.baseDamage) || 0) * multiplier));
+        bullet.damage = Math.max(0, Math.round(bullet.baseDamage * Math.max(1, Number(bullet.damageMultiplier) || 1)));
+        bullet.firstBounceDamageBoostApplied = true;
     }
 
     private keepBulletInMap(bullet: TurnBulletState): boolean {
@@ -2248,6 +2400,7 @@ export default class TurnBattleMap extends cc.Component {
         if (bounced) {
             bullet.bounceLeft -= 1;
             bullet.hasBounced = true;
+            this.applyFirstBounceDamageBoostIfNeeded(bullet);
             bullet.node.setPosition(position.x, position.y);
             bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
         }
@@ -2946,7 +3099,7 @@ export default class TurnBattleMap extends cc.Component {
         let after = Math.max(0, before - damage);
         obstacle.cellHp[cellIndex] = after;
         obstacle.hp = this.sumObstacleCellHp(obstacle);
-        obstacle.maxHp = this.resolveObstacleMaxHp(obstacle.slotType, obstacle.resourceCount, obstacle.maxHp);
+        obstacle.maxHp = this.resolveObstacleMaxHp(obstacle.slotType, obstacle.resourceCount, obstacle.maxHp, obstacle.camp);
         return before - after;
     }
 
@@ -2958,81 +3111,94 @@ export default class TurnBattleMap extends cc.Component {
         }
     }
 
-    private getObstacleMaxHp(slotType: TurnObstacleResourceType, resourceCount: number): number {
+    private getResourceHpBaseAndMax(slotType: TurnObstacleResourceType): { baseHp: number; maxHp: number } {
+        let rule = this._config.obstacleHpRules && this._config.obstacleHpRules[slotType];
+        let baseHp = Math.max(1, Number(rule && rule.baseHp) || (slotType === "mirror" ? 10 : this._config.obstacleBaseHp));
+        let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || (slotType === "mirror" ? baseHp : this._config.obstacleMaxHp));
+        return { baseHp: baseHp, maxHp: maxHp };
+    }
+
+    private getResourceHpUpgradeBonus(camp: TurnCamp, slotType: TurnObstacleResourceType): number {
+        if (!camp || slotType === "mirror" || slotType === "attack") {
+            return 0;
+        }
+        let stats = this.getCampStats(camp);
+        let bonusMap = stats.derivedUpgrades && stats.derivedUpgrades.resourceHpBonusByType;
+        return Math.max(0, Math.floor(Number(bonusMap && bonusMap[slotType]) || 0));
+    }
+
+    private getObstacleMaxHp(slotType: TurnObstacleResourceType, resourceCount: number, camp?: TurnCamp): number {
         if (slotType === "normal") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.normal;
-            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
-            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
+            let maxHp = rule.maxHp;
             return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
         }
         if (slotType === "mirror") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.mirror;
-            let baseHp = Math.max(1, Number(rule && rule.baseHp) || 10);
-            return baseHp * Math.max(1, resourceCount);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            return rule.baseHp * Math.max(1, resourceCount);
         }
         if (slotType === "exp") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.exp;
-            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
-            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
+            let maxHp = rule.maxHp;
             return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
         }
         if (slotType === "energy") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.energy;
-            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
-            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
+            let maxHp = rule.maxHp;
             return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
         }
         if (slotType === "bleed") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.bleed;
-            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
-            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
+            let maxHp = rule.maxHp;
             return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
         }
         if (slotType === "bullet") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.bullet;
-            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
-            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
+            let maxHp = rule.maxHp;
             return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
         }
         if (slotType === "attack") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.attack;
-            let baseHp = Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
-            let maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || this._config.obstacleMaxHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            let baseHp = rule.baseHp;
+            let maxHp = rule.maxHp;
             return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
         }
         return Math.min(this._config.obstacleMaxHp, this._config.obstacleBaseHp * Math.max(1, resourceCount));
     }
 
-    private getObstacleCellMaxHp(slotType: TurnObstacleResourceType): number {
+    private getObstacleCellMaxHp(slotType: TurnObstacleResourceType, camp?: TurnCamp): number {
         if (slotType === "mirror") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.mirror;
-            return Math.max(1, Number(rule && rule.baseHp) || 10);
+            return this.getResourceHpBaseAndMax(slotType).baseHp;
         }
         if (slotType === "normal") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.normal;
-            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            return Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
         }
         if (slotType === "energy") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.energy;
-            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            return Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
         }
         if (slotType === "bleed") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.bleed;
-            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            return Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
         }
         if (slotType === "bullet") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.bullet;
-            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            return Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
         }
         if (slotType === "attack") {
-            let rule = this._config.obstacleHpRules && this._config.obstacleHpRules.attack;
-            return Math.max(1, Number(rule && rule.baseHp) || this._config.obstacleBaseHp);
+            return this.getResourceHpBaseAndMax(slotType).baseHp;
         }
-        return this.getObstacleMaxHp(slotType, 1);
+        return this.getObstacleMaxHp(slotType, 1, camp);
     }
 
-    private resolveObstacleMaxHp(slotType: TurnObstacleResourceType, resourceCount: number, snapshotMaxHp?: number): number {
-        let configMax = this.getObstacleMaxHp(slotType, resourceCount);
+    private resolveObstacleMaxHp(slotType: TurnObstacleResourceType, resourceCount: number, snapshotMaxHp?: number, camp?: TurnCamp): number {
+        let configMax = this.getObstacleMaxHp(slotType, resourceCount, camp);
         if (!Number.isFinite(snapshotMaxHp)) {
             return configMax;
         }
@@ -3557,7 +3723,8 @@ export default class TurnBattleMap extends cc.Component {
 
     private spawnSpreadBulletsFromZone(sourceBullet: TurnBulletState, zone: TurnAssistZoneState) {
         let zoneConfig = getTurnAssistZoneTypeConfig("spread", this._config);
-        let splitCount = Math.max(1, Math.floor(Number(zoneConfig.spreadSplitCount) || 1));
+        let safeExtraSplit = Math.min(8, Math.max(0, Math.floor(Number(sourceBullet.spreadExtraSplit) || 0)));
+        let splitCount = Math.min(12, Math.max(1, Math.floor(Number(zoneConfig.spreadSplitCount) || 1) + safeExtraSplit));
         let spreadStepAngle = Math.max(0, Number(zoneConfig.spreadSplitStepAngle) || 0);
         if (splitCount <= 1) {
             return;
@@ -3579,6 +3746,10 @@ export default class TurnBattleMap extends cc.Component {
                 bonusDamageFromAttackBlock: 0,
                 bulletDamage: Math.max(1, Math.round(sourceBullet.baseDamage)),
                 bulletBounce: sourceBullet.bounceLeft,
+                firstBounceDamageMultiplier: sourceBullet.firstBounceDamageMultiplier,
+                spreadExtraSplit: sourceBullet.spreadExtraSplit,
+                damageBoostTempAttack: sourceBullet.damageBoostTempAttack,
+                blackHoleStrengthMultiplier: sourceBullet.blackHoleStrengthMultiplier,
                 shotsLeft: 0,
             });
             let child = this._bullets[this._bullets.length - 1];
@@ -3594,6 +3765,11 @@ export default class TurnBattleMap extends cc.Component {
                 child.currentDamageBoostZoneIds = [];
                 child.damageBoostAppliedZoneIds = sourceBullet.damageBoostAppliedZoneIds.slice();
                 child.spreadTriggeredZoneIds = sourceBullet.spreadTriggeredZoneIds.slice();
+                child.firstBounceDamageBoostApplied = sourceBullet.firstBounceDamageBoostApplied;
+                child.firstBounceDamageMultiplier = sourceBullet.firstBounceDamageMultiplier;
+                child.spreadExtraSplit = sourceBullet.spreadExtraSplit;
+                child.damageBoostTempAttack = sourceBullet.damageBoostTempAttack;
+                child.blackHoleStrengthMultiplier = sourceBullet.blackHoleStrengthMultiplier;
             }
         }
     }
@@ -3604,6 +3780,7 @@ export default class TurnBattleMap extends cc.Component {
         let nextLevel = Math.min(maxMultiplier, Math.max(1, Math.floor(Number(bullet.damageBoostLevel) || 1)) + 1);
         bullet.damageBoostLevel = nextLevel;
         bullet.damageMultiplier = nextLevel;
+        bullet.baseDamage += Math.max(0, Math.floor(Number(bullet.damageBoostTempAttack) || 0));
         if (bullet.damageBoostAppliedZoneIds.indexOf(zoneId) < 0) {
             bullet.damageBoostAppliedZoneIds.push(zoneId);
         }

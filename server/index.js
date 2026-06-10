@@ -681,6 +681,85 @@ function mapUpgradeIdFromClient(optionId) {
   return optionId;
 }
 
+function getTurnUpgradeConfig(upgradeId) {
+  return TURN_UPGRADE_POOL.find((option) => option && option.id === upgradeId) || null;
+}
+
+function getTurnUpgradeConfigsByEffect(type, targetResourceType) {
+  return TURN_UPGRADE_POOL.filter((option) => {
+    const effect = option && option.effect;
+    if (!effect || effect.type !== type) {
+      return false;
+    }
+    return !targetResourceType || effect.targetResourceType === targetResourceType;
+  });
+}
+
+function getTurnUpgradeStackFromStacks(stacks, upgradeId) {
+  return Math.max(0, Math.floor(Number(stacks && stacks[upgradeId]) || 0));
+}
+
+function getTurnUpgradeAddValue(stacks, type, targetResourceType) {
+  return getTurnUpgradeConfigsByEffect(type, targetResourceType).reduce((total, option) => {
+    const effect = option.effect || {};
+    const stack = getTurnUpgradeStackFromStacks(stacks, option.id);
+    if (stack <= 0 || effect.stackMode !== 'add') {
+      return total;
+    }
+    const effectiveStack = option.maxStacks == null ? stack : Math.min(stack, Math.max(0, Number(option.maxStacks) || 0));
+    return total + effectiveStack * (Number(effect.value) || 0);
+  }, 0);
+}
+
+function getTurnUpgradeMultiplyValue(stacks, type, targetResourceType) {
+  return getTurnUpgradeConfigsByEffect(type, targetResourceType).reduce((multiplier, option) => {
+    const effect = option.effect || {};
+    const stack = getTurnUpgradeStackFromStacks(stacks, option.id);
+    if (stack <= 0) {
+      return multiplier;
+    }
+    const effectiveStack = option.maxStacks == null ? stack : Math.min(stack, Math.max(0, Number(option.maxStacks) || 0));
+    if (effect.stackMode === 'multiply') {
+      return multiplier * Math.pow(Math.max(0, Number(effect.value) || 1), effectiveStack);
+    }
+    if (effect.stackMode === 'add') {
+      return multiplier * (1 + effectiveStack * (Number(effect.value) || 0));
+    }
+    return multiplier;
+  }, 1);
+}
+
+function buildTurnDerivedUpgradeState(stacks) {
+  return {
+    bulletBounceBonus: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'bullet_bounce'))),
+    firstBounceDamageMultiplier: Math.max(1, getTurnUpgradeMultiplyValue(stacks, 'first_bounce_damage')),
+    roundResourceBonus: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'round_resource'))),
+    resourceHpBonusByType: {
+      normal: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'resource_hp', 'normal'))),
+      exp: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'resource_hp', 'exp'))),
+      energy: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'resource_hp', 'energy'))),
+      bullet: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'resource_hp', 'bullet'))),
+      bleed: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'resource_hp', 'bleed'))),
+    },
+    spreadExtraSplit: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'spread_extra_split'))),
+    damageBoostTempAttack: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'damage_boost_temp_attack'))),
+    blackHoleStrengthMultiplier: Math.max(1, getTurnUpgradeMultiplyValue(stacks, 'black_hole_strength')),
+  };
+}
+
+function refreshTurnDerivedUpgradeState(player) {
+  if (!player) {
+    return buildTurnDerivedUpgradeState({});
+  }
+  player.upgrades = player.upgrades || {};
+  player.upgrades.stacks = player.upgrades.stacks || {};
+  const derived = buildTurnDerivedUpgradeState(player.upgrades.stacks);
+  player.upgrades.derived = derived;
+  player.upgrades.bulletBounce = derived.bulletBounceBonus;
+  player.upgrades.roundResourceBonus = derived.roundResourceBonus;
+  return derived;
+}
+
 function buildTurnViewPayload(player, payload) {
   if (!payload || !player) {
     return payload;
@@ -866,6 +945,7 @@ function createTurnPlayer(ws, camp, index) {
       damageAdd: 0,
       roundResourceBonus: 0,
       stacks: {},
+      derived: buildTurnDerivedUpgradeState({}),
     },
     pendingUpgradeOptions: [],
     tankPose: {
@@ -930,82 +1010,102 @@ function getObstacleLayoutKey(layout) {
     .join('|');
 }
 
-function getObstacleMaxHp(slotType, resourceCount) {
+function getResourceHpBaseAndMax(slotType) {
+  const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules[slotType];
+  const baseHp = Math.max(1, Number(rule && rule.baseHp) || (slotType === 'mirror' ? 10 : TURN_CONFIG.obstacleBaseHp));
+  const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || (slotType === 'mirror' ? baseHp : TURN_CONFIG.obstacleMaxHp));
+  return { baseHp, maxHp };
+}
+
+function getTurnPlayerByCamp(roomState, camp) {
+  return roomState && Array.isArray(roomState.players)
+    ? roomState.players.find((player) => player && player.camp === camp)
+    : null;
+}
+
+function getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride = null) {
+  if (!camp || slotType === 'mirror' || slotType === 'attack') {
+    return 0;
+  }
+  const player = getTurnPlayerByCamp(roomState, camp);
+  const derived = derivedOverride || refreshTurnDerivedUpgradeState(player);
+  const bonusMap = derived && derived.resourceHpBonusByType;
+  return Math.max(0, Math.floor(Number(bonusMap && bonusMap[slotType]) || 0));
+}
+
+function getObstacleMaxHp(slotType, resourceCount, roomState = null, camp = '', derivedOverride = null) {
   if (slotType === 'normal') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.normal;
-    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
-    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
+    const maxHp = rule.maxHp;
     return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
   }
   if (slotType === 'mirror') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.mirror;
-    const baseHp = Math.max(1, Number(rule && rule.baseHp) || 10);
-    return baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
+    const rule = getResourceHpBaseAndMax(slotType);
+    return rule.baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
   if (slotType === 'exp') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.exp;
-    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
-    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
+    const maxHp = rule.maxHp;
     return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
   }
   if (slotType === 'energy') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.energy;
-    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
-    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
+    const maxHp = rule.maxHp;
     return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
   }
   if (slotType === 'bleed') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.bleed;
-    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
-    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
+    const maxHp = rule.maxHp;
     return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
   }
   if (slotType === 'bullet') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.bullet;
-    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
-    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
+    const maxHp = rule.maxHp;
     return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
   }
   if (slotType === 'attack') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.attack;
-    const baseHp = Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
-    const maxHp = Math.max(baseHp, Number(rule && rule.maxHp) || TURN_CONFIG.obstacleMaxHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    const baseHp = rule.baseHp;
+    const maxHp = rule.maxHp;
     return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
   }
   return Math.min(TURN_CONFIG.obstacleMaxHp, TURN_CONFIG.obstacleBaseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
 }
 
-function getObstacleCellMaxHp(slotType) {
+function getObstacleCellMaxHp(slotType, roomState = null, camp = '', derivedOverride = null) {
   if (slotType === 'mirror') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.mirror;
-    return Math.max(1, Number(rule && rule.baseHp) || 10);
+    return getResourceHpBaseAndMax(slotType).baseHp;
   }
   if (slotType === 'normal') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.normal;
-    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    return Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
   }
   if (slotType === 'energy') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.energy;
-    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    return Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
   }
   if (slotType === 'bleed') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.bleed;
-    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    return Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
   }
   if (slotType === 'bullet') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.bullet;
-    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    const rule = getResourceHpBaseAndMax(slotType);
+    return Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
   }
   if (slotType === 'attack') {
-    const rule = TURN_CONFIG.obstacleHpRules && TURN_CONFIG.obstacleHpRules.attack;
-    return Math.max(1, Number(rule && rule.baseHp) || TURN_CONFIG.obstacleBaseHp);
+    return getResourceHpBaseAndMax(slotType).baseHp;
   }
-  return getObstacleMaxHp(slotType, 1);
+  return getObstacleMaxHp(slotType, 1, roomState, camp, derivedOverride);
 }
 
-function buildExpCellHpList(resourceCount, cellCount) {
+function buildExpCellHpList(resourceCount, cellCount, roomState = null, camp = '', derivedOverride = null) {
   const safeCells = Math.max(1, Math.floor(Number(cellCount) || 1));
-  const maxHp = getObstacleMaxHp('exp', resourceCount);
+  const maxHp = getObstacleMaxHp('exp', resourceCount, roomState, camp, derivedOverride);
   const basePerCell = Math.floor(maxHp / safeCells);
   const remainder = maxHp % safeCells;
   const result = [];
@@ -1015,15 +1115,15 @@ function buildExpCellHpList(resourceCount, cellCount) {
   return result;
 }
 
-function buildObstacleCellHp(slotType, resourceCount, cellCount, source) {
+function buildObstacleCellHp(slotType, resourceCount, cellCount, source, roomState = null, camp = '', derivedOverride = null) {
   if (slotType !== 'exp') {
-    const defaultHp = getObstacleCellMaxHp(slotType);
+    const defaultHp = getObstacleCellMaxHp(slotType, roomState, camp, derivedOverride);
     return Array.from({ length: Math.max(1, Math.floor(Number(cellCount) || 1)) }, (_, index) => {
       const hp = Array.isArray(source) ? Math.max(0, Number(source[index]) || 0) : defaultHp;
       return hp > 0 ? hp : defaultHp;
     });
   }
-  const defaults = buildExpCellHpList(resourceCount, cellCount);
+  const defaults = buildExpCellHpList(resourceCount, cellCount, roomState, camp, derivedOverride);
   return defaults.map((fallbackHp, index) => {
     const hp = Array.isArray(source) ? Math.max(0, Number(source[index]) || 0) : fallbackHp;
     return hp > 0 ? hp : fallbackHp;
@@ -1050,7 +1150,7 @@ function applyObstacleDamage(roomState, obstacleId, cellIndex, damage) {
   const after = Math.max(0, before - safeDamage);
   obstacle.cellHp[cellIndex] = after;
   obstacle.hp = sumObstacleCellHp(obstacle);
-  obstacle.maxHp = getObstacleMaxHp(obstacle.slotType || 'normal', obstacle.resourceCount);
+  obstacle.maxHp = getObstacleMaxHp(obstacle.slotType || 'normal', obstacle.resourceCount, roomState, obstacle.camp);
   if (after > 0) {
     return { obstacle, destroyedCell: false, destroyedObstacle: false };
   }
@@ -1078,7 +1178,8 @@ function getTurnUpgradeStack(player, upgradeId) {
 
 function getTurnRoundResourceTotal(player, displayRound) {
   const round = Math.max(1, Number(displayRound) || 1);
-  const bonus = Math.max(0, Number(player && player.upgrades && player.upgrades.roundResourceBonus) || 0);
+  const derived = refreshTurnDerivedUpgradeState(player);
+  const bonus = Math.max(0, Number(derived && derived.roundResourceBonus) || 0);
   const total = TURN_CONFIG.initialRoundResourceTotal + (round - 1) * TURN_CONFIG.roundResourceGrowth + bonus;
   return clamp(total, TURN_CONFIG.slotCountPerRound, TURN_CONFIG.maxRoundResourceTotal);
 }
@@ -1195,12 +1296,13 @@ function getTurnBondValue(type, count) {
 function buildTurnAttackSnapshotFromCounts(counts, player) {
   const baseBulletDamage = Math.max(1, Number(TURN_CONFIG.bulletDamage) || 20);
   const safeCounts = createTurnBondCountMap(counts);
+  const derived = refreshTurnDerivedUpgradeState(player);
   const extraShotsFromUpgrade = Math.max(0, Number(player.upgrades.multiShot) || 0);
   const extraShotsFromBulletBlock = getTurnBulletBondExtraShots(safeCounts.bullet);
   const bonusDamageFromUpgrade = Math.max(0, Number(player.upgrades.damageAdd) || 0);
   const attackMultiplier = getTurnBondMultiplier('attack', safeCounts.attack);
   const bonusDamageFromAttackBlock = getTurnBondValue('attack', safeCounts.attack);
-  const bulletBounce = Math.max(0, Number(player.upgrades.bulletBounce) || 0);
+  const bulletBounce = Math.max(0, Number(derived.bulletBounceBonus) || 0);
   const totalShots = Math.max(1, 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock);
   return {
     bulletBlockCount: safeCounts.bullet,
@@ -1213,6 +1315,10 @@ function buildTurnAttackSnapshotFromCounts(counts, player) {
     bonusDamageFromAttackBlock,
     bulletDamage: Math.max(1, baseBulletDamage + bonusDamageFromUpgrade + bonusDamageFromAttackBlock),
     bulletBounce,
+    firstBounceDamageMultiplier: Math.max(1, Number(derived.firstBounceDamageMultiplier) || 1),
+    spreadExtraSplit: Math.max(0, Number(derived.spreadExtraSplit) || 0),
+    damageBoostTempAttack: Math.max(0, Number(derived.damageBoostTempAttack) || 0),
+    blackHoleStrengthMultiplier: Math.max(1, Number(derived.blackHoleStrengthMultiplier) || 1),
     shotsLeft: totalShots,
   };
 }
@@ -1248,6 +1354,11 @@ function createTurnServerBullet(roomState, camp, pose, attackSnapshot) {
     currentDamageBoostZoneIds: [],
     damageBoostAppliedZoneIds: [],
     spreadTriggeredZoneIds: [],
+    firstBounceDamageBoostApplied: false,
+    firstBounceDamageMultiplier: Math.max(1, Number(attackSnapshot && attackSnapshot.firstBounceDamageMultiplier) || 1),
+    spreadExtraSplit: Math.max(0, Number(attackSnapshot && attackSnapshot.spreadExtraSplit) || 0),
+    damageBoostTempAttack: Math.max(0, Number(attackSnapshot && attackSnapshot.damageBoostTempAttack) || 0),
+    blackHoleStrengthMultiplier: Math.max(1, Number(attackSnapshot && attackSnapshot.blackHoleStrengthMultiplier) || 1),
     attackSnapshot: attackSnapshot ? { ...attackSnapshot } : null,
     camp,
     lifeLeft: 3.5,
@@ -1448,11 +1559,18 @@ function getTurnStateSnapshot(roomState) {
       return result;
     }, {}),
     upgrades: roomState.players.reduce((result, player) => {
+      const derived = refreshTurnDerivedUpgradeState(player);
       result[player.camp] = {
-        bulletBounce: player.upgrades.bulletBounce,
+        bulletBounce: derived.bulletBounceBonus,
         multiShot: player.upgrades.multiShot,
         damageAdd: player.upgrades.damageAdd,
-        roundResourceBonus: player.upgrades.roundResourceBonus || 0,
+        roundResourceBonus: derived.roundResourceBonus,
+        resourceHpBonusByType: { ...derived.resourceHpBonusByType },
+        firstBounceDamageMultiplier: derived.firstBounceDamageMultiplier,
+        spreadExtraSplit: derived.spreadExtraSplit,
+        damageBoostTempAttack: derived.damageBoostTempAttack,
+        blackHoleStrengthMultiplier: derived.blackHoleStrengthMultiplier,
+        derived: JSON.parse(JSON.stringify(derived)),
         stacks: { ...(player.upgrades.stacks || {}) },
       };
       return result;
@@ -1581,6 +1699,11 @@ function cloneTurnBulletState(bullet) {
     currentDamageBoostZoneIds: Array.isArray(bullet && bullet.currentDamageBoostZoneIds) ? bullet.currentDamageBoostZoneIds.slice() : [],
     damageBoostAppliedZoneIds: Array.isArray(bullet && bullet.damageBoostAppliedZoneIds) ? bullet.damageBoostAppliedZoneIds.slice() : [],
     spreadTriggeredZoneIds: Array.isArray(bullet && bullet.spreadTriggeredZoneIds) ? bullet.spreadTriggeredZoneIds.slice() : [],
+    firstBounceDamageBoostApplied: !!(bullet && bullet.firstBounceDamageBoostApplied),
+    firstBounceDamageMultiplier: Math.max(1, Number(bullet && bullet.firstBounceDamageMultiplier) || 1),
+    spreadExtraSplit: Math.max(0, Math.floor(Number(bullet && bullet.spreadExtraSplit) || 0)),
+    damageBoostTempAttack: Math.max(0, Math.floor(Number(bullet && bullet.damageBoostTempAttack) || 0)),
+    blackHoleStrengthMultiplier: Math.max(1, Number(bullet && bullet.blackHoleStrengthMultiplier) || 1),
     attackSnapshot: bullet && bullet.attackSnapshot ? { ...bullet.attackSnapshot } : null,
     camp: bullet && bullet.camp ? bullet.camp : 'A',
     lifeLeft: Number.isFinite(Number(bullet && bullet.lifeLeft)) ? Number(bullet.lifeLeft) : 3.5,
@@ -1948,7 +2071,7 @@ function getTurnUpgradeOptions(roomState, player) {
       return true;
     }
     return getTurnUpgradeStack(player, option.id) < option.maxStacks;
-  }).map((option) => ({ ...option }));
+  }).map((option) => ({ ...option, currentStacks: getTurnUpgradeStack(player, option.id) }));
   const shuffled = shuffle(pool);
   const options = [];
   for (let i = 0; i < shuffled.length && options.length < 3; i++) {
@@ -2228,12 +2351,12 @@ function handleTurnBuildAction(ws, msg) {
       originSlotId: slot.slotId,
       x: Math.round(point.x),
       y: Math.round(point.y),
-      hp: getObstacleMaxHp(slotType, resourceCount),
-      maxHp: getObstacleMaxHp(slotType, resourceCount),
+      hp: getObstacleMaxHp(slotType, resourceCount, roomState, player.camp),
+      maxHp: getObstacleMaxHp(slotType, resourceCount, roomState, player.camp),
       slotType,
       resourceCount,
       layout: normalizeObstacleLayout(slotType, slot.layout, resourceCount),
-      cellHp: buildObstacleCellHp(slotType, resourceCount, normalizeObstacleLayout(slotType, slot.layout, resourceCount).length),
+      cellHp: buildObstacleCellHp(slotType, resourceCount, normalizeObstacleLayout(slotType, slot.layout, resourceCount).length, null, roomState, player.camp),
       shapeKey: slot.shapeKey || getObstacleLayoutKey(slot.layout),
       mirrorDir: '',
       placedByCamp: player.camp,
@@ -2456,7 +2579,7 @@ function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
       const distance = vecLength(offset);
       if (distance > 1 && distance <= radius) {
         const ratio = 1 - distance / radius;
-        const strength = Math.max(0, Number(config.blackHoleStrength) || 0);
+        const strength = Math.max(0, Number(config.blackHoleStrength) || 0) * Math.max(1, Number(bullet.blackHoleStrengthMultiplier) || 1);
         const curvePower = Math.max(0.1, Number(config.blackHoleCurvePower) || 1);
         const maxOffsetPerTick = Math.max(0, Number(config.blackHoleMaxOffsetPerTick) || 0);
         const curvedRatio = Math.pow(Math.max(0, ratio), curvePower);
@@ -2481,6 +2604,9 @@ function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
     if (nextSpreadZoneIds.indexOf(zoneId) >= 0) {
       continue;
     }
+    if (bullet.spreadTriggeredZoneIds.length > 0) {
+      continue;
+    }
     const zone = zones.find((item) => item && item.id === zoneId && item.zoneType === 'spread');
     if (zone) {
       bullet.spreadTriggeredZoneIds.push(zoneId);
@@ -2502,7 +2628,8 @@ function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
 
 function spawnTurnSpreadBullets(sourceBullet, zone, bulletQueue) {
   const config = getTurnAssistZoneTypeConfig('spread');
-  const splitCount = Math.max(1, Math.floor(Number(config.spreadSplitCount) || 1));
+  const safeExtraSplit = Math.min(8, Math.max(0, Math.floor(Number(sourceBullet.spreadExtraSplit) || 0)));
+  const splitCount = Math.min(12, Math.max(1, Math.floor(Number(config.spreadSplitCount) || 1) + safeExtraSplit));
   const stepAngle = Math.max(0, Number(config.spreadSplitStepAngle) || 0);
   if (splitCount <= 1) {
     return;
@@ -2527,10 +2654,21 @@ function applyTurnDamageBoostPassThrough(bullet, zoneId) {
   const nextLevel = Math.min(maxMultiplier, Math.max(1, Math.floor(Number(bullet.damageBoostLevel) || 1)) + 1);
   bullet.damageBoostLevel = nextLevel;
   bullet.damageMultiplier = nextLevel;
+  bullet.baseDamage += Math.max(0, Math.floor(Number(bullet.damageBoostTempAttack) || 0));
   bullet.remainingDamage = Math.max(0, Math.round((Number(bullet.baseDamage) || 0) * bullet.damageMultiplier));
   if (bullet.damageBoostAppliedZoneIds.indexOf(zoneId) < 0) {
     bullet.damageBoostAppliedZoneIds.push(zoneId);
   }
+}
+
+function applyTurnFirstBounceDamageBoostIfNeeded(bullet) {
+  const multiplier = Math.max(1, Number(bullet && bullet.firstBounceDamageMultiplier) || 1);
+  if (!bullet || bullet.firstBounceDamageBoostApplied || multiplier <= 1) {
+    return;
+  }
+  bullet.baseDamage = Math.max(0, Math.round((Number(bullet.baseDamage) || 0) * multiplier));
+  bullet.remainingDamage = Math.max(0, Math.round(bullet.baseDamage * Math.max(1, Number(bullet.damageMultiplier) || 1)));
+  bullet.firstBounceDamageBoostApplied = true;
 }
 
 function getTurnDynamicObstacleHit(roomState, point, radius) {
@@ -2602,6 +2740,7 @@ function resolveTurnBulletHit(roomState, bullet, result) {
       reflectTurnBulletDir(bullet, dynamicHit.rect);
       bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
       bullet.hasBounced = true;
+      applyTurnFirstBounceDamageBoostIfNeeded(bullet);
       return false;
     }
     return true;
@@ -2617,6 +2756,7 @@ function resolveTurnBulletHit(roomState, bullet, result) {
       reflectTurnBulletDir(bullet, obstacle);
       bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
       bullet.hasBounced = true;
+      applyTurnFirstBounceDamageBoostIfNeeded(bullet);
       return false;
     }
     return true;
@@ -2662,6 +2802,7 @@ function keepTurnBulletInMap(bullet) {
   if (bounced) {
     bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
     bullet.hasBounced = true;
+    applyTurnFirstBounceDamageBoostIfNeeded(bullet);
     bullet.dir = normalizeVec(bullet.dir, bullet.dir);
   }
   return true;
@@ -2762,13 +2903,39 @@ function applyTurnUpgrade(player, option) {
   if (!option) {
     return;
   }
+  const previousStacks = { ...(player.upgrades.stacks || {}) };
   player.upgrades.stacks[option.id] = getTurnUpgradeStack(player, option.id) + 1;
+  const derived = refreshTurnDerivedUpgradeState(player);
+  player.upgrades.bulletBounce = derived.bulletBounceBonus;
+  player.upgrades.roundResourceBonus = derived.roundResourceBonus;
   const effect = option.effect || {};
-  if (effect.type === 'round_resource') {
-    player.upgrades.roundResourceBonus += Math.max(0, Number(effect.value) || 0);
-  } else if (effect.type === 'bullet_bounce') {
-    player.upgrades.bulletBounce += Math.max(0, Number(effect.value) || 0);
+  if (effect.type === 'resource_hp') {
+    const roomState = getTurnRoom(player.socket);
+    refreshTurnCampResourceHpByUpgrade(roomState, player.camp, effect.targetResourceType, previousStacks);
   }
+}
+
+function refreshTurnCampResourceHpByUpgrade(roomState, camp, targetResourceType, previousStacks = null) {
+  if (!roomState || !roomState.obstacles || !targetResourceType || targetResourceType === 'mirror' || targetResourceType === 'attack') {
+    return;
+  }
+  const player = getTurnPlayerByCamp(roomState, camp);
+  const currentDerived = player && player.upgrades ? player.upgrades.derived : null;
+  const previousDerived = buildTurnDerivedUpgradeState(previousStacks || {});
+  Object.keys(roomState.obstacles).forEach((id) => {
+    const obstacle = roomState.obstacles[id];
+    if (!obstacle || obstacle.camp !== camp || obstacle.slotType !== targetResourceType || !Array.isArray(obstacle.cellHp)) {
+      return;
+    }
+    const previousCellHp = buildObstacleCellHp(obstacle.slotType, obstacle.resourceCount, obstacle.layout.length, null, roomState, camp, previousDerived);
+    const nextCellHp = buildObstacleCellHp(obstacle.slotType, obstacle.resourceCount, obstacle.layout.length, null, roomState, camp, currentDerived);
+    for (let i = 0; i < obstacle.cellHp.length && i < nextCellHp.length; i++) {
+      const delta = Math.max(0, nextCellHp[i] - (Number(previousCellHp[i]) || 0));
+      obstacle.cellHp[i] = Math.min(nextCellHp[i], Math.max(0, Number(obstacle.cellHp[i]) || 0) + delta);
+    }
+    obstacle.maxHp = getObstacleMaxHp(obstacle.slotType, obstacle.resourceCount, roomState, camp);
+    obstacle.hp = sumObstacleCellHp(obstacle);
+  });
 }
 
 function handleTurnUpgradePick(ws, msg) {
@@ -2799,7 +2966,7 @@ function handleTurnUpgradePick(ws, msg) {
     roomId: roomState.id,
     camp: player.camp,
     playerId: player.playerId,
-    option,
+    option: { ...option, currentStacks: getTurnUpgradeStack(player, option.id) },
   });
   broadcastTurnSnapshot(roomState);
   sendTurnUpgradeOptions(roomState, player);
