@@ -14,9 +14,11 @@ export type TurnUpgradeId =
     | "black_hole_strength_pct"
     | "missile_explosion_radius_add"
     | "missile_damage_add"
-    | "missile_main_cannon_chance_add";
+    | "missile_main_cannon_chance_add"
+    | "coin_drop_pct"
+    | "exp_drop_pct";
 export type TurnAssistZoneType = "black_hole" | "spread" | "damage_boost";
-export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack" | "missile_silo";
+export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack" | "missile_silo" | "coin";
 export type TurnMirrorDirection = "bl" | "br" | "tl" | "tr";
 export type TurnUpgradeStackMode = "add" | "multiply";
 export type TurnUpgradeEffectType =
@@ -29,7 +31,9 @@ export type TurnUpgradeEffectType =
     | "black_hole_strength"
     | "missile_explosion_radius"
     | "missile_damage"
-    | "missile_main_cannon_chance";
+    | "missile_main_cannon_chance"
+    | "coin_drop"
+    | "exp_drop";
 
 export interface TurnUpgradeEffectConfig {
     type: TurnUpgradeEffectType;
@@ -107,7 +111,7 @@ export interface TurnAttackSynergyTierConfig {
     multiplier: number;
 }
 
-export type TurnBondResourceType = "bullet" | "attack" | "exp" | "energy" | "bleed";
+export type TurnBondResourceType = "bullet" | "attack" | "exp" | "energy" | "bleed" | "coin";
 
 export interface TurnBondTierConfig {
     minCount: number;
@@ -129,6 +133,7 @@ export interface TurnBondRulesConfig {
     exp: TurnBondValueRuleConfig;
     energy: TurnBondValueRuleConfig;
     bleed: TurnBondValueRuleConfig;
+    coin: TurnBondValueRuleConfig;
 }
 
 export interface TurnBondCountMap {
@@ -137,6 +142,16 @@ export interface TurnBondCountMap {
     exp: number;
     energy: number;
     bleed: number;
+    coin: number;
+}
+
+export interface TurnCoinEconomyConfig {
+    initialCoins: number;
+    baseRoundReward: number;
+    slotCost: number;
+    refreshCost: number;
+    perDestroyedEnemyCell: number;
+    perCoinBlockSettlement: number;
 }
 
 export interface TurnBondUpgradeSnapshot {
@@ -211,6 +226,16 @@ export interface TurnDerivedUpgradeState {
     missileExplosionRadiusBonus: number;
     missileDamageBonus: number;
     missileMainCannonChanceBonus: number;
+    coinDropMultiplier: number;
+    expDropMultiplier: number;
+}
+
+export interface TurnEconomyState {
+    coins: number;
+    placedThisRound: boolean;
+    slotCost: number;
+    refreshCost: number;
+    canRefresh: boolean;
 }
 
 export interface TurnGameConfig {
@@ -252,12 +277,14 @@ export interface TurnGameConfig {
         bullet: TurnObstacleHpRuleConfig;
         attack: TurnObstacleHpRuleConfig;
         missile_silo: TurnObstacleHpRuleConfig;
+        coin: TurnObstacleHpRuleConfig;
     };
     missileSilo: {
         directDamage: number;
         explosionRadiusCells: number;
         mainCannonChance: number;
     };
+    coinEconomy: TurnCoinEconomyConfig;
     settlementResourceRules: {
         exp: TurnSettlementResourceRuleConfig;
         energy: TurnSettlementHealRuleConfig;
@@ -390,11 +417,23 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
             baseHp: 10,
             maxHp: 10,
         },
+        coin: {
+            baseHp: 10,
+            maxHp: 30,
+        },
     },
     missileSilo: {
         directDamage: 10,
         explosionRadiusCells: 1,
         mainCannonChance: 0,
+    },
+    coinEconomy: {
+        initialCoins: 0,
+        baseRoundReward: 10,
+        slotCost: 10,
+        refreshCost: 5,
+        perDestroyedEnemyCell: 1,
+        perCoinBlockSettlement: 1,
     },
     settlementResourceRules: {
         exp: {
@@ -463,6 +502,15 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
                 { minCount: 1, multiplier: 1 },
             ],
         },
+        coin: {
+            amountPerBlock: 1,
+            tiers: [
+                { minCount: 12, multiplier: 6 },
+                { minCount: 8, multiplier: 4 },
+                { minCount: 4, multiplier: 2 },
+                { minCount: 1, multiplier: 1 },
+            ],
+        },
     },
     obstacleSlotMaxResources: 4,
     expWallDestroyExp: 50,
@@ -477,6 +525,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         { type: "bullet", name: "子弹块" },
         { type: "attack", name: "攻击块" },
         { type: "missile_silo", name: "导弹井" },
+        { type: "coin", name: "金币块" },
     ],
     tankMoveSpeed: 360,
     mapWidth: 640,
@@ -508,6 +557,8 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         { id: "missile_explosion_radius_add", name: "导弹爆炸 +1格", desc: "导弹爆炸范围向四周增加 1 个地图格子", maxStacks: null, effect: { type: "missile_explosion_radius", stackMode: "add", value: 1 } },
         { id: "missile_damage_add", name: "导弹伤害 +10", desc: "导弹命中伤害 +10", maxStacks: null, effect: { type: "missile_damage", stackMode: "add", value: 10 } },
         { id: "missile_main_cannon_chance_add", name: "导弹命中主炮 +10%", desc: "导弹优先命中敌方主炮概率 +10%", maxStacks: 10, effect: { type: "missile_main_cannon_chance", stackMode: "add", value: 0.1, maxValue: 1 } },
+        { id: "coin_drop_pct", name: "攻击金币掉落 +10%", desc: "攻击掉敌方资源获得金币 +10%", maxStacks: null, effect: { type: "coin_drop", stackMode: "add", value: 0.1 } },
+        { id: "exp_drop_pct", name: "攻击经验掉落 +10%", desc: "攻击掉敌方资源获得经验 +10%", maxStacks: null, effect: { type: "exp_drop", stackMode: "add", value: 0.1 } },
     ],
 };
 
@@ -559,7 +610,20 @@ export function createTurnBondCountMap(source?: Partial<TurnBondCountMap>): Turn
         exp: Math.max(0, Math.floor(Number(source && source.exp) || 0)),
         energy: Math.max(0, Math.floor(Number(source && source.energy) || 0)),
         bleed: Math.max(0, Math.floor(Number(source && source.bleed) || 0)),
+        coin: Math.max(0, Math.floor(Number(source && source.coin) || 0)),
     };
+}
+
+export function getTurnCoinSettlementGain(coinBlockCount: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let safeCount = Math.max(0, Math.floor(Number(coinBlockCount) || 0));
+    if (safeCount <= 0) {
+        return 0;
+    }
+    let economy = cfg.coinEconomy;
+    let perBlock = Math.max(0, Number(economy && economy.perCoinBlockSettlement) || 0);
+    let multiplier = getTurnBondMultiplier("coin", safeCount, cfg);
+    return safeCount * perBlock * multiplier;
 }
 
 export function getTurnBondCount(counts: Partial<TurnBondCountMap> | null | undefined, type: TurnBondResourceType): number {

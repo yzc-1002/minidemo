@@ -26,6 +26,9 @@ export default class TurnHud extends cc.Component {
     @property(cc.Label)
     bondLabel: cc.Label = null;
 
+    @property(cc.Label)
+    coinLabel: cc.Label = null;
+
     private _lastPhase = "";
     private _upgradeRoot: cc.Node = null;
     private _upgradeHintRoot: cc.Node = null;
@@ -37,7 +40,12 @@ export default class TurnHud extends cc.Component {
     private _buildPaletteCamp: TurnCamp = "A";
     private _buildPaletteCount = 0;
     private _buildPaletteEnabled = false;
-    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string }[] = [];
+    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean }[] = [];
+    private _refreshButton: cc.Node = null;
+    private _refreshButtonLabel: cc.Label = null;
+    private _refreshAvailable = false;
+    private _refreshCost = 0;
+    private _refreshLockedByPlacement = false;
     private _selectedBuildSlotId = "";
     private _buildSlotInfoNodes: cc.Node[] = [];
     private _buildDragNode: cc.Node = null;
@@ -52,6 +60,7 @@ export default class TurnHud extends cc.Component {
 
     onMoveLeft: () => void = null;
     onMoveRight: () => void = null;
+    onBuildRefresh: (camp: TurnCamp) => void = null;
 
     private _moveButtonsRoot: cc.Node = null;
     private _moveLeftBtn: cc.Node = null;
@@ -70,6 +79,8 @@ export default class TurnHud extends cc.Component {
         this.bondLabel.horizontalAlign = cc.Label.HorizontalAlign.LEFT;
         this.bondLabel.overflow = cc.Label.Overflow.RESIZE_HEIGHT;
         this.bondLabel.node.width = 580;
+        this.coinLabel = this.createLabel("金币 A: 0  |  B: 0", 20, -200, 40);
+        this.coinLabel.node.color = new cc.Color(255, 218, 96, 255);
         this._upgradeRoot = null;
         this._upgradeHintRoot = null;
         this._settlementRoot = null;
@@ -128,7 +139,7 @@ export default class TurnHud extends cc.Component {
         this.inventoryLabel.string = "掩体 A: " + aCount + "  |  B: " + bCount;
     }
 
-    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string }[], enabled: boolean) {
+    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean }[], enabled: boolean) {
         this.ensureBuildPalette();
         this._buildPaletteCamp = camp || "A";
         this._buildPaletteSlots = Array.isArray(slots) ? slots.slice() : [];
@@ -177,6 +188,21 @@ export default class TurnHud extends cc.Component {
             return;
         }
         this.bondLabel.string = aText + "\n" + bText;
+    }
+
+    refreshCoins(aCoins: number, bCoins: number) {
+        if (!this.coinLabel) {
+            return;
+        }
+        this.coinLabel.string = "金币 A: " + Math.max(0, Math.floor(Number(aCoins) || 0)) + "  |  B: " + Math.max(0, Math.floor(Number(bCoins) || 0));
+    }
+
+    refreshRefreshButton(camp: TurnCamp, available: boolean, cost: number, lockedByPlacement: boolean) {
+        this._buildPaletteCamp = camp || this._buildPaletteCamp || "A";
+        this._refreshAvailable = !!available;
+        this._refreshCost = Math.max(0, Math.floor(Number(cost) || 0));
+        this._refreshLockedByPlacement = !!lockedByPlacement;
+        this.refreshRefreshButtonView();
     }
 
     showUpgradeOptions(camp: TurnCamp, options: TurnUpgradeConfig[], onPick: (id: TurnUpgradeId) => void) {
@@ -434,6 +460,21 @@ export default class TurnHud extends cc.Component {
         this._buildPaletteHintLabel.node.parent = this._buildPaletteRoot;
         this._buildPaletteHintLabel.node.color = new cc.Color(190, 200, 220, 255);
 
+        this._refreshButton = new cc.Node("BuildRefreshButton");
+        this._refreshButton.parent = this._buildPaletteRoot;
+        this._refreshButton.setPosition(82, -56);
+        this._refreshButton.setContentSize(54, 28);
+        let refreshGfx = this._refreshButton.addComponent(cc.Graphics);
+        refreshGfx.fillColor = new cc.Color(58, 78, 110, 235);
+        refreshGfx.roundRect(-27, -14, 54, 28, 6);
+        refreshGfx.fill();
+        refreshGfx.strokeColor = new cc.Color(220, 230, 245, 200);
+        refreshGfx.lineWidth = 1.5;
+        refreshGfx.roundRect(-27, -14, 54, 28, 6);
+        refreshGfx.stroke();
+        this._refreshButtonLabel = this.createChildLabel(this._refreshButton, "刷新 -5", 12, 0, 0);
+        this._refreshButton.on(cc.Node.EventType.TOUCH_END, this.onRefreshButtonClicked, this);
+
         this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_START, this.onBuildPaletteTouchStart, this);
         this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_MOVE, this.onBuildPaletteTouchMove, this);
         this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_END, this.onBuildPaletteTouchEnd, this);
@@ -464,6 +505,36 @@ export default class TurnHud extends cc.Component {
             this._buildPaletteHintLabel.string = "等待改造期";
         }
         this._buildPaletteRoot.opacity = this.isBuildPaletteAvailable() ? 255 : 170;
+        this.refreshRefreshButtonView();
+    }
+
+    private refreshRefreshButtonView() {
+        if (!this._refreshButton || !this._refreshButtonLabel) {
+            return;
+        }
+        this._refreshButton.active = !!this._buildPaletteEnabled;
+        if (!this._refreshButton.active) {
+            return;
+        }
+        let cost = Math.max(0, Math.floor(Number(this._refreshCost) || 0));
+        this._refreshButtonLabel.string = "刷新 -" + cost;
+        let usable = this._refreshAvailable && !this._refreshLockedByPlacement;
+        this._refreshButtonLabel.node.color = usable
+            ? new cc.Color(255, 218, 96, 255)
+            : new cc.Color(255, 120, 120, 255);
+        this._refreshButton.opacity = usable ? 255 : 140;
+    }
+
+    private onRefreshButtonClicked(event: cc.Event.EventTouch) {
+        if (event) {
+            event.stopPropagation();
+        }
+        if (!this._buildPaletteEnabled || !this._refreshAvailable || this._refreshLockedByPlacement) {
+            return;
+        }
+        if (this.onBuildRefresh) {
+            this.onBuildRefresh(this._buildPaletteCamp);
+        }
     }
 
     private drawBuildBlock(target: cc.Node, camp: TurnCamp, enabled: boolean) {
@@ -525,7 +596,7 @@ export default class TurnHud extends cc.Component {
         this._buildSlotInfoNodes = [];
     }
 
-    private createBuildSlotInfo(slot: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string }, x: number, y: number) {
+    private createBuildSlotInfo(slot: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean }, x: number, y: number) {
         let root = new cc.Node("BuildSlotInfo");
         root.parent = this._buildPaletteBlock;
         root.setPosition(x, y);
@@ -547,6 +618,15 @@ export default class TurnHud extends cc.Component {
         if (slot.shapeKey) {
             let shape = this.createChildLabel(root, this.summarizeShape(slot.shapeKey), 9, 0, slot.hpText ? -40 : -27);
             shape.node.color = new cc.Color(180, 196, 220, 255);
+        }
+        let coinCost = Math.max(0, Math.floor(Number(slot.coinCost) || 0));
+        if (coinCost > 0) {
+            let affordable = slot.affordable !== false;
+            let baseY = slot.hpText && slot.shapeKey ? -53 : (slot.hpText || slot.shapeKey ? -40 : -27);
+            let costLabel = this.createChildLabel(root, "-" + coinCost + " 金币", 10, 0, baseY);
+            costLabel.node.color = affordable
+                ? new cc.Color(255, 218, 96, 255)
+                : new cc.Color(255, 96, 96, 255);
         }
     }
 
@@ -573,6 +653,9 @@ export default class TurnHud extends cc.Component {
     }
 
     private getSlotDisplayName(type: TurnObstacleResourceType, fallback?: string): string {
+        if (type === "coin") {
+            return "金币块";
+        }
         if (type === "mirror") {
             return "反弹块";
         }
@@ -619,6 +702,9 @@ export default class TurnHud extends cc.Component {
         if (type === "missile_silo") {
             return placed ? new cc.Color(76, 94, 112, 200) : new cc.Color(104, 132, 154, 255);
         }
+        if (type === "coin") {
+            return placed ? new cc.Color(168, 138, 56, 200) : new cc.Color(247, 205, 66, 255);
+        }
         return placed ? new cc.Color(90, 104, 92, 200) : new cc.Color(99, 156, 106, 255);
     }
 
@@ -662,6 +748,13 @@ export default class TurnHud extends cc.Component {
             graphics.moveTo(x - 5, y + 4);
             graphics.lineTo(x, y + 9);
             graphics.lineTo(x + 5, y + 4);
+        }
+        else if (type === "coin") {
+            graphics.circle(x, y, 7);
+            graphics.moveTo(x - 3, y - 4);
+            graphics.lineTo(x - 3, y + 4);
+            graphics.moveTo(x + 3, y - 4);
+            graphics.lineTo(x + 3, y + 4);
         }
         else {
             graphics.rect(x - 8, y - 8, 16, 16);
@@ -743,6 +836,12 @@ export default class TurnHud extends cc.Component {
         if (!selected || selected.count <= 0 || selected.placed) {
             return;
         }
+        if (selected.affordable === false) {
+            this._buildPaletteHintLabel.string = "金币不足，无法拖动";
+            this._buildPaletteHintLabel.node.color = new cc.Color(255, 120, 120, 255);
+            return;
+        }
+        this._buildPaletteHintLabel.node.color = new cc.Color(190, 200, 220, 255);
         this._lastBuildDragWorldPos = cc.v2(worldPos);
         this._activeBuildDragSlotId = selected.slotId;
         this._buildDragCommitted = false;

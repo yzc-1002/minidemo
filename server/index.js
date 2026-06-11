@@ -489,11 +489,23 @@ const TURN_CONFIG = {
       baseHp: 10,
       maxHp: 10,
     },
+    coin: {
+      baseHp: 10,
+      maxHp: 30,
+    },
   },
   missileSilo: {
     directDamage: 10,
     explosionRadiusCells: 1,
     mainCannonChance: 0,
+  },
+  coinEconomy: {
+    initialCoins: 0,
+    baseRoundReward: 10,
+    slotCost: 10,
+    refreshCost: 5,
+    perDestroyedEnemyCell: 1,
+    perCoinBlockSettlement: 1,
   },
   settlementResourceRules: {
     exp: {
@@ -553,6 +565,15 @@ const TURN_CONFIG = {
         { minCount: 1, multiplier: 1 },
       ],
     },
+    coin: {
+      amountPerBlock: 1,
+      tiers: [
+        { minCount: 12, multiplier: 6 },
+        { minCount: 8, multiplier: 4 },
+        { minCount: 4, multiplier: 2 },
+        { minCount: 1, multiplier: 1 },
+      ],
+    },
     bleed: {
       amountPerBlock: 1,
       tiers: [
@@ -590,8 +611,10 @@ const TURN_UPGRADE_POOL = [
   { id: 'missile_explosion_radius_add', name: '导弹爆炸 +1格', desc: '导弹爆炸范围向四周增加 1 个地图格子', maxStacks: null, effect: { type: 'missile_explosion_radius', stackMode: 'add', value: 1 } },
   { id: 'missile_damage_add', name: '导弹伤害 +10', desc: '导弹命中伤害 +10', maxStacks: null, effect: { type: 'missile_damage', stackMode: 'add', value: 10 } },
   { id: 'missile_main_cannon_chance_add', name: '导弹命中主炮 +10%', desc: '导弹优先命中敌方主炮概率 +10%', maxStacks: 10, effect: { type: 'missile_main_cannon_chance', stackMode: 'add', value: 0.1, maxValue: 1 } },
+  { id: 'coin_drop_pct', name: '攻击金币掉落 +10%', desc: '攻击掉敌方资源获得金币 +10%', maxStacks: null, effect: { type: 'coin_drop', stackMode: 'add', value: 0.1 } },
+  { id: 'exp_drop_pct', name: '攻击经验掉落 +10%', desc: '攻击掉敌方资源获得经验 +10%', maxStacks: null, effect: { type: 'exp_drop', stackMode: 'add', value: 0.1 } },
 ];
-const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed', 'bullet', 'attack', 'missile_silo'];
+const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed', 'bullet', 'attack', 'missile_silo', 'coin'];
 const TURN_OBSTACLE_LAYOUT_LIBRARY = {
   1: [
     [{ x: 0, y: 0 }],
@@ -794,6 +817,8 @@ function buildTurnDerivedUpgradeState(stacks) {
     missileExplosionRadiusBonus: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'missile_explosion_radius'))),
     missileDamageBonus: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'missile_damage'))),
     missileMainCannonChanceBonus: clamp(getTurnUpgradeAddValue(stacks, 'missile_main_cannon_chance'), 0, 1),
+    coinDropMultiplier: Math.max(1, 1 + Math.max(0, getTurnUpgradeAddValue(stacks, 'coin_drop'))),
+    expDropMultiplier: Math.max(1, 1 + Math.max(0, getTurnUpgradeAddValue(stacks, 'exp_drop'))),
   };
 }
 
@@ -843,6 +868,13 @@ function buildTurnViewPayload(player, payload) {
       exp[getTurnViewCamp(player, camp)] = { ...next.exp[camp] };
     });
     next.exp = exp;
+  }
+  if (next.economy) {
+    const economy = {};
+    Object.keys(next.economy).forEach((camp) => {
+      economy[getTurnViewCamp(player, camp)] = { ...next.economy[camp] };
+    });
+    next.economy = economy;
   }
   if (next.inventories) {
     const inventories = {};
@@ -1004,6 +1036,7 @@ function createTurnPlayer(ws, camp, index) {
   const canonicalCamp = camp || 'A';
   const roadY = getTurnRoadCenterY(canonicalCamp);
   const defaultAimY = canonicalCamp === 'A' ? roadY + 120 : roadY - 120;
+  const coinEconomy = TURN_CONFIG.coinEconomy || {};
   return {
     socket: ws,
     playerId: index,
@@ -1011,6 +1044,8 @@ function createTurnPlayer(ws, camp, index) {
     disconnected: false,
     exp: 0,
     expNeed: TURN_CONFIG.expNeed,
+    coins: Math.max(0, Math.floor(Number(coinEconomy.initialCoins) || 0)),
+    placedThisRound: false,
     inventory: {
       roundResourceTotal: TURN_CONFIG.initialRoundResourceTotal,
       roundSlots: [],
@@ -1100,7 +1135,7 @@ function getTurnPlayerByCamp(roomState, camp) {
 }
 
 function getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride = null) {
-  if (!camp || slotType === 'mirror' || slotType === 'attack' || slotType === 'missile_silo') {
+  if (!camp || slotType === 'mirror' || slotType === 'attack' || slotType === 'missile_silo' || slotType === 'coin') {
     return 0;
   }
   const player = getTurnPlayerByCamp(roomState, camp);
@@ -1147,6 +1182,10 @@ function getObstacleMaxHp(slotType, resourceCount, roomState = null, camp = '', 
     const rule = getResourceHpBaseAndMax(slotType);
     return rule.baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
+  if (slotType === 'coin') {
+    const rule = getResourceHpBaseAndMax(slotType);
+    return rule.baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
+  }
   return Math.min(TURN_CONFIG.obstacleMaxHp, TURN_CONFIG.obstacleBaseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
 }
 
@@ -1174,6 +1213,9 @@ function getObstacleCellMaxHp(slotType, roomState = null, camp = '', derivedOver
     return getResourceHpBaseAndMax(slotType).baseHp;
   }
   if (slotType === 'missile_silo') {
+    return getResourceHpBaseAndMax(slotType).baseHp;
+  }
+  if (slotType === 'coin') {
     return getResourceHpBaseAndMax(slotType).baseHp;
   }
   return getObstacleMaxHp(slotType, 1, roomState, camp, derivedOverride);
@@ -1325,6 +1367,7 @@ function createTurnBondCountMap(source) {
     exp: Math.max(0, Math.floor(Number(source && source.exp) || 0)),
     energy: Math.max(0, Math.floor(Number(source && source.energy) || 0)),
     bleed: Math.max(0, Math.floor(Number(source && source.bleed) || 0)),
+    coin: Math.max(0, Math.floor(Number(source && source.coin) || 0)),
   };
 }
 
@@ -1335,7 +1378,32 @@ function buildTurnBondCountsFromRoom(roomState, camp) {
     exp: countTurnLivingResource(roomState, camp, 'exp'),
     energy: countTurnLivingResource(roomState, camp, 'energy'),
     bleed: countTurnLivingResource(roomState, camp, 'bleed'),
+    coin: countTurnLivingResource(roomState, camp, 'coin'),
   });
+}
+
+function getTurnCoinSettlementGain(roomState, camp) {
+  const counts = buildTurnBondCountsFromRoom(roomState, camp);
+  const safeCount = Math.max(0, Math.floor(Number(counts.coin) || 0));
+  if (safeCount <= 0) {
+    return 0;
+  }
+  const economy = TURN_CONFIG.coinEconomy || {};
+  const perBlock = Math.max(0, Number(economy.perCoinBlockSettlement) || 0);
+  const multiplier = getTurnBondMultiplier('coin', safeCount);
+  return Math.floor(safeCount * perBlock * Math.max(1, multiplier));
+}
+
+function getTurnPlayerEconomy(player) {
+  const economy = TURN_CONFIG.coinEconomy || {};
+  return {
+    coins: Math.max(0, Math.floor(Number(player && player.coins) || 0)),
+    placedThisRound: !!(player && player.placedThisRound),
+    slotCost: Math.max(0, Math.floor(Number(economy.slotCost) || 0)),
+    refreshCost: Math.max(0, Math.floor(Number(economy.refreshCost) || 0)),
+    canRefresh: !!(player && !player.placedThisRound)
+      && Math.max(0, Math.floor(Number(player && player.coins) || 0)) >= Math.max(0, Math.floor(Number(economy.refreshCost) || 0)),
+  };
 }
 
 function getTurnBondMultiplier(type, count) {
@@ -1630,6 +1698,10 @@ function getTurnStateSnapshot(roomState) {
       };
       return result;
     }, {}),
+    economy: roomState.players.reduce((result, player) => {
+      result[player.camp] = getTurnPlayerEconomy(player);
+      return result;
+    }, {}),
     inventories: roomState.players.reduce((result, player) => {
       result[player.camp] = {
         ...player.inventory,
@@ -1921,7 +1993,10 @@ function startTurnBuildPhase(roomState) {
   roomState.zones = [];
   randomizeTurnAssistStaticObstacles(roomState);
   spawnTurnAssistZones(roomState);
+  const coinReward = Math.max(0, Math.floor(Number(TURN_CONFIG.coinEconomy && TURN_CONFIG.coinEconomy.baseRoundReward) || 0));
   roomState.players.forEach((player) => {
+    player.placedThisRound = false;
+    player.coins = Math.max(0, Math.floor(Number(player.coins) || 0)) + coinReward;
     createTurnRoundSlots(player, roomState, roomState.roundIndex);
   });
   logTurn(roomState, `phase build round=${roomState.roundIndex} buildSeconds=${TURN_CONFIG.buildSeconds}`);
@@ -2423,6 +2498,12 @@ function handleTurnBuildAction(ws, msg) {
       sendTurnError(ws, '该资源已放置', 'slotAlreadyPlaced');
       return;
     }
+    const slotCost = Math.max(0, Math.floor(Number(TURN_CONFIG.coinEconomy && TURN_CONFIG.coinEconomy.slotCost) || 0));
+    if (slotCost > 0 && Math.max(0, Math.floor(Number(player.coins) || 0)) < slotCost) {
+      logTurn(roomState, `buildAction reject: not enough coins, camp=${player.camp} coins=${player.coins} cost=${slotCost}`);
+      sendTurnError(ws, '金币不足', 'notEnoughCoins');
+      return;
+    }
     if (!isTurnBuildPlacementValid(roomState, player.camp, point.x, point.y, slot.layout, '')) {
       logTurn(roomState, `buildAction reject: position invalid, camp=${player.camp} slotId="${slotId}" point=${point.x},${point.y}`);
       sendTurnError(ws, '该位置不可放置', 'occupied');
@@ -2449,7 +2530,9 @@ function handleTurnBuildAction(ws, msg) {
     };
     slot.placed = true;
     slot.placedObstacleId = id;
-    logTurn(roomState, `buildAction place ok: camp=${player.camp} slotId="${slot.slotId}" obstacleId=${id} type=${slotType} at ${roomState.obstacles[id].x},${roomState.obstacles[id].y}`);
+    player.coins = Math.max(0, Math.floor(Number(player.coins) || 0) - slotCost);
+    player.placedThisRound = true;
+    logTurn(roomState, `buildAction place ok: camp=${player.camp} slotId="${slot.slotId}" obstacleId=${id} type=${slotType} at ${roomState.obstacles[id].x},${roomState.obstacles[id].y} coins=${player.coins}`);
   } else if (op === 'move') {
     if (!point || !obstacleId || !roomState.obstacles[obstacleId]) {
       sendTurnError(ws, '移动掩体参数无效', 'invalidObstacle');
@@ -2501,6 +2584,30 @@ function handleTurnBuildAction(ws, msg) {
 
 function handleTurnZoneAction(ws, msg) {
   sendTurnError(ws, '辅助区域由系统自动生成', 'zoneAutoManaged');
+}
+
+function handleTurnRefreshSlots(ws, msg) {
+  const roomState = getTurnRoom(ws);
+  const player = getTurnPlayer(roomState, ws);
+  if (!roomState || !player || roomState.phase !== TURN_PHASE.BUILD) {
+    sendTurnError(ws, '当前不能刷新', 'invalidPhase');
+    return;
+  }
+  if (player.placedThisRound) {
+    sendTurnError(ws, '已放置过资源，本轮无法刷新', 'refreshLocked');
+    return;
+  }
+  const economy = TURN_CONFIG.coinEconomy || {};
+  const refreshCost = Math.max(0, Math.floor(Number(economy.refreshCost) || 0));
+  const coins = Math.max(0, Math.floor(Number(player.coins) || 0));
+  if (refreshCost > 0 && coins < refreshCost) {
+    sendTurnError(ws, '金币不足，无法刷新', 'notEnoughCoins');
+    return;
+  }
+  player.coins = coins - refreshCost;
+  createTurnRoundSlots(player, roomState, roomState.roundIndex);
+  logTurn(roomState, `refreshSlots ok: camp=${player.camp} cost=${refreshCost} coins=${player.coins}`);
+  broadcastTurnSnapshot(roomState);
 }
 
 function handleTurnTankPose(ws, msg) {
@@ -2613,9 +2720,14 @@ function applyTurnRoundSettlement(roomState) {
   roomState.settlementSnapshots = roomState.settlementSnapshots || { A: null, B: null };
   roomState.players.forEach((player) => {
     const settlement = buildTurnSettlementSnapshot(roomState, player.camp);
+    const coinGain = getTurnCoinSettlementGain(roomState, player.camp);
+    settlement.coinGain = coinGain;
     roomState.settlementSnapshots[player.camp] = settlement;
     if (settlement.expGain > 0) {
       player.exp += settlement.expGain;
+    }
+    if (coinGain > 0) {
+      player.coins = Math.max(0, Math.floor(Number(player.coins) || 0)) + coinGain;
     }
     const crystal = roomState.crystals[player.camp];
     if (!crystal || settlement.finalHeal <= 0) {
@@ -2874,7 +2986,7 @@ function applyTurnMissileExplosion(roomState, triggerObstacle, triggerCellIndex,
       result.hitType = result.hitType || 'obstacle';
       result.obstacleHits.push({ obstacleId: id, cellIndex: i, damage: applied.appliedDamage, source: 'missile_silo' });
       if (applied.destroyedCell) {
-        result.destroyedCells.push({ obstacleId: id, cellIndex: i });
+        result.destroyedCells.push({ obstacleId: id, cellIndex: i, camp: obstacle.camp, slotType: obstacle.slotType });
       }
       if (applied.destroyedObstacle && result.destroyedIds.indexOf(id) < 0) {
         result.destroyedIds.push(id);
@@ -2968,6 +3080,8 @@ function resolveTurnBulletHit(roomState, bullet, result) {
         result.destroyedCells.push({
           obstacleId: dynamicHit.obstacle.id,
           cellIndex: dynamicHit.cellIndex,
+          camp: dynamicHit.obstacle.camp,
+          slotType: dynamicHit.obstacle.slotType,
         });
       }
       if (applied.destroyedObstacle && result.destroyedIds.indexOf(dynamicHit.obstacle.id) < 0) {
@@ -3114,6 +3228,8 @@ function handleTurnBulletResult(ws, msg) {
   }
   const simulated = simulateTurnBulletResults(roomState, player);
   let awardedExp = 0;
+  let awardedCoins = 0;
+  let destroyedEnemyCellCount = 0;
   if (simulated.hitType === 'crystal' && simulated.targetCamp && roomState.crystals[simulated.targetCamp]) {
     roomState.crystals[simulated.targetCamp].hp = Math.max(0, roomState.crystals[simulated.targetCamp].hp - simulated.damage);
     awardedExp += TURN_CONFIG.crystalHitExp;
@@ -3126,8 +3242,26 @@ function handleTurnBulletResult(ws, msg) {
     );
     const destroyedObstacleIds = new Set(simulated.destroyedIds.filter((id) => !missileDestroyedIds.has(id)));
     awardedExp += destroyedObstacleIds.size * TURN_CONFIG.obstacleHitExp;
+    if (Array.isArray(simulated.destroyedCells)) {
+      for (let i = 0; i < simulated.destroyedCells.length; i++) {
+        const cell = simulated.destroyedCells[i];
+        if (cell && cell.camp && cell.camp !== player.camp) {
+          destroyedEnemyCellCount += 1;
+        }
+      }
+    }
   }
+  const derived = refreshTurnDerivedUpgradeState(player);
+  const expMultiplier = Math.max(1, Number(derived && derived.expDropMultiplier) || 1);
+  const coinMultiplier = Math.max(1, Number(derived && derived.coinDropMultiplier) || 1);
+  awardedExp = Math.floor(awardedExp * expMultiplier);
+  const coinEconomy = TURN_CONFIG.coinEconomy || {};
+  const coinPerCell = Math.max(0, Number(coinEconomy.perDestroyedEnemyCell) || 0);
+  awardedCoins = Math.floor(destroyedEnemyCellCount * coinPerCell * coinMultiplier);
   player.exp += awardedExp;
+  if (awardedCoins > 0) {
+    player.coins = Math.max(0, Math.floor(Number(player.coins) || 0)) + awardedCoins;
+  }
 
   broadcastTurn(roomState, {
     type: 'bulletResult',
@@ -3140,6 +3274,7 @@ function handleTurnBulletResult(ws, msg) {
       targetCamp: simulated.targetCamp,
       damage: simulated.damage,
       expGain: awardedExp,
+      coinGain: awardedCoins,
       destroyedIds: simulated.destroyedIds,
       missileEvents: simulated.missileEvents,
     },
@@ -7549,6 +7684,10 @@ function handleMessage(ws, msg) {
     }
     case 'buildAction': {
       handleTurnBuildAction(ws, msg);
+      break;
+    }
+    case 'refreshSlots': {
+      handleTurnRefreshSlots(ws, msg);
       break;
     }
     case 'zoneAction': {

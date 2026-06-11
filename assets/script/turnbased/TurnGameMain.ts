@@ -72,6 +72,7 @@ export default class TurnGameMain extends cc.Component {
         this._hud.onBuildDragCancel = this.onHudBuildDragCancel.bind(this);
         this._hud.onMoveLeft = this.onHudMoveLeft.bind(this);
         this._hud.onMoveRight = this.onHudMoveRight.bind(this);
+        this._hud.onBuildRefresh = this.onHudBuildRefresh.bind(this);
         this._stateMachine.init(this._config, {
             onTurnPhaseChanged: this.onTurnPhaseChanged.bind(this),
             onTurnTimer: this.onTurnTimer.bind(this),
@@ -295,6 +296,12 @@ export default class TurnGameMain extends cc.Component {
             this._battleMap.getBondHudText("B"),
         );
         let localCamp = this.getLocalCamp();
+        let coins = this._battleMap.getCampCoins(localCamp);
+        let slotCost = this.useServer ? this._battleMap.getCampSlotCost(localCamp) : 0;
+        this._hud.refreshCoins(
+            this._battleMap.getCampCoins("A"),
+            this._battleMap.getCampCoins("B"),
+        );
         this._hud.refreshBuildPalette(
             localCamp,
             this._battleMap.getObstacleSlotStates(localCamp).map((slot) => ({
@@ -305,9 +312,22 @@ export default class TurnGameMain extends cc.Component {
                 shapeKey: slot.shapeKey,
                 placed: !!slot.placed,
                 hpText: this._battleMap.getObstacleSlotHpPreview(slot.type, slot.count),
+                coinCost: slotCost,
+                affordable: !this.useServer || slotCost <= 0 || coins >= slotCost,
             })),
             this._battleMap.isBuildPhaseActiveForCamp(localCamp),
         );
+        if (this.useServer) {
+            this._hud.refreshRefreshButton(
+                localCamp,
+                this._battleMap.getCampCanRefresh(localCamp),
+                this._battleMap.getCampRefreshCost(localCamp),
+                this._battleMap.getCampPlacedThisRound(localCamp),
+            );
+        }
+        else {
+            this._hud.refreshRefreshButton(localCamp, false, 0, false);
+        }
         this.refreshMoveButtonsEnabled();
     }
 
@@ -624,6 +644,13 @@ export default class TurnGameMain extends cc.Component {
 
     private onHudMoveRight() {
         this.requestTankMove(24);
+    }
+
+    private onHudBuildRefresh(camp: TurnCamp) {
+        if (!this.useServer) {
+            return;
+        }
+        this.sendNetMessage("refreshSlots", {});
     }
 
     private requestTankMove(deltaX: number) {

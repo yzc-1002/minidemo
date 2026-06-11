@@ -184,6 +184,11 @@ interface TurnCampStats {
     roundResourceBonus: number;
     upgradeStacks: { [id: string]: number };
     derivedUpgrades: TurnDerivedUpgradeState;
+    coins: number;
+    placedThisRound: boolean;
+    slotCost: number;
+    refreshCost: number;
+    canRefresh: boolean;
 }
 
 type TurnAttackSnapshotState = TurnAttackBondSnapshot;
@@ -450,6 +455,20 @@ export default class TurnBattleMap extends cc.Component {
         this.applyObstacleInventorySnapshot("A", inventoriesA);
         this.applyObstacleInventorySnapshot("B", inventoriesB);
 
+        let economy = snapshot.economy || {};
+        let economyA = economy.A || {};
+        let economyB = economy.B || {};
+        statsA.coins = Math.max(0, Math.floor(Number(economyA.coins) || 0));
+        statsB.coins = Math.max(0, Math.floor(Number(economyB.coins) || 0));
+        statsA.placedThisRound = !!economyA.placedThisRound;
+        statsB.placedThisRound = !!economyB.placedThisRound;
+        statsA.slotCost = Math.max(0, Math.floor(Number(economyA.slotCost) || 0));
+        statsB.slotCost = Math.max(0, Math.floor(Number(economyB.slotCost) || 0));
+        statsA.refreshCost = Math.max(0, Math.floor(Number(economyA.refreshCost) || 0));
+        statsB.refreshCost = Math.max(0, Math.floor(Number(economyB.refreshCost) || 0));
+        statsA.canRefresh = !!economyA.canRefresh;
+        statsB.canRefresh = !!economyB.canRefresh;
+
         statsA.exp = Math.max(0, Number(expA.exp) || 0);
         statsB.exp = Math.max(0, Number(expB.exp) || 0);
         statsA.expNeed = Math.max(1, Number(expA.expNeed) || this._config.levelUpExp);
@@ -653,6 +672,12 @@ export default class TurnBattleMap extends cc.Component {
             let mainCannonChance = Math.max(0, Math.min(1, Number(rule && rule.mainCannonChance) || 0));
             return "HP " + maxHp + " 导弹" + damage + " 范围" + radiusCells + "格 主炮" + Math.round(mainCannonChance * 100) + "%";
         }
+        if (slotType === "coin") {
+            let maxHp = this.getObstacleMaxHp(slotType, safeCount);
+            let economy = this._config.coinEconomy || {} as any;
+            let perBlock = Math.max(0, Math.floor(Number(economy.perCoinBlockSettlement) || 0));
+            return "HP " + maxHp + " 结算+" + (safeCount * perBlock) + "金币/格";
+        }
         return "";
     }
 
@@ -671,6 +696,27 @@ export default class TurnBattleMap extends cc.Component {
 
     getCampExpNeed(camp: TurnCamp): number {
         return this.getCampStats(camp).expNeed;
+    }
+
+    getCampCoins(camp: TurnCamp): number {
+        return this.getCampStats(camp).coins;
+    }
+
+    getCampSlotCost(camp: TurnCamp): number {
+        return this.getCampStats(camp).slotCost;
+    }
+
+    getCampRefreshCost(camp: TurnCamp): number {
+        return this.getCampStats(camp).refreshCost;
+    }
+
+    getCampCanRefresh(camp: TurnCamp): boolean {
+        let stats = this.getCampStats(camp);
+        return !!stats.canRefresh && stats.coins >= stats.refreshCost;
+    }
+
+    getCampPlacedThisRound(camp: TurnCamp): boolean {
+        return this.getCampStats(camp).placedThisRound;
     }
 
     getActiveAssistZoneCount(): number {
@@ -1638,7 +1684,7 @@ export default class TurnBattleMap extends cc.Component {
             graphics.lineWidth = 2;
             graphics.roundRect(x, y, cellSize, cellSize, 8);
             graphics.stroke();
-            if (slotType === "exp" || slotType === "energy" || slotType === "mirror" || slotType === "missile_silo") {
+            if (slotType === "exp" || slotType === "energy" || slotType === "mirror" || slotType === "missile_silo" || slotType === "coin") {
                 this.drawObstacleIcon(graphics, slotType, x, y, cellSize);
             }
         }
@@ -1791,6 +1837,7 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private createCampStats(): TurnCampStats {
+        let economy = this._config.coinEconomy || {} as any;
         return {
             exp: 0,
             expNeed: this._config.levelUpExp,
@@ -1802,6 +1849,11 @@ export default class TurnBattleMap extends cc.Component {
             roundResourceBonus: 0,
             upgradeStacks: {},
             derivedUpgrades: this.buildDerivedUpgradeState({}),
+            coins: Math.max(0, Math.floor(Number(economy.initialCoins) || 0)),
+            placedThisRound: false,
+            slotCost: Math.max(0, Math.floor(Number(economy.slotCost) || 0)),
+            refreshCost: Math.max(0, Math.floor(Number(economy.refreshCost) || 0)),
+            canRefresh: false,
         };
     }
 
@@ -1890,6 +1942,8 @@ export default class TurnBattleMap extends cc.Component {
             missileExplosionRadiusBonus: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "missile_explosion_radius"))),
             missileDamageBonus: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "missile_damage"))),
             missileMainCannonChanceBonus: Math.max(0, Math.min(1, this.getUpgradeAddValue(stacks, "missile_main_cannon_chance"))),
+            coinDropMultiplier: Math.max(1, 1 + Math.max(0, this.getUpgradeAddValue(stacks, "coin_drop"))),
+            expDropMultiplier: Math.max(1, 1 + Math.max(0, this.getUpgradeAddValue(stacks, "exp_drop"))),
         };
     }
 
@@ -2169,6 +2223,7 @@ export default class TurnBattleMap extends cc.Component {
             exp: this.countLivingResource(camp, "exp"),
             energy: this.countLivingResource(camp, "energy"),
             bleed: this.countLivingResource(camp, "bleed"),
+            coin: this.countLivingResource(camp, "coin"),
         };
     }
 
@@ -2293,6 +2348,9 @@ export default class TurnBattleMap extends cc.Component {
         if (slotType === "missile_silo") {
             return new cc.Color(104, 132, 154, 255);
         }
+        if (slotType === "coin") {
+            return new cc.Color(247, 205, 66, 255);
+        }
         return camp === "A" ? new cc.Color(99, 156, 106, 255) : new cc.Color(161, 96, 108, 255);
     }
 
@@ -2340,6 +2398,13 @@ export default class TurnBattleMap extends cc.Component {
             graphics.moveTo(cx - 5, cy + 4);
             graphics.lineTo(cx, cy + 9);
             graphics.lineTo(cx + 5, cy + 4);
+        }
+        else if (slotType === "coin") {
+            graphics.circle(cx, cy, 7);
+            graphics.moveTo(cx - 3, cy - 4);
+            graphics.lineTo(cx - 3, cy + 4);
+            graphics.moveTo(cx + 3, cy - 4);
+            graphics.lineTo(cx + 3, cy + 4);
         }
         graphics.stroke();
     }
@@ -3282,7 +3347,7 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private getResourceHpUpgradeBonus(camp: TurnCamp, slotType: TurnObstacleResourceType): number {
-        if (!camp || slotType === "mirror" || slotType === "attack" || slotType === "missile_silo") {
+        if (!camp || slotType === "mirror" || slotType === "attack" || slotType === "missile_silo" || slotType === "coin") {
             return 0;
         }
         let stats = this.getCampStats(camp);
@@ -3328,6 +3393,10 @@ export default class TurnBattleMap extends cc.Component {
             let rule = this.getResourceHpBaseAndMax(slotType);
             return rule.baseHp * Math.max(1, resourceCount);
         }
+        if (slotType === "coin") {
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            return rule.baseHp * Math.max(1, resourceCount);
+        }
         return Math.min(this._config.obstacleMaxHp, this._config.obstacleBaseHp * Math.max(1, resourceCount));
     }
 
@@ -3355,6 +3424,9 @@ export default class TurnBattleMap extends cc.Component {
             return this.getResourceHpBaseAndMax(slotType).baseHp;
         }
         if (slotType === "missile_silo") {
+            return this.getResourceHpBaseAndMax(slotType).baseHp;
+        }
+        if (slotType === "coin") {
             return this.getResourceHpBaseAndMax(slotType).baseHp;
         }
         return this.getObstacleMaxHp(slotType, 1, camp);
