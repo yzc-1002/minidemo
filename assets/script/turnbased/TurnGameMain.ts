@@ -476,6 +476,10 @@ export default class TurnGameMain extends cc.Component {
             this._battleMap.applyServerAttackAction(msg);
             return;
         }
+        if (msg.type === "bulletResult") {
+            this._battleMap.applyServerBulletResult(msg);
+            return;
+        }
         if (msg.type === "tankPose") {
             this._battleMap.applyServerTankPose(msg);
             return;

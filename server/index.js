@@ -485,6 +485,15 @@ const TURN_CONFIG = {
       baseHp: 10,
       maxHp: 30,
     },
+    missile_silo: {
+      baseHp: 10,
+      maxHp: 10,
+    },
+  },
+  missileSilo: {
+    directDamage: 10,
+    explosionRadiusCells: 1,
+    mainCannonChance: 0,
   },
   settlementResourceRules: {
     exp: {
@@ -578,8 +587,11 @@ const TURN_UPGRADE_POOL = [
   { id: 'spread_extra_split_add', name: '扩散分裂 +1', desc: '穿过扩散区域后额外分裂数 +1', maxStacks: null, effect: { type: 'spread_extra_split', stackMode: 'add', value: 1 } },
   { id: 'damage_boost_temp_attack_add', name: '增伤区域攻击 +10', desc: '穿过伤害翻倍区域后临时额外获得 +10 攻击', maxStacks: null, effect: { type: 'damage_boost_temp_attack', stackMode: 'add', value: 10 } },
   { id: 'black_hole_strength_pct', name: '黑洞引力 +10%', desc: '黑洞区域引力效果 +10%', maxStacks: null, effect: { type: 'black_hole_strength', stackMode: 'add', value: 0.1 } },
+  { id: 'missile_explosion_radius_add', name: '导弹爆炸 +1格', desc: '导弹爆炸范围向四周增加 1 个地图格子', maxStacks: null, effect: { type: 'missile_explosion_radius', stackMode: 'add', value: 1 } },
+  { id: 'missile_damage_add', name: '导弹伤害 +10', desc: '导弹命中伤害 +10', maxStacks: null, effect: { type: 'missile_damage', stackMode: 'add', value: 10 } },
+  { id: 'missile_main_cannon_chance_add', name: '导弹命中主炮 +10%', desc: '导弹优先命中敌方主炮概率 +10%', maxStacks: 10, effect: { type: 'missile_main_cannon_chance', stackMode: 'add', value: 0.1, maxValue: 1 } },
 ];
-const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed', 'bullet', 'attack'];
+const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed', 'bullet', 'attack', 'missile_silo'];
 const TURN_OBSTACLE_LAYOUT_LIBRARY = {
   1: [
     [{ x: 0, y: 0 }],
@@ -779,6 +791,9 @@ function buildTurnDerivedUpgradeState(stacks) {
     spreadExtraSplit: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'spread_extra_split'))),
     damageBoostTempAttack: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'damage_boost_temp_attack'))),
     blackHoleStrengthMultiplier: Math.max(1, getTurnUpgradeMultiplyValue(stacks, 'black_hole_strength')),
+    missileExplosionRadiusBonus: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'missile_explosion_radius'))),
+    missileDamageBonus: Math.max(0, Math.floor(getTurnUpgradeAddValue(stacks, 'missile_damage'))),
+    missileMainCannonChanceBonus: clamp(getTurnUpgradeAddValue(stacks, 'missile_main_cannon_chance'), 0, 1),
   };
 }
 
@@ -940,6 +955,32 @@ function buildTurnViewPayload(player, payload) {
   if (next.result && next.result.targetCamp) {
     next.result.targetCamp = getTurnViewCamp(player, next.result.targetCamp);
   }
+  if (next.result && Array.isArray(next.result.missileEvents)) {
+    next.result.missileEvents = next.result.missileEvents.map((event) => {
+      const from = toPlayerViewPoint(player, event.from);
+      const target = toPlayerViewPoint(player, event.target);
+      const nextEvent = {
+        ...event,
+        triggerCamp: getTurnViewCamp(player, event.triggerCamp),
+        targetCamp: getTurnViewCamp(player, event.targetCamp),
+        from: from ? { x: Math.round(from.x), y: Math.round(from.y) } : from,
+        target: target ? { x: Math.round(target.x), y: Math.round(target.y) } : target,
+      };
+      if (Array.isArray(event.damagedObstacles)) {
+        nextEvent.damagedObstacles = event.damagedObstacles.map((item) => ({
+          ...item,
+          camp: getTurnViewCamp(player, item.camp),
+        }));
+      }
+      if (Array.isArray(event.damagedCrystals)) {
+        nextEvent.damagedCrystals = event.damagedCrystals.map((item) => ({
+          ...item,
+          camp: getTurnViewCamp(player, item.camp),
+        }));
+      }
+      return nextEvent;
+    });
+  }
   if (Array.isArray(next.options)) {
     next.options = next.options.map((option) => ({
       ...option,
@@ -1059,7 +1100,7 @@ function getTurnPlayerByCamp(roomState, camp) {
 }
 
 function getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride = null) {
-  if (!camp || slotType === 'mirror' || slotType === 'attack') {
+  if (!camp || slotType === 'mirror' || slotType === 'attack' || slotType === 'missile_silo') {
     return 0;
   }
   const player = getTurnPlayerByCamp(roomState, camp);
@@ -1102,6 +1143,10 @@ function getObstacleMaxHp(slotType, resourceCount, roomState = null, camp = '', 
     const rule = getResourceHpBaseAndMax(slotType);
     return rule.baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
+  if (slotType === 'missile_silo') {
+    const rule = getResourceHpBaseAndMax(slotType);
+    return rule.baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
+  }
   return Math.min(TURN_CONFIG.obstacleMaxHp, TURN_CONFIG.obstacleBaseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
 }
 
@@ -1126,6 +1171,9 @@ function getObstacleCellMaxHp(slotType, roomState = null, camp = '', derivedOver
     return Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
   }
   if (slotType === 'attack') {
+    return getResourceHpBaseAndMax(slotType).baseHp;
+  }
+  if (slotType === 'missile_silo') {
     return getResourceHpBaseAndMax(slotType).baseHp;
   }
   return getObstacleMaxHp(slotType, 1, roomState, camp, derivedOverride);
@@ -1601,6 +1649,9 @@ function getTurnStateSnapshot(roomState) {
         spreadExtraSplit: derived.spreadExtraSplit,
         damageBoostTempAttack: derived.damageBoostTempAttack,
         blackHoleStrengthMultiplier: derived.blackHoleStrengthMultiplier,
+        missileExplosionRadiusBonus: derived.missileExplosionRadiusBonus,
+        missileDamageBonus: derived.missileDamageBonus,
+        missileMainCannonChanceBonus: derived.missileMainCannonChanceBonus,
         derived: JSON.parse(JSON.stringify(derived)),
         stacks: { ...(player.upgrades.stacks || {}) },
       };
@@ -2723,6 +2774,133 @@ function getTurnDynamicObstacleHit(roomState, point, radius) {
   return null;
 }
 
+function getTurnObstacleCellCenter(obstacle, cellIndex) {
+  const grid = TURN_CONFIG.obstacleGrid || 32;
+  const layout = Array.isArray(obstacle && obstacle.layout) && obstacle.layout.length > 0 ? obstacle.layout : [{ x: 0, y: 0 }];
+  const cell = layout[Math.max(0, Math.min(layout.length - 1, Math.floor(Number(cellIndex) || 0)))] || { x: 0, y: 0 };
+  return {
+    x: Math.round((Number(obstacle && obstacle.x) || 0) + (Number(cell.x) || 0) * grid),
+    y: Math.round((Number(obstacle && obstacle.y) || 0) + (Number(cell.y) || 0) * grid),
+  };
+}
+
+function getTurnCampOccupiedCellCenters(roomState, camp) {
+  const result = [];
+  Object.keys(roomState && roomState.obstacles ? roomState.obstacles : {}).forEach((id) => {
+    const obstacle = roomState.obstacles[id];
+    if (!obstacle || obstacle.camp !== camp) {
+      return;
+    }
+    const layout = Array.isArray(obstacle.layout) && obstacle.layout.length > 0 ? obstacle.layout : [{ x: 0, y: 0 }];
+    for (let i = 0; i < layout.length; i++) {
+      result.push(getTurnObstacleCellCenter(obstacle, i));
+    }
+  });
+  const pose = roomState && roomState.tankPoses ? roomState.tankPoses[camp] : null;
+  if (pose) {
+    result.push({ x: Math.round(Number(pose.x) || 0), y: Math.round(Number(pose.y) || 0) });
+  }
+  return result;
+}
+
+function getRandomTurnPointInBuildArea(camp) {
+  const area = TURN_MAP_LAYOUT.buildAreas[camp === 'B' ? 'B' : 'A'];
+  const grid = TURN_CONFIG.obstacleGrid || 32;
+  if (!area) {
+    return { x: 0, y: camp === 'B' ? 320 : -320 };
+  }
+  const minX = Math.ceil(area.minX / grid);
+  const maxX = Math.floor(area.maxX / grid);
+  const minY = Math.ceil(area.minY / grid);
+  const maxY = Math.floor(area.maxY / grid);
+  return {
+    x: clamp(Math.round(randomBetween(minX, maxX + 1)) * grid, area.minX, area.maxX),
+    y: clamp(Math.round(randomBetween(minY, maxY + 1)) * grid, area.minY, area.maxY),
+  };
+}
+
+function pickTurnMissileTarget(roomState, targetCamp, mainCannonChance = 0) {
+  const safeMainCannonChance = clamp(Number(mainCannonChance) || 0, 0, 1);
+  const targetPose = roomState && roomState.tankPoses ? roomState.tankPoses[targetCamp] : null;
+  if (targetPose && Math.random() < safeMainCannonChance) {
+    return { x: Math.round(Number(targetPose.x) || 0), y: Math.round(Number(targetPose.y) || 0) };
+  }
+  const occupied = getTurnCampOccupiedCellCenters(roomState, targetCamp);
+  if (occupied.length > 0) {
+    return occupied[Math.floor(randomBetween(0, occupied.length))] || occupied[0];
+  }
+  return getRandomTurnPointInBuildArea(targetCamp);
+}
+
+function applyTurnMissileExplosion(roomState, triggerObstacle, triggerCellIndex, result) {
+  const targetCamp = getEnemyCamp(triggerObstacle.camp);
+  const config = TURN_CONFIG.missileSilo || {};
+  const triggerPlayer = getTurnPlayerByCamp(roomState, triggerObstacle.camp);
+  const derived = refreshTurnDerivedUpgradeState(triggerPlayer);
+  const damage = Math.max(1, Math.floor((Number(config.directDamage) || 10) + (Number(derived.missileDamageBonus) || 0)));
+  const radiusCells = Math.max(0, Math.floor((Number(config.explosionRadiusCells) || 1) + (Number(derived.missileExplosionRadiusBonus) || 0)));
+  const mainCannonChance = clamp((Number(config.mainCannonChance) || 0) + (Number(derived.missileMainCannonChanceBonus) || 0), 0, 1);
+  const target = pickTurnMissileTarget(roomState, targetCamp, mainCannonChance);
+  const grid = TURN_CONFIG.obstacleGrid || 32;
+  const maxCellDistance = radiusCells * grid + grid * 0.5;
+  const event = {
+    triggerObstacleId: triggerObstacle.id,
+    triggerCamp: triggerObstacle.camp,
+    targetCamp,
+    from: getTurnObstacleCellCenter(triggerObstacle, triggerCellIndex),
+    target,
+    damage,
+    radiusCells,
+    mainCannonChance,
+    damagedObstacles: [],
+    damagedCrystals: [],
+  };
+
+  const obstacleIds = Object.keys(roomState && roomState.obstacles ? roomState.obstacles : {});
+  obstacleIds.forEach((id) => {
+    const obstacle = roomState.obstacles[id];
+    if (!obstacle || obstacle.camp !== targetCamp || !Array.isArray(obstacle.layout)) {
+      return;
+    }
+    for (let i = obstacle.layout.length - 1; i >= 0; i--) {
+      const center = getTurnObstacleCellCenter(obstacle, i);
+      if (distanceBetweenPoints(center, target) > maxCellDistance) {
+        continue;
+      }
+      const applied = applyObstacleDamage(roomState, id, i, damage);
+      if (!applied || applied.appliedDamage <= 0) {
+        continue;
+      }
+      result.hitType = result.hitType || 'obstacle';
+      result.obstacleHits.push({ obstacleId: id, cellIndex: i, damage: applied.appliedDamage, source: 'missile_silo' });
+      if (applied.destroyedCell) {
+        result.destroyedCells.push({ obstacleId: id, cellIndex: i });
+      }
+      if (applied.destroyedObstacle && result.destroyedIds.indexOf(id) < 0) {
+        result.destroyedIds.push(id);
+      }
+      event.damagedObstacles.push({
+        obstacleId: id,
+        camp: obstacle.camp,
+        cellIndex: i,
+        damage: applied.appliedDamage,
+      });
+    }
+  });
+
+  const targetPose = roomState && roomState.tankPoses ? roomState.tankPoses[targetCamp] : null;
+  const targetCrystal = roomState && roomState.crystals ? roomState.crystals[targetCamp] : null;
+  if (targetPose && targetCrystal && distanceBetweenPoints(targetPose, target) <= maxCellDistance + 38) {
+    const appliedDamage = Math.min(Math.max(0, Number(targetCrystal.hp) || 0), damage);
+    if (appliedDamage > 0) {
+      targetCrystal.hp = Math.max(0, targetCrystal.hp - appliedDamage);
+      event.damagedCrystals.push({ camp: targetCamp, damage: appliedDamage });
+    }
+  }
+
+  result.missileEvents.push(event);
+}
+
 function reflectTurnBulletDir(bullet, rect) {
   const position = bullet.position;
   const nearestX = clamp(position.x, rect.x, rect.x + rect.width);
@@ -2771,12 +2949,15 @@ function resolveTurnBulletHit(roomState, bullet, result) {
     if (shouldTurnBulletIgnoreOwnResource(bullet, dynamicHit.obstacle)) {
       return false;
     }
-    if (dynamicHit.obstacle.slotType === 'mirror' && bullet.remainingBounce <= 0) {
-      return true;
-    }
-    const applied = applyObstacleDamage(roomState, dynamicHit.obstacle.id, dynamicHit.cellIndex, bullet.remainingDamage);
+    const isMirror = dynamicHit.obstacle.slotType === 'mirror';
+    const rawDamageForCell = isMirror
+      ? Math.max(0, Number(dynamicHit.obstacle.cellHp && dynamicHit.obstacle.cellHp[dynamicHit.cellIndex]) || 0)
+      : bullet.remainingDamage;
+    const applied = applyObstacleDamage(roomState, dynamicHit.obstacle.id, dynamicHit.cellIndex, rawDamageForCell);
     if (applied) {
-      consumeTurnBulletDamage(bullet, applied.appliedDamage);
+      if (!isMirror) {
+        consumeTurnBulletDamage(bullet, applied.appliedDamage);
+      }
       result.hitType = result.hitType || 'obstacle';
       result.obstacleHits.push({
         obstacleId: dynamicHit.obstacle.id,
@@ -2792,10 +2973,12 @@ function resolveTurnBulletHit(roomState, bullet, result) {
       if (applied.destroyedObstacle && result.destroyedIds.indexOf(dynamicHit.obstacle.id) < 0) {
         result.destroyedIds.push(dynamicHit.obstacle.id);
       }
+      if (dynamicHit.obstacle.slotType === 'missile_silo' && applied.appliedDamage > 0 && dynamicHit.obstacle.camp !== bullet.camp) {
+        applyTurnMissileExplosion(roomState, dynamicHit.obstacle, dynamicHit.cellIndex, result);
+      }
     }
-    if (dynamicHit.obstacle.slotType === 'mirror') {
+    if (isMirror) {
       reflectTurnBulletDir(bullet, dynamicHit.rect);
-      bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
       bullet.hasBounced = true;
       applyTurnFirstBounceDamageBoostIfNeeded(bullet);
       return false;
@@ -2879,6 +3062,7 @@ function simulateTurnBulletResults(roomState, player) {
       obstacleHits: [],
       destroyedIds: [],
       destroyedCells: [],
+      missileEvents: [],
       expGain: 0,
     };
   }
@@ -2895,6 +3079,7 @@ function simulateTurnBulletResults(roomState, player) {
     obstacleHits: [],
     destroyedIds: [],
     destroyedCells: [],
+    missileEvents: [],
     expGain: 0,
   };
   const dt = 1 / 20;
@@ -2934,7 +3119,12 @@ function handleTurnBulletResult(ws, msg) {
     awardedExp += TURN_CONFIG.crystalHitExp;
   }
   if (simulated.obstacleHits.length > 0) {
-    const destroyedObstacleIds = new Set(simulated.destroyedIds);
+    const missileDestroyedIds = new Set(
+      simulated.obstacleHits
+        .filter((hit) => hit && hit.source === 'missile_silo')
+        .map((hit) => hit.obstacleId),
+    );
+    const destroyedObstacleIds = new Set(simulated.destroyedIds.filter((id) => !missileDestroyedIds.has(id)));
     awardedExp += destroyedObstacleIds.size * TURN_CONFIG.obstacleHitExp;
   }
   player.exp += awardedExp;
@@ -2951,6 +3141,7 @@ function handleTurnBulletResult(ws, msg) {
       damage: simulated.damage,
       expGain: awardedExp,
       destroyedIds: simulated.destroyedIds,
+      missileEvents: simulated.missileEvents,
     },
   });
   broadcastTurnSnapshot(roomState);

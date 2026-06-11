@@ -591,6 +591,9 @@ export default class TurnHud extends cc.Component {
         if (type === "attack") {
             return "攻击块";
         }
+        if (type === "missile_silo") {
+            return "导弹井";
+        }
         return fallback || "普通方块";
     }
 
@@ -612,6 +615,9 @@ export default class TurnHud extends cc.Component {
         }
         if (type === "attack") {
             return placed ? new cc.Color(158, 98, 76, 200) : new cc.Color(255, 146, 86, 255);
+        }
+        if (type === "missile_silo") {
+            return placed ? new cc.Color(76, 94, 112, 200) : new cc.Color(104, 132, 154, 255);
         }
         return placed ? new cc.Color(90, 104, 92, 200) : new cc.Color(99, 156, 106, 255);
     }
@@ -648,6 +654,14 @@ export default class TurnHud extends cc.Component {
             graphics.lineTo(x + 7, y - 7);
             graphics.moveTo(x - 7, y - 7);
             graphics.lineTo(x + 7, y + 7);
+        }
+        else if (type === "missile_silo") {
+            graphics.rect(x - 7, y - 7, 14, 14);
+            graphics.moveTo(x, y + 9);
+            graphics.lineTo(x, y - 9);
+            graphics.moveTo(x - 5, y + 4);
+            graphics.lineTo(x, y + 9);
+            graphics.lineTo(x + 5, y + 4);
         }
         else {
             graphics.rect(x - 8, y - 8, 16, 16);

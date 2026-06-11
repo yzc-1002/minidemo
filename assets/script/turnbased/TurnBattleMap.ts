@@ -523,6 +523,14 @@ export default class TurnBattleMap extends cc.Component {
         this.createBullet(camp, startPosition.add(dir.normalize().mul(44)), dir.normalize(), this.buildAttackSnapshotFromServer(action));
     }
 
+    applyServerBulletResult(payload: any) {
+        let result = payload && payload.result;
+        let missileEvents = result && Array.isArray(result.missileEvents) ? result.missileEvents : [];
+        for (let i = 0; i < missileEvents.length; i++) {
+            this.playMissileSiloEvent(missileEvents[i]);
+        }
+    }
+
     consumePendingBulletResult() {
         let result = {
             hitType: this._pendingBulletResult.hitType,
@@ -636,6 +644,14 @@ export default class TurnBattleMap extends cc.Component {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let attack = buildTurnAttackBondSnapshot({ attack: safeCount }, null, this._config);
             return "HP " + maxHp + " 伤害+" + attack.bonusDamageFromAttackBlock + " x" + attack.attackMultiplier;
+        }
+        if (slotType === "missile_silo") {
+            let maxHp = this.getObstacleMaxHp(slotType, safeCount);
+            let rule = this._config.missileSilo;
+            let damage = Math.max(1, Math.floor(Number(rule && rule.directDamage) || 10));
+            let radiusCells = Math.max(0, Math.floor(Number(rule && rule.explosionRadiusCells) || 1));
+            let mainCannonChance = Math.max(0, Math.min(1, Number(rule && rule.mainCannonChance) || 0));
+            return "HP " + maxHp + " 导弹" + damage + " 范围" + radiusCells + "格 主炮" + Math.round(mainCannonChance * 100) + "%";
         }
         return "";
     }
@@ -1225,14 +1241,10 @@ export default class TurnBattleMap extends cc.Component {
                 continue;
             }
             if (obstacle.slotType === "mirror") {
-                if (bullet.bounceLeft <= 0) {
-                    return true;
-                }
                 let cellIndex = hitInfo.cellIndex;
-                let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, bullet.remainingDamage);
-                this.consumeBulletDamage(bullet, appliedDamage);
+                let cellHp = Math.max(0, Number(obstacle.cellHp[cellIndex]) || 0);
+                let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, cellHp);
                 this.reflectBulletOffRect(bullet, hitInfo.rect);
-                bullet.bounceLeft = Math.max(0, bullet.bounceLeft - 1);
                 bullet.hasBounced = true;
                 this.applyFirstBounceDamageBoostIfNeeded(bullet);
                 this.recordPendingObstacleHitIfNeeded(bullet, obstacle, cellIndex, appliedDamage);
@@ -1626,7 +1638,7 @@ export default class TurnBattleMap extends cc.Component {
             graphics.lineWidth = 2;
             graphics.roundRect(x, y, cellSize, cellSize, 8);
             graphics.stroke();
-            if (slotType === "exp" || slotType === "energy" || slotType === "mirror") {
+            if (slotType === "exp" || slotType === "energy" || slotType === "mirror" || slotType === "missile_silo") {
                 this.drawObstacleIcon(graphics, slotType, x, y, cellSize);
             }
         }
@@ -1875,6 +1887,9 @@ export default class TurnBattleMap extends cc.Component {
             spreadExtraSplit: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "spread_extra_split"))),
             damageBoostTempAttack: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "damage_boost_temp_attack"))),
             blackHoleStrengthMultiplier: this.getUpgradeMultiplyValue(stacks, "black_hole_strength"),
+            missileExplosionRadiusBonus: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "missile_explosion_radius"))),
+            missileDamageBonus: Math.max(0, Math.floor(this.getUpgradeAddValue(stacks, "missile_damage"))),
+            missileMainCannonChanceBonus: Math.max(0, Math.min(1, this.getUpgradeAddValue(stacks, "missile_main_cannon_chance"))),
         };
     }
 
@@ -2003,6 +2018,9 @@ export default class TurnBattleMap extends cc.Component {
         }
         if (type === "attack") {
             return "攻击块";
+        }
+        if (type === "missile_silo") {
+            return "导弹井";
         }
         return "普通方块";
     }
@@ -2272,6 +2290,9 @@ export default class TurnBattleMap extends cc.Component {
         if (slotType === "attack") {
             return new cc.Color(255, 146, 86, 255);
         }
+        if (slotType === "missile_silo") {
+            return new cc.Color(104, 132, 154, 255);
+        }
         return camp === "A" ? new cc.Color(99, 156, 106, 255) : new cc.Color(161, 96, 108, 255);
     }
 
@@ -2311,6 +2332,14 @@ export default class TurnBattleMap extends cc.Component {
             graphics.lineTo(cx + 7, cy - 7);
             graphics.moveTo(cx - 7, cy - 7);
             graphics.lineTo(cx + 7, cy + 7);
+        }
+        else if (slotType === "missile_silo") {
+            graphics.rect(cx - 7, cy - 7, 14, 14);
+            graphics.moveTo(cx, cy + 9);
+            graphics.lineTo(cx, cy - 9);
+            graphics.moveTo(cx - 5, cy + 4);
+            graphics.lineTo(cx, cy + 9);
+            graphics.lineTo(cx + 5, cy + 4);
         }
         graphics.stroke();
     }
@@ -2545,6 +2574,46 @@ export default class TurnBattleMap extends cc.Component {
             cc.spawn(cc.moveBy(0.55, 0, 34), cc.fadeOut(0.55)),
             cc.removeSelf(),
         ));
+    }
+
+    private playMissileSiloEvent(event: any) {
+        if (!event || !event.target) {
+            return;
+        }
+        let target = cc.v2(Number(event.target.x) || 0, Number(event.target.y) || 0);
+        let from = event.from ? cc.v2(Number(event.from.x) || target.x, Number(event.from.y) || target.y) : target.add(cc.v2(0, 180));
+        let layer = this._effectLayer || this.contentRoot;
+        if (!layer) {
+            return;
+        }
+
+        let trail = new cc.Node("MissileTrail");
+        trail.parent = layer;
+        trail.setPosition(from.x, from.y);
+        let trailGraphics = trail.addComponent(cc.Graphics);
+        trailGraphics.strokeColor = new cc.Color(255, 214, 120, 220);
+        trailGraphics.lineWidth = 3;
+        trailGraphics.moveTo(0, 0);
+        trailGraphics.lineTo(target.x - from.x, target.y - from.y);
+        trailGraphics.stroke();
+        trail.runAction(cc.sequence(cc.delayTime(0.18), cc.fadeOut(0.18), cc.removeSelf()));
+
+        let explosion = new cc.Node("MissileExplosion");
+        explosion.parent = layer;
+        explosion.setPosition(target.x, target.y);
+        let graphics = explosion.addComponent(cc.Graphics);
+        let cellSize = this._dynamicObstacleSize.width || this._config.obstacleRadius || 32;
+        let radiusCells = Math.max(0, Math.floor(Number(event.radiusCells) || 1));
+        let radius = Math.max(cellSize * 0.5, (radiusCells + 0.5) * cellSize);
+        graphics.fillColor = new cc.Color(255, 96, 48, 95);
+        graphics.circle(0, 0, radius);
+        graphics.fill();
+        graphics.strokeColor = new cc.Color(255, 226, 120, 230);
+        graphics.lineWidth = 3;
+        graphics.circle(0, 0, radius);
+        graphics.stroke();
+        explosion.runAction(cc.sequence(cc.spawn(cc.scaleTo(0.28, 1.35), cc.fadeOut(0.28)), cc.removeSelf()));
+        this.showFloatText("导弹爆炸 -" + (Number(event.damage) || 10), target.add(cc.v2(0, 28)), cc.Color.ORANGE);
     }
 
     private createLabel(text: string, size: number): cc.Label {
@@ -3213,7 +3282,7 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private getResourceHpUpgradeBonus(camp: TurnCamp, slotType: TurnObstacleResourceType): number {
-        if (!camp || slotType === "mirror" || slotType === "attack") {
+        if (!camp || slotType === "mirror" || slotType === "attack" || slotType === "missile_silo") {
             return 0;
         }
         let stats = this.getCampStats(camp);
@@ -3255,6 +3324,10 @@ export default class TurnBattleMap extends cc.Component {
             let rule = this.getResourceHpBaseAndMax(slotType);
             return rule.baseHp * Math.max(1, resourceCount);
         }
+        if (slotType === "missile_silo") {
+            let rule = this.getResourceHpBaseAndMax(slotType);
+            return rule.baseHp * Math.max(1, resourceCount);
+        }
         return Math.min(this._config.obstacleMaxHp, this._config.obstacleBaseHp * Math.max(1, resourceCount));
     }
 
@@ -3279,6 +3352,9 @@ export default class TurnBattleMap extends cc.Component {
             return Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
         }
         if (slotType === "attack") {
+            return this.getResourceHpBaseAndMax(slotType).baseHp;
+        }
+        if (slotType === "missile_silo") {
             return this.getResourceHpBaseAndMax(slotType).baseHp;
         }
         return this.getObstacleMaxHp(slotType, 1, camp);
@@ -3320,6 +3396,9 @@ export default class TurnBattleMap extends cc.Component {
             return Math.max(0, Math.min(maxHp, hpFromCells));
         }
         if (slotType === "mirror") {
+            return Math.max(0, Math.min(maxHp, hpFromCells));
+        }
+        if (slotType === "missile_silo") {
             return Math.max(0, Math.min(maxHp, hpFromCells));
         }
         let minHp = cellCount > 0 ? 1 : 0;

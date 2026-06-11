@@ -11,9 +11,12 @@ export type TurnUpgradeId =
     | "bleed_hp_add"
     | "spread_extra_split_add"
     | "damage_boost_temp_attack_add"
-    | "black_hole_strength_pct";
+    | "black_hole_strength_pct"
+    | "missile_explosion_radius_add"
+    | "missile_damage_add"
+    | "missile_main_cannon_chance_add";
 export type TurnAssistZoneType = "black_hole" | "spread" | "damage_boost";
-export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack";
+export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack" | "missile_silo";
 export type TurnMirrorDirection = "bl" | "br" | "tl" | "tr";
 export type TurnUpgradeStackMode = "add" | "multiply";
 export type TurnUpgradeEffectType =
@@ -23,7 +26,10 @@ export type TurnUpgradeEffectType =
     | "resource_hp"
     | "spread_extra_split"
     | "damage_boost_temp_attack"
-    | "black_hole_strength";
+    | "black_hole_strength"
+    | "missile_explosion_radius"
+    | "missile_damage"
+    | "missile_main_cannon_chance";
 
 export interface TurnUpgradeEffectConfig {
     type: TurnUpgradeEffectType;
@@ -202,6 +208,9 @@ export interface TurnDerivedUpgradeState {
     spreadExtraSplit: number;
     damageBoostTempAttack: number;
     blackHoleStrengthMultiplier: number;
+    missileExplosionRadiusBonus: number;
+    missileDamageBonus: number;
+    missileMainCannonChanceBonus: number;
 }
 
 export interface TurnGameConfig {
@@ -242,6 +251,12 @@ export interface TurnGameConfig {
         bleed: TurnObstacleHpRuleConfig;
         bullet: TurnObstacleHpRuleConfig;
         attack: TurnObstacleHpRuleConfig;
+        missile_silo: TurnObstacleHpRuleConfig;
+    };
+    missileSilo: {
+        directDamage: number;
+        explosionRadiusCells: number;
+        mainCannonChance: number;
     };
     settlementResourceRules: {
         exp: TurnSettlementResourceRuleConfig;
@@ -371,6 +386,15 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
             baseHp: 10,
             maxHp: 30,
         },
+        missile_silo: {
+            baseHp: 10,
+            maxHp: 10,
+        },
+    },
+    missileSilo: {
+        directDamage: 10,
+        explosionRadiusCells: 1,
+        mainCannonChance: 0,
     },
     settlementResourceRules: {
         exp: {
@@ -452,6 +476,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         { type: "bleed", name: "滴血块" },
         { type: "bullet", name: "子弹块" },
         { type: "attack", name: "攻击块" },
+        { type: "missile_silo", name: "导弹井" },
     ],
     tankMoveSpeed: 360,
     mapWidth: 640,
@@ -480,6 +505,9 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         { id: "spread_extra_split_add", name: "扩散分裂 +1", desc: "穿过扩散区域后额外分裂数 +1", maxStacks: null, effect: { type: "spread_extra_split", stackMode: "add", value: 1 } },
         { id: "damage_boost_temp_attack_add", name: "增伤区域攻击 +10", desc: "穿过伤害翻倍区域后临时额外获得 +10 攻击", maxStacks: null, effect: { type: "damage_boost_temp_attack", stackMode: "add", value: 10 } },
         { id: "black_hole_strength_pct", name: "黑洞引力 +10%", desc: "黑洞区域引力效果 +10%", maxStacks: null, effect: { type: "black_hole_strength", stackMode: "add", value: 0.1 } },
+        { id: "missile_explosion_radius_add", name: "导弹爆炸 +1格", desc: "导弹爆炸范围向四周增加 1 个地图格子", maxStacks: null, effect: { type: "missile_explosion_radius", stackMode: "add", value: 1 } },
+        { id: "missile_damage_add", name: "导弹伤害 +10", desc: "导弹命中伤害 +10", maxStacks: null, effect: { type: "missile_damage", stackMode: "add", value: 10 } },
+        { id: "missile_main_cannon_chance_add", name: "导弹命中主炮 +10%", desc: "导弹优先命中敌方主炮概率 +10%", maxStacks: 10, effect: { type: "missile_main_cannon_chance", stackMode: "add", value: 0.1, maxValue: 1 } },
     ],
 };
 
