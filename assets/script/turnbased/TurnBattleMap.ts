@@ -142,6 +142,7 @@ interface TurnBulletState {
     camp: TurnCamp;
     dir: cc.Vec2;
     damage: number;
+    remainingDamage: number;
     baseDamage: number;
     damageMultiplier: number;
     damageBoostLevel: number;
@@ -150,6 +151,7 @@ interface TurnBulletState {
     lifeLeft: number;
     bounceLeft: number;
     hasBounced: boolean;
+    hasTriggeredSpread: boolean;
     currentSpreadZoneIds: string[];
     currentDamageBoostZoneIds: string[];
     damageBoostAppliedZoneIds: string[];
@@ -1130,7 +1132,7 @@ export default class TurnBattleMap extends cc.Component {
             }
             return;
         }
-        this.scheduleOnce(this.fireNextShotInAction.bind(this), 0.5);
+        this.scheduleOnce(this.fireNextShotInAction.bind(this), this.getAttackShotInterval(this._attackSnapshot));
     }
 
     private createBullet(camp: TurnCamp, position: cc.Vec2, dir: cc.Vec2, attackSnapshot?: TurnAttackSnapshotState) {
@@ -1154,14 +1156,16 @@ export default class TurnBattleMap extends cc.Component {
             camp: camp,
             dir: dir,
             damage: damage,
+            remainingDamage: damage,
             baseDamage: damage,
             damageMultiplier: 1,
             damageBoostLevel: 1,
             speed: this._config.bulletSpeed,
             radius: this._config.bulletRadius,
-            lifeLeft: 3.5,
+            lifeLeft: Math.max(0.1, Number(this._config.bulletMaxLifeSeconds) || 30),
             bounceLeft: bounceLeft,
             hasBounced: false,
+            hasTriggeredSpread: false,
             currentSpreadZoneIds: [],
             currentDamageBoostZoneIds: [],
             damageBoostAppliedZoneIds: [],
@@ -1186,7 +1190,8 @@ export default class TurnBattleMap extends cc.Component {
             let nextPosition = this.getNodePosition(bullet.node).add(bullet.dir.mul(bullet.speed * dt));
             bullet.node.setPosition(nextPosition.x, nextPosition.y);
 
-            if (!this.keepBulletInMap(bullet)
+            if (bullet.remainingDamage <= 0
+                || !this.keepBulletInMap(bullet)
                 || this.tryHitDynamicObstacle(bullet)
                 || this.tryHitStaticObstacle(bullet)
                 || this.tryHitCrystal(bullet)
@@ -1201,21 +1206,41 @@ export default class TurnBattleMap extends cc.Component {
         }
     }
 
+    private getAttackShotInterval(snapshot: TurnAttackSnapshotState): number {
+        if (!snapshot || snapshot.extraShotsFromBulletBlock <= 0) {
+            return Math.max(0, Number(this._config.baseFireInterval) || 0);
+        }
+        return Math.max(0, Number(this._config.bulletBlockExtraShotInterval) || 0.5);
+    }
+
     private tryHitDynamicObstacle(bullet: TurnBulletState): boolean {
         for (let i = 0; i < this._obstacles.length; i++) {
             let obstacle = this._obstacles[i];
+            if (this.shouldIgnoreOwnResourceHit(bullet, obstacle.camp)) {
+                continue;
+            }
             let hitInfo = this.getHitDynamicObstacleCell(obstacle, this.getNodePosition(bullet.node), bullet.radius);
             if (!hitInfo) {
                 continue;
             }
-            let cellIndex = hitInfo.cellIndex;
-            let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, bullet.damage);
-            if (obstacle.slotType === "mirror" && bullet.bounceLeft > 0) {
+            if (obstacle.slotType === "mirror") {
+                if (bullet.bounceLeft <= 0) {
+                    return true;
+                }
+                let cellIndex = hitInfo.cellIndex;
+                let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, bullet.remainingDamage);
+                this.consumeBulletDamage(bullet, appliedDamage);
                 this.reflectBulletOffRect(bullet, hitInfo.rect);
                 bullet.bounceLeft = Math.max(0, bullet.bounceLeft - 1);
                 bullet.hasBounced = true;
                 this.applyFirstBounceDamageBoostIfNeeded(bullet);
+                this.recordPendingObstacleHitIfNeeded(bullet, obstacle, cellIndex, appliedDamage);
+                this.resolveObstacleCellAfterHit(bullet, obstacle, i, cellIndex);
+                return false;
             }
+            let cellIndex = hitInfo.cellIndex;
+            let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, bullet.remainingDamage);
+            this.consumeBulletDamage(bullet, appliedDamage);
             if (this._serverMode && bullet.camp === "A" && appliedDamage > 0) {
                 this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
                 this._pendingBulletResult.obstacleHits.push({
@@ -1237,7 +1262,7 @@ export default class TurnBattleMap extends cc.Component {
             this.redrawObstacle(obstacle);
             this.refreshObstacleHpLabel(obstacle);
             if (obstacle.hp > 0) {
-                return obstacle.slotType !== "mirror";
+                return bullet.remainingDamage <= 0;
             }
             let expGain = this.getObstacleDestroyExp(obstacle);
             obstacle.node.destroy();
@@ -1258,13 +1283,66 @@ export default class TurnBattleMap extends cc.Component {
             });
             this.getCampStats(obstacle.camp).energyTowers = this.countPlacedEnergyTowers(obstacle.camp);
             this.emitStatsChanged();
-            if (obstacle.slotType === "mirror") {
-                return false;
-            }
-            return true;
+            return bullet.remainingDamage <= 0;
         }
 
         return false;
+    }
+
+    private consumeBulletDamage(bullet: TurnBulletState, appliedDamage: number) {
+        bullet.remainingDamage = Math.max(0, bullet.remainingDamage - Math.max(0, Math.floor(Number(appliedDamage) || 0)));
+    }
+
+    private shouldIgnoreOwnResourceHit(bullet: TurnBulletState, obstacleCamp: TurnCamp): boolean {
+        return obstacleCamp === bullet.camp && !bullet.hasBounced;
+    }
+
+    private recordPendingObstacleHitIfNeeded(bullet: TurnBulletState, obstacle: TurnObstacleState, cellIndex: number, appliedDamage: number) {
+        if (this._serverMode && bullet.camp === "A" && appliedDamage > 0) {
+            this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
+            this._pendingBulletResult.obstacleHits.push({
+                obstacleId: obstacle.id,
+                cellIndex: cellIndex,
+                damage: appliedDamage,
+            });
+        }
+    }
+
+    private resolveObstacleCellAfterHit(bullet: TurnBulletState, obstacle: TurnObstacleState, obstacleIndex: number, cellIndex: number) {
+        if (obstacle.cellHp[cellIndex] <= 0) {
+            obstacle.layout.splice(cellIndex, 1);
+            obstacle.cellHp.splice(cellIndex, 1);
+            obstacle.shapeKey = this.getLayoutKey(obstacle.layout);
+            obstacle.width = this.getDynamicObstacleRect(obstacle).width;
+            obstacle.height = this.getDynamicObstacleRect(obstacle).height;
+            if (this._serverMode && bullet.camp === "A") {
+                this._pendingBulletResult.destroyedCells.push({ obstacleId: obstacle.id, cellIndex: cellIndex });
+            }
+        }
+        this.redrawObstacle(obstacle);
+        this.refreshObstacleHpLabel(obstacle);
+        if (obstacle.hp > 0) {
+            return;
+        }
+        let expGain = this.getObstacleDestroyExp(obstacle);
+        obstacle.node.destroy();
+        this._obstacles.splice(obstacleIndex, 1);
+        this.clearObstaclePlacedSlot(obstacle);
+        if (expGain > 0) {
+            this.addExp(bullet.camp, expGain, this.getNodePosition(bullet.node));
+        }
+        if (this._serverMode && bullet.camp === "A" && this._pendingBulletResult.destroyedIds.indexOf(obstacle.id) < 0) {
+            this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
+            this._pendingBulletResult.destroyedIds.push(obstacle.id);
+        }
+        this.emitTurnEvent("turn-obstacle-hit", {
+            camp: bullet.camp,
+            obstacleCamp: obstacle.camp,
+            obstacleId: obstacle.id,
+            expGain: expGain,
+        });
+        this.getCampStats(obstacle.camp).energyTowers = this.countPlacedEnergyTowers(obstacle.camp);
+        this.emitStatsChanged();
     }
 
     private tryHitStaticObstacle(bullet: TurnBulletState): boolean {
@@ -1279,14 +1357,7 @@ export default class TurnBattleMap extends cc.Component {
                 obstacleId: obstacle.id,
                 obstacleName: obstacle.name,
             });
-            if (bullet.bounceLeft > 0) {
-                this.reflectBulletOffRect(bullet, obstacle.rect);
-                bullet.bounceLeft -= 1;
-                bullet.hasBounced = true;
-                this.applyFirstBounceDamageBoostIfNeeded(bullet);
-                return false;
-            }
-            return true;
+            return this.tryConsumeBounce(bullet, obstacle.rect);
         }
         return false;
     }
@@ -1333,26 +1404,32 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private tryHitCrystal(bullet: TurnBulletState): boolean {
-        let targetCamp: TurnCamp = bullet.camp === "A" ? "B" : "A";
+        let bulletPosition = this.getNodePosition(bullet.node);
+        let targetCamp: TurnCamp = bullet.hasBounced ? this.getBuildCampAt(bulletPosition) : (bullet.camp === "A" ? "B" : "A");
+        if (!targetCamp || (!bullet.hasBounced && targetCamp === bullet.camp)) {
+            return false;
+        }
         let crystal = this._crystals[targetCamp];
-        if (!crystal || this.getNodePosition(crystal.node).sub(this.getNodePosition(bullet.node)).mag() > crystal.radius + bullet.radius) {
+        if (!crystal || this.getNodePosition(crystal.node).sub(bulletPosition).mag() > crystal.radius + bullet.radius) {
             return false;
         }
 
-        crystal.hp = Math.max(0, crystal.hp - bullet.damage);
+        let appliedDamage = Math.min(crystal.hp, Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0)));
+        crystal.hp = Math.max(0, crystal.hp - appliedDamage);
+        this.consumeBulletDamage(bullet, appliedDamage);
         this.refreshCrystalView(targetCamp);
-        this.showFloatText("-" + bullet.damage, this.getNodePosition(crystal.node).add(cc.v2(0, 44)), cc.Color.RED);
+        this.showFloatText("-" + appliedDamage, this.getNodePosition(crystal.node).add(cc.v2(0, 44)), cc.Color.RED);
         this.addExp(bullet.camp, this._config.crystalHitExp, this.getNodePosition(crystal.node).add(cc.v2(0, 76)));
         this.emitStatsChanged();
         if (this._serverMode && bullet.camp === "A") {
             this._pendingBulletResult.hitType = "crystal";
             this._pendingBulletResult.targetCamp = targetCamp;
-            this._pendingBulletResult.damage += bullet.damage;
+            this._pendingBulletResult.damage += appliedDamage;
         }
         this.emitTurnEvent("turn-crystal-hit", {
             camp: bullet.camp,
             targetCamp: targetCamp,
-            damage: bullet.damage,
+            damage: appliedDamage,
             hp: crystal.hp,
             expGain: this._config.crystalHitExp,
         });
@@ -1360,7 +1437,7 @@ export default class TurnBattleMap extends cc.Component {
         if (crystal.hp <= 0) {
             this.finishGame(bullet.camp);
         }
-        return true;
+        return bullet.remainingDamage <= 0;
     }
 
     private finishGame(winnerCamp: TurnCamp) {
@@ -1395,11 +1472,6 @@ export default class TurnBattleMap extends cc.Component {
         let graphics = node.addComponent(cc.Graphics);
         this.drawObstacleGraphics(graphics, camp, true, slotType, layout, mirrorDir);
 
-        let label = this.createLabel("", 16);
-        label.node.parent = node;
-        label.node.y = bounds.minY * this._dynamicObstacleSize.height - 18;
-        label.node.zIndex = 5;
-        label.node.color = new cc.Color(255, 248, 220, 255);
         let maxHp = this.resolveObstacleMaxHp(slotType, resourceCount, Number(snapshot && snapshot.maxHp), camp);
         let cellHp = this.buildObstacleCellHp(slotType, resourceCount, layout.length, snapshot && snapshot.cellHp, camp);
         let hp = this.resolveObstacleHp(slotType, layout.length, Number(snapshot && snapshot.hp), cellHp, maxHp);
@@ -2339,12 +2411,13 @@ export default class TurnBattleMap extends cc.Component {
             if (nextSpreadZoneIds.indexOf(zoneId) >= 0) {
                 continue;
             }
-            if (bullet.spreadTriggeredZoneIds.length > 0) {
+            if (bullet.hasTriggeredSpread || bullet.spreadTriggeredZoneIds.length > 0) {
                 continue;
             }
             let spreadZone = this._assistZones.find((zone) => zone.id === zoneId && zone.type === "spread");
             if (spreadZone) {
                 bullet.spreadTriggeredZoneIds.push(zoneId);
+                bullet.hasTriggeredSpread = true;
                 this.spawnSpreadBulletsFromZone(bullet, spreadZone);
                 break;
             }
@@ -2358,7 +2431,7 @@ export default class TurnBattleMap extends cc.Component {
         }
         bullet.currentSpreadZoneIds = nextSpreadZoneIds;
         bullet.currentDamageBoostZoneIds = nextDamageBoostZoneIds;
-        bullet.damage = Math.max(0, Math.round(bullet.baseDamage * bullet.damageMultiplier));
+        bullet.damage = Math.max(bullet.remainingDamage, Math.round(bullet.baseDamage * bullet.damageMultiplier));
     }
 
     private applyFirstBounceDamageBoostIfNeeded(bullet: TurnBulletState) {
@@ -2368,6 +2441,7 @@ export default class TurnBattleMap extends cc.Component {
         }
         bullet.baseDamage = Math.max(0, Math.round((Number(bullet.baseDamage) || 0) * multiplier));
         bullet.damage = Math.max(0, Math.round(bullet.baseDamage * Math.max(1, Number(bullet.damageMultiplier) || 1)));
+        bullet.remainingDamage = Math.max(0, Math.round(bullet.remainingDamage * multiplier));
         bullet.firstBounceDamageBoostApplied = true;
     }
 
@@ -2405,6 +2479,17 @@ export default class TurnBattleMap extends cc.Component {
             bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
         }
         return true;
+    }
+
+    private tryConsumeBounce(bullet: TurnBulletState, rect: cc.Rect): boolean {
+        if (bullet.bounceLeft <= 0) {
+            return true;
+        }
+        this.reflectBulletOffRect(bullet, rect);
+        bullet.bounceLeft = Math.max(0, bullet.bounceLeft - 1);
+        bullet.hasBounced = true;
+        this.applyFirstBounceDamageBoostIfNeeded(bullet);
+        return false;
     }
 
     private getBuildCampAt(position: cc.Vec2): TurnCamp {
@@ -3131,8 +3216,7 @@ export default class TurnBattleMap extends cc.Component {
         if (slotType === "normal") {
             let rule = this.getResourceHpBaseAndMax(slotType);
             let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
-            let maxHp = rule.maxHp;
-            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+            return baseHp * Math.max(1, resourceCount);
         }
         if (slotType === "mirror") {
             let rule = this.getResourceHpBaseAndMax(slotType);
@@ -3141,32 +3225,26 @@ export default class TurnBattleMap extends cc.Component {
         if (slotType === "exp") {
             let rule = this.getResourceHpBaseAndMax(slotType);
             let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
-            let maxHp = rule.maxHp;
-            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+            return baseHp * Math.max(1, resourceCount);
         }
         if (slotType === "energy") {
             let rule = this.getResourceHpBaseAndMax(slotType);
             let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
-            let maxHp = rule.maxHp;
-            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+            return baseHp * Math.max(1, resourceCount);
         }
         if (slotType === "bleed") {
             let rule = this.getResourceHpBaseAndMax(slotType);
             let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
-            let maxHp = rule.maxHp;
-            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+            return baseHp * Math.max(1, resourceCount);
         }
         if (slotType === "bullet") {
             let rule = this.getResourceHpBaseAndMax(slotType);
             let baseHp = Math.min(rule.maxHp, rule.baseHp + this.getResourceHpUpgradeBonus(camp, slotType));
-            let maxHp = rule.maxHp;
-            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+            return baseHp * Math.max(1, resourceCount);
         }
         if (slotType === "attack") {
             let rule = this.getResourceHpBaseAndMax(slotType);
-            let baseHp = rule.baseHp;
-            let maxHp = rule.maxHp;
-            return Math.min(maxHp, baseHp * Math.max(1, resourceCount));
+            return rule.baseHp * Math.max(1, resourceCount);
         }
         return Math.min(this._config.obstacleMaxHp, this._config.obstacleBaseHp * Math.max(1, resourceCount));
     }
@@ -3240,12 +3318,26 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private refreshObstacleHpLabel(obstacle: TurnObstacleState) {
-        let labelNode = obstacle.node.children && obstacle.node.children.length > 0
-            ? obstacle.node.children.filter((child) => child.getComponent(cc.Label))[0]
-            : null;
-        let label = labelNode ? labelNode.getComponent(cc.Label) : null;
-        if (label) {
-            label.string = String(obstacle.hp);
+        if (!obstacle || !obstacle.node) {
+            return;
+        }
+        let children = obstacle.node.children ? obstacle.node.children.slice() : [];
+        for (let i = 0; i < children.length; i++) {
+            if (children[i].getComponent(cc.Label)) {
+                children[i].destroy();
+            }
+        }
+        let cellSize = this._dynamicObstacleSize.width;
+        let layout = obstacle.layout && obstacle.layout.length > 0 ? obstacle.layout : [cc.v2(0, 0)];
+        for (let i = 0; i < layout.length && i < obstacle.cellHp.length; i++) {
+            let cell = layout[i];
+            let hp = Math.max(0, Math.floor(Number(obstacle.cellHp[i]) || 0));
+            let label = this.createLabel(String(hp), 14);
+            label.node.name = "ObstacleCellHpLabel";
+            label.node.parent = obstacle.node;
+            label.node.setPosition(cell.x * cellSize, cell.y * cellSize);
+            label.node.zIndex = 5;
+            label.node.color = new cc.Color(255, 248, 220, 255);
         }
     }
 
@@ -3756,11 +3848,13 @@ export default class TurnBattleMap extends cc.Component {
             if (child) {
                 child.lifeLeft = Math.min(child.lifeLeft, Math.max(0.6, sourceBullet.lifeLeft * 0.7));
                 child.damage = sourceBullet.damage;
+                child.remainingDamage = sourceBullet.remainingDamage;
                 child.baseDamage = sourceBullet.baseDamage;
                 child.damageMultiplier = sourceBullet.damageMultiplier;
                 child.damageBoostLevel = sourceBullet.damageBoostLevel;
                 child.bounceLeft = sourceBullet.bounceLeft;
                 child.hasBounced = sourceBullet.hasBounced;
+                child.hasTriggeredSpread = sourceBullet.hasTriggeredSpread;
                 child.currentSpreadZoneIds = [];
                 child.currentDamageBoostZoneIds = [];
                 child.damageBoostAppliedZoneIds = sourceBullet.damageBoostAppliedZoneIds.slice();
@@ -3777,10 +3871,13 @@ export default class TurnBattleMap extends cc.Component {
     private applyDamageBoostPassThrough(bullet: TurnBulletState, zoneId: string) {
         let zoneConfig = getTurnAssistZoneTypeConfig("damage_boost", this._config);
         let maxMultiplier = Math.max(1, Math.floor(Number(zoneConfig.damageBoostMaxMultiplier) || 1));
+        let previousMultiplier = Math.max(1, Number(bullet.damageMultiplier) || 1);
         let nextLevel = Math.min(maxMultiplier, Math.max(1, Math.floor(Number(bullet.damageBoostLevel) || 1)) + 1);
         bullet.damageBoostLevel = nextLevel;
         bullet.damageMultiplier = nextLevel;
         bullet.baseDamage += Math.max(0, Math.floor(Number(bullet.damageBoostTempAttack) || 0));
+        bullet.damage = Math.max(0, Math.round(bullet.baseDamage * bullet.damageMultiplier));
+        bullet.remainingDamage = Math.max(0, Math.round(bullet.remainingDamage * (bullet.damageMultiplier / previousMultiplier)));
         if (bullet.damageBoostAppliedZoneIds.indexOf(zoneId) < 0) {
             bullet.damageBoostAppliedZoneIds.push(zoneId);
         }

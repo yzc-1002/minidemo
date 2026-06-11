@@ -381,9 +381,14 @@ const TURN_CONFIG = {
   expWallDestroyExp: 50,
   energyWallRoundHeal: 10,
   bloodBlockHealPerStack: 1,
-  crystalHitExp: 20,
+  crystalHitExp: 25,
   expNeed: 60,
-  bulletDamage: 20,
+  baseBulletCount: 1,
+  bulletDamage: 10,
+  baseBulletBounce: 0,
+  baseFireInterval: 0,
+  bulletBlockExtraShotInterval: 0.5,
+  bulletMaxLifeSeconds: 30,
   maxBulletResultDamage: 80,
   assistZones: {
     spawnRule: {
@@ -1037,8 +1042,7 @@ function getObstacleMaxHp(slotType, resourceCount, roomState = null, camp = '', 
   if (slotType === 'normal') {
     const rule = getResourceHpBaseAndMax(slotType);
     const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
-    const maxHp = rule.maxHp;
-    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+    return baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
   if (slotType === 'mirror') {
     const rule = getResourceHpBaseAndMax(slotType);
@@ -1047,32 +1051,26 @@ function getObstacleMaxHp(slotType, resourceCount, roomState = null, camp = '', 
   if (slotType === 'exp') {
     const rule = getResourceHpBaseAndMax(slotType);
     const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
-    const maxHp = rule.maxHp;
-    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+    return baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
   if (slotType === 'energy') {
     const rule = getResourceHpBaseAndMax(slotType);
     const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
-    const maxHp = rule.maxHp;
-    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+    return baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
   if (slotType === 'bleed') {
     const rule = getResourceHpBaseAndMax(slotType);
     const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
-    const maxHp = rule.maxHp;
-    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+    return baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
   if (slotType === 'bullet') {
     const rule = getResourceHpBaseAndMax(slotType);
     const baseHp = Math.min(rule.maxHp, rule.baseHp + getResourceHpUpgradeBonus(roomState, camp, slotType, derivedOverride));
-    const maxHp = rule.maxHp;
-    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+    return baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
   if (slotType === 'attack') {
     const rule = getResourceHpBaseAndMax(slotType);
-    const baseHp = rule.baseHp;
-    const maxHp = rule.maxHp;
-    return Math.min(maxHp, baseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
+    return rule.baseHp * Math.max(1, Math.round(Number(resourceCount) || 1));
   }
   return Math.min(TURN_CONFIG.obstacleMaxHp, TURN_CONFIG.obstacleBaseHp * Math.max(1, Math.round(Number(resourceCount) || 1)));
 }
@@ -1148,11 +1146,12 @@ function applyObstacleDamage(roomState, obstacleId, cellIndex, damage) {
   const safeDamage = Math.max(0, Math.floor(Number(damage) || 0));
   const before = Math.max(0, Number(obstacle.cellHp[cellIndex]) || 0);
   const after = Math.max(0, before - safeDamage);
+  const appliedDamage = before - after;
   obstacle.cellHp[cellIndex] = after;
   obstacle.hp = sumObstacleCellHp(obstacle);
   obstacle.maxHp = getObstacleMaxHp(obstacle.slotType || 'normal', obstacle.resourceCount, roomState, obstacle.camp);
   if (after > 0) {
-    return { obstacle, destroyedCell: false, destroyedObstacle: false };
+    return { obstacle, appliedDamage, destroyedCell: false, destroyedObstacle: false };
   }
   obstacle.layout.splice(cellIndex, 1);
   obstacle.cellHp.splice(cellIndex, 1);
@@ -1160,7 +1159,7 @@ function applyObstacleDamage(roomState, obstacleId, cellIndex, damage) {
   obstacle.shapeKey = getObstacleLayoutKey(obstacle.layout);
   obstacle.hp = sumObstacleCellHp(obstacle);
   if (obstacle.hp > 0) {
-    return { obstacle, destroyedCell: true, destroyedObstacle: false };
+    return { obstacle, appliedDamage, destroyedCell: true, destroyedObstacle: false };
   }
   const owner = roomState.players.find((item) => item.camp === obstacle.camp);
   const slot = owner ? findTurnRoundSlot(owner, obstacle.originSlotId) : null;
@@ -1169,7 +1168,7 @@ function applyObstacleDamage(roomState, obstacleId, cellIndex, damage) {
     slot.placed = false;
   }
   delete roomState.obstacles[obstacleId];
-  return { obstacle, destroyedCell: true, destroyedObstacle: true };
+  return { obstacle, appliedDamage, destroyedCell: true, destroyedObstacle: true };
 }
 
 function getTurnUpgradeStack(player, upgradeId) {
@@ -1303,7 +1302,8 @@ function buildTurnAttackSnapshotFromCounts(counts, player) {
   const attackMultiplier = getTurnBondMultiplier('attack', safeCounts.attack);
   const bonusDamageFromAttackBlock = getTurnBondValue('attack', safeCounts.attack);
   const bulletBounce = Math.max(0, Number(derived.bulletBounceBonus) || 0);
-  const totalShots = Math.max(1, 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock);
+  const baseBulletCount = Math.max(1, Math.floor(Number(TURN_CONFIG.baseBulletCount) || 1));
+  const totalShots = Math.max(1, baseBulletCount + extraShotsFromUpgrade + extraShotsFromBulletBlock);
   return {
     bulletBlockCount: safeCounts.bullet,
     attackBlockCount: safeCounts.attack,
@@ -1314,7 +1314,7 @@ function buildTurnAttackSnapshotFromCounts(counts, player) {
     bonusDamageFromUpgrade,
     bonusDamageFromAttackBlock,
     bulletDamage: Math.max(1, baseBulletDamage + bonusDamageFromUpgrade + bonusDamageFromAttackBlock),
-    bulletBounce,
+    bulletBounce: Math.max(0, Math.floor(Number(TURN_CONFIG.baseBulletBounce) || 0)) + bulletBounce,
     firstBounceDamageMultiplier: Math.max(1, Number(derived.firstBounceDamageMultiplier) || 1),
     spreadExtraSplit: Math.max(0, Number(derived.spreadExtraSplit) || 0),
     damageBoostTempAttack: Math.max(0, Number(derived.damageBoostTempAttack) || 0),
@@ -1354,6 +1354,7 @@ function createTurnServerBullet(roomState, camp, pose, attackSnapshot) {
     currentDamageBoostZoneIds: [],
     damageBoostAppliedZoneIds: [],
     spreadTriggeredZoneIds: [],
+    hasTriggeredSpread: false,
     firstBounceDamageBoostApplied: false,
     firstBounceDamageMultiplier: Math.max(1, Number(attackSnapshot && attackSnapshot.firstBounceDamageMultiplier) || 1),
     spreadExtraSplit: Math.max(0, Number(attackSnapshot && attackSnapshot.spreadExtraSplit) || 0),
@@ -1361,7 +1362,7 @@ function createTurnServerBullet(roomState, camp, pose, attackSnapshot) {
     blackHoleStrengthMultiplier: Math.max(1, Number(attackSnapshot && attackSnapshot.blackHoleStrengthMultiplier) || 1),
     attackSnapshot: attackSnapshot ? { ...attackSnapshot } : null,
     camp,
-    lifeLeft: 3.5,
+    lifeLeft: Math.max(0.1, Number(TURN_CONFIG.bulletMaxLifeSeconds) || 30),
   });
 }
 
@@ -1699,6 +1700,7 @@ function cloneTurnBulletState(bullet) {
     currentDamageBoostZoneIds: Array.isArray(bullet && bullet.currentDamageBoostZoneIds) ? bullet.currentDamageBoostZoneIds.slice() : [],
     damageBoostAppliedZoneIds: Array.isArray(bullet && bullet.damageBoostAppliedZoneIds) ? bullet.damageBoostAppliedZoneIds.slice() : [],
     spreadTriggeredZoneIds: Array.isArray(bullet && bullet.spreadTriggeredZoneIds) ? bullet.spreadTriggeredZoneIds.slice() : [],
+    hasTriggeredSpread: !!(bullet && bullet.hasTriggeredSpread),
     firstBounceDamageBoostApplied: !!(bullet && bullet.firstBounceDamageBoostApplied),
     firstBounceDamageMultiplier: Math.max(1, Number(bullet && bullet.firstBounceDamageMultiplier) || 1),
     spreadExtraSplit: Math.max(0, Math.floor(Number(bullet && bullet.spreadExtraSplit) || 0)),
@@ -1706,7 +1708,7 @@ function cloneTurnBulletState(bullet) {
     blackHoleStrengthMultiplier: Math.max(1, Number(bullet && bullet.blackHoleStrengthMultiplier) || 1),
     attackSnapshot: bullet && bullet.attackSnapshot ? { ...bullet.attackSnapshot } : null,
     camp: bullet && bullet.camp ? bullet.camp : 'A',
-    lifeLeft: Number.isFinite(Number(bullet && bullet.lifeLeft)) ? Number(bullet.lifeLeft) : 3.5,
+    lifeLeft: Number.isFinite(Number(bullet && bullet.lifeLeft)) ? Number(bullet.lifeLeft) : Math.max(0.1, Number(TURN_CONFIG.bulletMaxLifeSeconds) || 30),
   };
 }
 
@@ -1923,10 +1925,13 @@ function broadcastTurnAttackShot(roomState) {
     startTurnWaitBulletPhase(roomState, attack.camp);
     return;
   }
+  const shotInterval = attack.snapshot.extraShotsFromBulletBlock > 0
+    ? Math.max(0, Number(TURN_CONFIG.bulletBlockExtraShotInterval) || 0.5)
+    : Math.max(0, Number(TURN_CONFIG.baseFireInterval) || 0);
   attack.timer = setTimeout(() => {
     attack.timer = null;
     broadcastTurnAttackShot(roomState);
-  }, 500);
+  }, shotInterval * 1000);
 }
 
 function startTurnSettlePhase(roomState) {
@@ -2556,7 +2561,6 @@ function isPointInsideTurnAssistZone(point, zone) {
 }
 
 function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
-  bullet.remainingDamage = Math.max(0, Number(bullet.baseDamage) || 0);
   let nextSpreadZoneIds = [];
   let nextDamageBoostZoneIds = [];
   const zones = Array.isArray(roomState && roomState.zones) ? roomState.zones : [];
@@ -2604,12 +2608,13 @@ function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
     if (nextSpreadZoneIds.indexOf(zoneId) >= 0) {
       continue;
     }
-    if (bullet.spreadTriggeredZoneIds.length > 0) {
+    if (bullet.hasTriggeredSpread || bullet.spreadTriggeredZoneIds.length > 0) {
       continue;
     }
     const zone = zones.find((item) => item && item.id === zoneId && item.zoneType === 'spread');
     if (zone) {
       bullet.spreadTriggeredZoneIds.push(zoneId);
+      bullet.hasTriggeredSpread = true;
       spawnTurnSpreadBullets(bullet, zone, bulletQueue);
       break;
     }
@@ -2623,7 +2628,6 @@ function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
   }
   bullet.currentSpreadZoneIds = nextSpreadZoneIds;
   bullet.currentDamageBoostZoneIds = nextDamageBoostZoneIds;
-  bullet.remainingDamage = Math.max(0, Math.round((Number(bullet.baseDamage) || 0) * Math.max(1, Number(bullet.damageMultiplier) || 1)));
 }
 
 function spawnTurnSpreadBullets(sourceBullet, zone, bulletQueue) {
@@ -2651,11 +2655,12 @@ function spawnTurnSpreadBullets(sourceBullet, zone, bulletQueue) {
 function applyTurnDamageBoostPassThrough(bullet, zoneId) {
   const config = getTurnAssistZoneTypeConfig('damageBoost');
   const maxMultiplier = Math.max(1, Math.floor(Number(config.damageBoostMaxMultiplier) || 1));
+  const previousMultiplier = Math.max(1, Number(bullet.damageMultiplier) || 1);
   const nextLevel = Math.min(maxMultiplier, Math.max(1, Math.floor(Number(bullet.damageBoostLevel) || 1)) + 1);
   bullet.damageBoostLevel = nextLevel;
   bullet.damageMultiplier = nextLevel;
   bullet.baseDamage += Math.max(0, Math.floor(Number(bullet.damageBoostTempAttack) || 0));
-  bullet.remainingDamage = Math.max(0, Math.round((Number(bullet.baseDamage) || 0) * bullet.damageMultiplier));
+  bullet.remainingDamage = Math.max(0, Math.round((Number(bullet.remainingDamage) || 0) * (bullet.damageMultiplier / previousMultiplier)));
   if (bullet.damageBoostAppliedZoneIds.indexOf(zoneId) < 0) {
     bullet.damageBoostAppliedZoneIds.push(zoneId);
   }
@@ -2667,8 +2672,12 @@ function applyTurnFirstBounceDamageBoostIfNeeded(bullet) {
     return;
   }
   bullet.baseDamage = Math.max(0, Math.round((Number(bullet.baseDamage) || 0) * multiplier));
-  bullet.remainingDamage = Math.max(0, Math.round(bullet.baseDamage * Math.max(1, Number(bullet.damageMultiplier) || 1)));
+  bullet.remainingDamage = Math.max(0, Math.round((Number(bullet.remainingDamage) || 0) * multiplier));
   bullet.firstBounceDamageBoostApplied = true;
+}
+
+function consumeTurnBulletDamage(bullet, appliedDamage) {
+  bullet.remainingDamage = Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0) - Math.max(0, Math.floor(Number(appliedDamage) || 0)));
 }
 
 function getTurnDynamicObstacleHit(roomState, point, radius) {
@@ -2715,16 +2724,39 @@ function reflectTurnBulletDir(bullet, rect) {
   bullet.dir = normalizeVec(nextDir, bullet.dir);
 }
 
+function getTurnBuildCampAt(point) {
+  const areaA = TURN_MAP_LAYOUT.buildAreas.A;
+  const areaB = TURN_MAP_LAYOUT.buildAreas.B;
+  if (point && point.x >= areaA.minX && point.x <= areaA.maxX && point.y >= areaA.minY && point.y <= areaA.maxY) {
+    return 'A';
+  }
+  if (point && point.x >= areaB.minX && point.x <= areaB.maxX && point.y >= areaB.minY && point.y <= areaB.maxY) {
+    return 'B';
+  }
+  return '';
+}
+
+function shouldTurnBulletIgnoreOwnResource(bullet, obstacle) {
+  return !!(bullet && obstacle && obstacle.camp === bullet.camp && !bullet.hasBounced);
+}
+
 function resolveTurnBulletHit(roomState, bullet, result) {
   const dynamicHit = getTurnDynamicObstacleHit(roomState, bullet.position, Number(TURN_CONFIG.bulletRadius) || 10);
   if (dynamicHit) {
+    if (shouldTurnBulletIgnoreOwnResource(bullet, dynamicHit.obstacle)) {
+      return false;
+    }
+    if (dynamicHit.obstacle.slotType === 'mirror' && bullet.remainingBounce <= 0) {
+      return true;
+    }
     const applied = applyObstacleDamage(roomState, dynamicHit.obstacle.id, dynamicHit.cellIndex, bullet.remainingDamage);
     if (applied) {
+      consumeTurnBulletDamage(bullet, applied.appliedDamage);
       result.hitType = result.hitType || 'obstacle';
       result.obstacleHits.push({
         obstacleId: dynamicHit.obstacle.id,
         cellIndex: dynamicHit.cellIndex,
-        damage: bullet.remainingDamage,
+        damage: applied.appliedDamage,
       });
       if (applied.destroyedCell) {
         result.destroyedCells.push({
@@ -2736,14 +2768,14 @@ function resolveTurnBulletHit(roomState, bullet, result) {
         result.destroyedIds.push(dynamicHit.obstacle.id);
       }
     }
-    if (dynamicHit.obstacle.slotType === 'mirror' && bullet.remainingBounce > 0) {
+    if (dynamicHit.obstacle.slotType === 'mirror') {
       reflectTurnBulletDir(bullet, dynamicHit.rect);
       bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
       bullet.hasBounced = true;
       applyTurnFirstBounceDamageBoostIfNeeded(bullet);
       return false;
     }
-    return true;
+    return bullet.remainingDamage <= 0;
   }
 
   const staticObstacles = getTurnActiveStaticObstacles(roomState);
@@ -2752,25 +2784,30 @@ function resolveTurnBulletHit(roomState, bullet, result) {
     if (!circleRectIntersects(bullet.position, Number(TURN_CONFIG.bulletRadius) || 10, obstacle)) {
       continue;
     }
-    if (bullet.remainingBounce > 0) {
-      reflectTurnBulletDir(bullet, obstacle);
-      bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
-      bullet.hasBounced = true;
-      applyTurnFirstBounceDamageBoostIfNeeded(bullet);
-      return false;
+    if (bullet.remainingBounce <= 0) {
+      return true;
     }
-    return true;
+    reflectTurnBulletDir(bullet, obstacle);
+    bullet.remainingBounce = Math.max(0, bullet.remainingBounce - 1);
+    bullet.hasBounced = true;
+    applyTurnFirstBounceDamageBoostIfNeeded(bullet);
+    return false;
   }
 
-  const targetCamp = getEnemyCamp(bullet.camp);
+  const targetCamp = bullet.hasBounced ? getTurnBuildCampAt(bullet.position) : getEnemyCamp(bullet.camp);
+  if (!targetCamp || (!bullet.hasBounced && targetCamp === bullet.camp)) {
+    return false;
+  }
   const crystal = roomState && roomState.crystals ? roomState.crystals[targetCamp] : null;
   const crystalCenter = targetCamp === 'A' ? { x: 0, y: -420 } : { x: 0, y: 420 };
   const crystalRadius = 28;
   if (crystal && distanceBetweenPoints(bullet.position, crystalCenter) <= crystalRadius + (Number(TURN_CONFIG.bulletRadius) || 10)) {
+    const appliedDamage = Math.min(Math.max(0, Number(crystal.hp) || 0), Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0)));
     result.hitType = 'crystal';
     result.targetCamp = targetCamp;
-    result.damage += Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0));
-    return true;
+    result.damage += appliedDamage;
+    consumeTurnBulletDamage(bullet, appliedDamage);
+    return bullet.remainingDamage <= 0;
   }
   return false;
 }
@@ -2838,13 +2875,13 @@ function simulateTurnBulletResults(roomState, player) {
     expGain: 0,
   };
   const dt = 1 / 20;
-  const bulletSpeed = 620;
-  const maxTicks = 200;
+  const bulletSpeed = Math.max(1, Number(TURN_CONFIG.bulletSpeed) || 620);
+  const maxTicks = Math.ceil((Math.max(0.1, Number(TURN_CONFIG.bulletMaxLifeSeconds) || 30) + 1) / dt);
   while (bulletQueue.length > 0) {
     const bullet = bulletQueue.shift();
     for (let tick = 0; tick < maxTicks; tick++) {
       bullet.lifeLeft -= dt;
-      if (bullet.lifeLeft <= 0) {
+      if (bullet.lifeLeft <= 0 || bullet.remainingDamage <= 0) {
         break;
       }
       applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue);

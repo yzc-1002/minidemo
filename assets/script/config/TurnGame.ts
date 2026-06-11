@@ -222,7 +222,12 @@ export interface TurnGameConfig {
     obstacleHitExp: number;
     crystalHitExp: number;
     levelUpExp: number;
+    baseBulletCount: number;
     bulletDamage: number;
+    baseBulletBounce: number;
+    baseFireInterval: number;
+    bulletBlockExtraShotInterval: number;
+    bulletMaxLifeSeconds: number;
     bulletSpeed: number;
     bulletRadius: number;
     obstacleRadius: number;
@@ -293,7 +298,12 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     obstacleHitExp: 8,
     crystalHitExp: 25,
     levelUpExp: 60,
-    bulletDamage: 20,
+    baseBulletCount: 1,
+    bulletDamage: 10,
+    baseBulletBounce: 0,
+    baseFireInterval: 0,
+    bulletBlockExtraShotInterval: 0.5,
+    bulletMaxLifeSeconds: 30,
     bulletSpeed: 620,
     bulletRadius: 10,
     obstacleRadius: 26,
@@ -576,7 +586,8 @@ export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, u
     let extraShotsFromBulletBlock = getTurnBulletExtraShots(safeCounts.bullet, cfg);
     let attackMultiplier = getTurnBondMultiplier("attack", safeCounts.attack, cfg);
     let bonusDamageFromAttackBlock = getTurnBondValue("attack", safeCounts.attack, cfg);
-    let totalShots = Math.max(1, 1 + extraShotsFromUpgrade + extraShotsFromBulletBlock);
+    let baseBulletCount = Math.max(1, Math.floor(Number(cfg.baseBulletCount) || 1));
+    let totalShots = Math.max(1, baseBulletCount + extraShotsFromUpgrade + extraShotsFromBulletBlock);
     return {
         bulletBlockCount: safeCounts.bullet,
         attackBlockCount: safeCounts.attack,
@@ -587,7 +598,7 @@ export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, u
         bonusDamageFromUpgrade: bonusDamageFromUpgrade,
         bonusDamageFromAttackBlock: bonusDamageFromAttackBlock,
         bulletDamage: Math.max(1, Number(cfg.bulletDamage) || 1) + bonusDamageFromUpgrade + bonusDamageFromAttackBlock,
-        bulletBounce: bulletBounce,
+        bulletBounce: Math.max(0, Math.floor(Number(cfg.baseBulletBounce) || 0)) + bulletBounce,
         firstBounceDamageMultiplier: firstBounceDamageMultiplier,
         spreadExtraSplit: spreadExtraSplit,
         damageBoostTempAttack: damageBoostTempAttack,
