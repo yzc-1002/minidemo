@@ -164,7 +164,14 @@ export default class TurnHud extends cc.Component {
         if (!position || !this._buildPaletteRoot) {
             return;
         }
-        this._buildPaletteRoot.setPosition(position.x + 80, position.y + 80);
+        let paletteX = position.x + 120;
+        let paletteY = position.y + 110;
+        this._buildPaletteRoot.setPosition(paletteX, paletteY);
+        if (this._refreshButton) {
+            let paletteW = this._buildPaletteRoot.getContentSize().width || 300;
+            let paletteH = this._buildPaletteRoot.getContentSize().height || 210;
+            this._refreshButton.setPosition(paletteX + paletteW / 2 + 56, paletteY + paletteH / 2 - 22);
+        }
     }
 
     refreshExp(aExp: number, aLevel: number, aExpNeed: number, bExp: number, bLevel: number, bExpNeed: number) {
@@ -432,48 +439,53 @@ export default class TurnHud extends cc.Component {
             return;
         }
 
+        let paletteW = 300;
+        let paletteH = 210;
         this._buildPaletteRoot = new cc.Node("TurnBuildPalette");
         this._buildPaletteRoot.parent = this.node;
-        this._buildPaletteRoot.setPosition(-220, -235);
-        this._buildPaletteRoot.setContentSize(220, 156);
+        this._buildPaletteRoot.setPosition(-100, -300);
+        this._buildPaletteRoot.setContentSize(paletteW, paletteH);
         this._buildPaletteRoot.zIndex = 20;
 
         let bg = this._buildPaletteRoot.addComponent(cc.Graphics);
-        bg.fillColor = new cc.Color(24, 30, 42, 220);
-        bg.roundRect(-110, -78, 220, 156, 12);
+        bg.fillColor = new cc.Color(24, 30, 42, 225);
+        bg.roundRect(-paletteW / 2, -paletteH / 2, paletteW, paletteH, 12);
         bg.fill();
-        bg.strokeColor = new cc.Color(215, 225, 240, 140);
+        bg.strokeColor = new cc.Color(215, 225, 240, 150);
         bg.lineWidth = 2;
-        bg.roundRect(-110, -78, 220, 156, 12);
+        bg.roundRect(-paletteW / 2, -paletteH / 2, paletteW, paletteH, 12);
         bg.stroke();
 
-        let title = this.createLabel("己方掩体", 20, 0, 45);
+        let title = this.createLabel("己方掩体", 18, 0, paletteH / 2 - 16);
         title.node.parent = this._buildPaletteRoot;
 
         this._buildPaletteBlock = new cc.Node("BuildPaletteBlock");
         this._buildPaletteBlock.parent = this._buildPaletteRoot;
-        this._buildPaletteBlock.setPosition(0, 18);
+        this._buildPaletteBlock.setPosition(0, paletteH / 2 - 56);
 
-        this._buildPaletteCountLabel = this.createLabel("总数 x0", 20, 0, -48);
+        this._buildPaletteCountLabel = this.createLabel("总数 x0", 16, 0, -paletteH / 2 + 30);
         this._buildPaletteCountLabel.node.parent = this._buildPaletteRoot;
-        this._buildPaletteHintLabel = this.createLabel("等待改造期", 15, 0, -66);
+        this._buildPaletteHintLabel = this.createLabel("等待改造期", 13, 0, -paletteH / 2 + 12);
         this._buildPaletteHintLabel.node.parent = this._buildPaletteRoot;
         this._buildPaletteHintLabel.node.color = new cc.Color(190, 200, 220, 255);
 
         this._refreshButton = new cc.Node("BuildRefreshButton");
-        this._refreshButton.parent = this._buildPaletteRoot;
-        this._refreshButton.setPosition(82, -56);
-        this._refreshButton.setContentSize(54, 28);
+        this._refreshButton.parent = this.node;
+        this._refreshButton.setPosition(-220 + paletteW / 2 + 56, -245 + paletteH / 2 - 22);
+        this._refreshButton.setContentSize(88, 40);
+        this._refreshButton.zIndex = 21;
         let refreshGfx = this._refreshButton.addComponent(cc.Graphics);
         refreshGfx.fillColor = new cc.Color(58, 78, 110, 235);
-        refreshGfx.roundRect(-27, -14, 54, 28, 6);
+        refreshGfx.roundRect(-44, -20, 88, 40, 8);
         refreshGfx.fill();
         refreshGfx.strokeColor = new cc.Color(220, 230, 245, 200);
-        refreshGfx.lineWidth = 1.5;
-        refreshGfx.roundRect(-27, -14, 54, 28, 6);
+        refreshGfx.lineWidth = 2;
+        refreshGfx.roundRect(-44, -20, 88, 40, 8);
         refreshGfx.stroke();
-        this._refreshButtonLabel = this.createChildLabel(this._refreshButton, "刷新 -5", 12, 0, 0);
+        this._refreshButtonLabel = this.createChildLabel(this._refreshButton, "刷新 -5", 16, 0, 0);
+        this._refreshButton.on(cc.Node.EventType.TOUCH_START, this.onRefreshButtonTouchStart, this);
         this._refreshButton.on(cc.Node.EventType.TOUCH_END, this.onRefreshButtonClicked, this);
+        this._refreshButton.on(cc.Node.EventType.TOUCH_CANCEL, this.onRefreshButtonTouchCancel, this);
 
         this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_START, this.onBuildPaletteTouchStart, this);
         this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_MOVE, this.onBuildPaletteTouchMove, this);
@@ -525,6 +537,18 @@ export default class TurnHud extends cc.Component {
         this._refreshButton.opacity = usable ? 255 : 140;
     }
 
+    private onRefreshButtonTouchStart(event: cc.Event.EventTouch) {
+        if (event) {
+            event.stopPropagation();
+        }
+    }
+
+    private onRefreshButtonTouchCancel(event: cc.Event.EventTouch) {
+        if (event) {
+            event.stopPropagation();
+        }
+    }
+
     private onRefreshButtonClicked(event: cc.Event.EventTouch) {
         if (event) {
             event.stopPropagation();
@@ -562,29 +586,37 @@ export default class TurnHud extends cc.Component {
         graphics.clear();
         this.clearBuildSlotInfoNodes();
         let slots = this._buildPaletteSlots;
-        let width = 34;
-        let gap = 16;
+        let width = this.getBuildSlotWidth();
+        let gap = this.getBuildSlotGap();
         let startX = -((slots.length - 1) * (width + gap)) / 2;
         for (let i = 0; i < slots.length; i++) {
             let slot = slots[i];
             let x = startX + i * (width + gap);
             let y = 0;
             graphics.fillColor = this.getSlotColor(slot.type, slot.placed);
-            graphics.roundRect(x - width / 2, y - width / 2, width, width, 6);
+            graphics.roundRect(x - width / 2, y - width / 2, width, width, 8);
             graphics.fill();
             graphics.strokeColor = new cc.Color(240, 240, 240, slot.placed ? 120 : 220);
             graphics.lineWidth = 2;
-            graphics.roundRect(x - width / 2, y - width / 2, width, width, 6);
+            graphics.roundRect(x - width / 2, y - width / 2, width, width, 8);
             graphics.stroke();
             this.drawSlotMark(graphics, slot.type, x, y);
             if (slot.slotId === this._selectedBuildSlotId) {
                 graphics.strokeColor = new cc.Color(255, 235, 120, 255);
                 graphics.lineWidth = 3;
-                graphics.roundRect(x - width / 2 - 3, y - width / 2 - 3, width + 6, width + 6, 8);
+                graphics.roundRect(x - width / 2 - 3, y - width / 2 - 3, width + 6, width + 6, 10);
                 graphics.stroke();
             }
-            this.createBuildSlotInfo(slot, x, y - 28);
+            this.createBuildSlotInfo(slot, x, y - width / 2 - 10);
         }
+    }
+
+    private getBuildSlotWidth(): number {
+        return 52;
+    }
+
+    private getBuildSlotGap(): number {
+        return 36;
     }
 
     private clearBuildSlotInfoNodes() {
@@ -602,28 +634,35 @@ export default class TurnHud extends cc.Component {
         root.setPosition(x, y);
         this._buildSlotInfoNodes.push(root);
 
-        let name = this.createChildLabel(root, this.getSlotDisplayName(slot.type, slot.name), 11, 0, 0);
+        let lineHeight = 20;
+        let cursorY = 0;
+
+        let name = this.createChildLabel(root, this.getSlotDisplayName(slot.type, slot.name), 13, 0, cursorY);
         name.node.color = slot.slotId === this._selectedBuildSlotId
             ? new cc.Color(255, 235, 120, 255)
-            : new cc.Color(225, 230, 238, 255);
+            : new cc.Color(230, 235, 244, 255);
+        cursorY -= lineHeight + 2;
 
-        let status = this.createChildLabel(root, "x" + Math.max(0, slot.count || 0) + " " + (slot.placed ? "已放置" : "未放置"), 10, 0, -14);
-        status.node.color = slot.placed
-            ? new cc.Color(180, 188, 200, 255)
-            : new cc.Color(170, 240, 180, 255);
+        // let status = this.createChildLabel(root, "x" + Math.max(0, slot.count || 0) + " " + (slot.placed ? "已放置" : "未放置"), 11, 0, cursorY);
+        // status.node.color = slot.placed
+        //     ? new cc.Color(180, 188, 200, 255)
+        //     : new cc.Color(170, 240, 180, 255);
+        // cursorY -= lineHeight;
+
         if (slot.hpText) {
-            let hp = this.createChildLabel(root, slot.hpText, 9, 0, -27);
+            let hp = this.createChildLabel(root, slot.hpText, 10, 0, cursorY);
             hp.node.color = new cc.Color(255, 221, 132, 255);
+            cursorY -= lineHeight;
         }
-        if (slot.shapeKey) {
-            let shape = this.createChildLabel(root, this.summarizeShape(slot.shapeKey), 9, 0, slot.hpText ? -40 : -27);
-            shape.node.color = new cc.Color(180, 196, 220, 255);
-        }
+        // if (slot.shapeKey) {
+        //     let shape = this.createChildLabel(root, this.summarizeShape(slot.shapeKey), 10, 0, cursorY);
+        //     shape.node.color = new cc.Color(180, 196, 220, 255);
+        //     cursorY -= lineHeight;
+        // }
         let coinCost = Math.max(0, Math.floor(Number(slot.coinCost) || 0));
         if (coinCost > 0) {
             let affordable = slot.affordable !== false;
-            let baseY = slot.hpText && slot.shapeKey ? -53 : (slot.hpText || slot.shapeKey ? -40 : -27);
-            let costLabel = this.createChildLabel(root, "-" + coinCost + " 金币", 10, 0, baseY);
+            let costLabel = this.createChildLabel(root, "-" + coinCost + " 金币", 12, 0, cursorY);
             costLabel.node.color = affordable
                 ? new cc.Color(255, 218, 96, 255)
                 : new cc.Color(255, 96, 96, 255);
@@ -782,8 +821,8 @@ export default class TurnHud extends cc.Component {
         }
         let local = this._buildPaletteBlock.convertToNodeSpaceAR(worldPos);
         let slots = this._buildPaletteSlots;
-        let width = 34;
-        let gap = 8;
+        let width = this.getBuildSlotWidth();
+        let gap = this.getBuildSlotGap();
         let startX = -((slots.length - 1) * (width + gap)) / 2;
         for (let i = 0; i < slots.length; i++) {
             let x = startX + i * (width + gap);
@@ -826,9 +865,10 @@ export default class TurnHud extends cc.Component {
         event.stopPropagation();
         let worldPos = cc.v2(event.getLocation());
         let touchedSlotId = this.getSlotIdAtWorldPos(worldPos);
-        if (touchedSlotId) {
-            this.selectBuildSlot(touchedSlotId);
+        if (!touchedSlotId) {
+            return;
         }
+        this.selectBuildSlot(touchedSlotId);
         if (!this.isBuildPaletteAvailable()) {
             return;
         }

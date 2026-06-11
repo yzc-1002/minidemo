@@ -632,37 +632,37 @@ export default class TurnBattleMap extends cc.Component {
         if (slotType === "normal") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let perCell = this.getObstacleCellMaxHp(slotType);
-            return "HP " + maxHp + " (" + perCell + "/格)";
+            return "(" + perCell + "HP/格)";
         }
         if (slotType === "exp") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let settlement = buildTurnSettlementBondSnapshot({ exp: safeCount }, null, this._config);
-            return "HP " + maxHp + " 结算+" + settlement.expGain + "EXP x" + settlement.expMultiplier;
+            return "结算+" + settlement.expGain + "EXP x" + settlement.expMultiplier;
         }
         if (slotType === "energy") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let settlement = buildTurnSettlementBondSnapshot({ energy: safeCount }, null, this._config);
-            return "HP " + maxHp + " 结算+" + settlement.totalHeal + "HP x" + settlement.energyMultiplier;
+            return "结算+" + settlement.totalHeal + "HP x" + settlement.energyMultiplier;
         }
         if (slotType === "bleed") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let settlement = buildTurnSettlementBondSnapshot({ bleed: safeCount }, null, this._config);
-            return "HP " + maxHp + " 禁疗" + settlement.blockedHeal + " x" + settlement.bleedMultiplier;
+            return "禁疗" + settlement.blockedHeal + " x" + settlement.bleedMultiplier;
         }
         if (slotType === "mirror") {
             let maxHp = this.getObstacleCellMaxHp(slotType);
-            return "每格HP " + maxHp + " 命中反弹并销毁";
+            return "命中反弹并销毁";
         }
         if (slotType === "bullet") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let attack = buildTurnAttackBondSnapshot({ bullet: safeCount }, null, this._config);
             let extraShots = attack.extraShotsFromBulletBlock;
-            return "HP " + maxHp + " 额外+" + extraShots + "发";
+            return "额外+" + extraShots + "发";
         }
         if (slotType === "attack") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let attack = buildTurnAttackBondSnapshot({ attack: safeCount }, null, this._config);
-            return "HP " + maxHp + " 伤害+" + attack.bonusDamageFromAttackBlock + " x" + attack.attackMultiplier;
+            return "伤害+" + attack.bonusDamageFromAttackBlock + " x" + attack.attackMultiplier;
         }
         if (slotType === "missile_silo") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
@@ -670,13 +670,13 @@ export default class TurnBattleMap extends cc.Component {
             let damage = Math.max(1, Math.floor(Number(rule && rule.directDamage) || 10));
             let radiusCells = Math.max(0, Math.floor(Number(rule && rule.explosionRadiusCells) || 1));
             let mainCannonChance = Math.max(0, Math.min(1, Number(rule && rule.mainCannonChance) || 0));
-            return "HP " + maxHp + " 导弹" + damage + " 范围" + radiusCells + "格 主炮" + Math.round(mainCannonChance * 100) + "%";
+            return "导弹" + damage + " 范围" + radiusCells + "格 主炮" + Math.round(mainCannonChance * 100) + "%";
         }
         if (slotType === "coin") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let economy = this._config.coinEconomy || {} as any;
             let perBlock = Math.max(0, Math.floor(Number(economy.perCoinBlockSettlement) || 0));
-            return "HP " + maxHp + " 结算+" + (safeCount * perBlock) + "金币/格";
+            return "结算+" + (safeCount * perBlock) + "金币/格";
         }
         return "";
     }
