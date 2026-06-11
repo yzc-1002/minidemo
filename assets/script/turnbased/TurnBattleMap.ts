@@ -88,6 +88,7 @@ interface TurnTankState {
     turret: cc.Node;
     preview: cc.Node;
     aim: cc.Vec2;
+    campLabel: cc.Label;
 }
 
 interface TurnObstacleState {
@@ -1093,8 +1094,8 @@ export default class TurnBattleMap extends cc.Component {
                 this.onAttackIntent({
                     fromX: startPosition.x,
                     fromY: startPosition.y,
-                    aimX: tank.aim.x,
-                    aimY: tank.aim.y,
+                    aimX: targetPosition.x,
+                    aimY: targetPosition.y,
                     shotIndex: 0,
                 });
             }
@@ -1405,15 +1406,11 @@ export default class TurnBattleMap extends cc.Component {
 
     private tryHitCrystal(bullet: TurnBulletState): boolean {
         let bulletPosition = this.getNodePosition(bullet.node);
-        let targetCamp: TurnCamp = bullet.hasBounced ? this.getBuildCampAt(bulletPosition) : (bullet.camp === "A" ? "B" : "A");
-        if (!targetCamp || (!bullet.hasBounced && targetCamp === bullet.camp)) {
+        let targetCamp = this.getTankHitCamp(bullet, bulletPosition);
+        if (!targetCamp) {
             return false;
         }
         let crystal = this._crystals[targetCamp];
-        if (!crystal || this.getNodePosition(crystal.node).sub(bulletPosition).mag() > crystal.radius + bullet.radius) {
-            return false;
-        }
-
         let appliedDamage = Math.min(crystal.hp, Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0)));
         crystal.hp = Math.max(0, crystal.hp - appliedDamage);
         this.consumeBulletDamage(bullet, appliedDamage);
@@ -1438,6 +1435,21 @@ export default class TurnBattleMap extends cc.Component {
             this.finishGame(bullet.camp);
         }
         return bullet.remainingDamage <= 0;
+    }
+
+    private getTankHitCamp(bullet: TurnBulletState, bulletPosition: cc.Vec2): TurnCamp {
+        let camps: TurnCamp[] = ["A", "B"];
+        for (let i = 0; i < camps.length; i++) {
+            let camp = camps[i];
+            if (!bullet.hasBounced && camp === bullet.camp) {
+                continue;
+            }
+            let target = this._crystals[camp];
+            if (target && this.getNodePosition(target.node).sub(bulletPosition).mag() <= target.radius + bullet.radius) {
+                return camp;
+            }
+        }
+        return null;
     }
 
     private finishGame(winnerCamp: TurnCamp) {
@@ -1675,16 +1687,14 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private createCampView(camp: TurnCamp) {
-        let crystalPosition = this.getSpawnPosition("crystal" + camp, cc.v2(0, this._config.crystalY[camp]));
-        let tankPosition = this.getRoadCenterPosition(camp);
-        let crystal = this.createCrystal(camp, crystalPosition);
+        let tankPosition = this.getSpawnPosition("tank" + camp, this.getRoadCenterPosition(camp));
         let tank = this.createTank(camp, tankPosition);
         this._crystals[camp] = {
-            node: crystal.node,
+            node: tank.root,
             hp: this._config.crystalHp,
             maxHp: this._config.crystalHp,
-            hpLabel: crystal.label,
-            radius: 32,
+            hpLabel: tank.campLabel,
+            radius: 38,
         };
         this._tanks[camp] = tank;
         this.refreshCrystalView(camp);
@@ -1729,8 +1739,9 @@ export default class TurnBattleMap extends cc.Component {
         let preview = new cc.Node("Preview");
         preview.parent = root;
         let label = this.createLabel(camp, 18);
+        label.node.name = "TankHp" + camp;
         label.node.parent = root;
-        label.node.y = -2;
+        label.node.y = -54;
 
         let tankState: TurnTankState = {
             root: root,
@@ -1738,6 +1749,7 @@ export default class TurnBattleMap extends cc.Component {
             turret: turret,
             preview: preview,
             aim: cc.v2(position.x, position.y + (camp === "A" ? 120 : -120)),
+            campLabel: label,
         };
         this.applyTankAim(camp, tankState.aim, false);
         this.updateTankState(camp, false);
@@ -1750,7 +1762,7 @@ export default class TurnBattleMap extends cc.Component {
             return;
         }
 
-        crystal.hpLabel.string = "HP " + crystal.hp + "/" + crystal.maxHp;
+        crystal.hpLabel.string = camp + " HP " + crystal.hp + "/" + crystal.maxHp;
     }
 
     private updateTankState(camp: TurnCamp, active: boolean) {
@@ -1759,13 +1771,8 @@ export default class TurnBattleMap extends cc.Component {
             return;
         }
 
-        let shouldHide = this._phase === "attack" && this._actionCamp !== camp;
-        tank.root.active = !shouldHide;
-        tank.preview.active = !shouldHide;
-        if (shouldHide) {
-            return;
-        }
-
+        tank.root.active = true;
+        tank.preview.active = true;
         tank.root.opacity = active ? 255 : 100;
         tank.root.scale = active ? 1.08 : 1;
         tank.preview.opacity = active ? 210 : 90;
@@ -2841,6 +2848,8 @@ export default class TurnBattleMap extends cc.Component {
         this.ensureFallbackSpawnPoint("crystalB");
         this.ensureFallbackSpawnPoint("tankA");
         this.ensureFallbackSpawnPoint("tankB");
+        this.normalizeCampSpawnPointOrder("tank");
+        this.normalizeCampSpawnPointOrder("crystal");
     }
 
     private parseTurnAreas() {
@@ -3535,6 +3544,16 @@ export default class TurnBattleMap extends cc.Component {
         return cc.v2();
     }
 
+    private normalizeCampSpawnPointOrder(prefix: string) {
+        let pointA = this._spawnPoints[prefix + "A"];
+        let pointB = this._spawnPoints[prefix + "B"];
+        if (!pointA || !pointB || pointA.y <= pointB.y) {
+            return;
+        }
+        this._spawnPoints[prefix + "A"] = pointB;
+        this._spawnPoints[prefix + "B"] = pointA;
+    }
+
     private pickClosestRect(rects: cc.Rect[], targetY: number, usedRect?: cc.Rect): cc.Rect {
         let picked: cc.Rect = null;
         let minDistance = Number.MAX_VALUE;
@@ -3611,6 +3630,23 @@ export default class TurnBattleMap extends cc.Component {
             this._buildAreas.A = cc.rect(bounds.minX, mapRect.y, bounds.maxX - bounds.minX, thirdHeight);
             this._assistArea = cc.rect(bounds.minX, mapRect.y + thirdHeight, bounds.maxX - bounds.minX, thirdHeight);
             this._buildAreas.B = cc.rect(bounds.minX, mapRect.y + thirdHeight * 2, bounds.maxX - bounds.minX, thirdHeight);
+            return;
+        }
+
+        let defaultBuildDepth = this._config.buildArea && this._config.buildArea.A
+            ? this._config.buildArea.A.height
+            : Math.max(24, (assistMaxY - assistMinY) / 4);
+        let buildDepth = Math.max(24, Math.min(defaultBuildDepth, (assistMaxY - assistMinY) / 2));
+        let roadAOnBottomEdge = roadA.y <= mapRect.y + 1;
+        let roadBOnTopEdge = roadB.y + roadB.height >= mapRect.y + mapRect.height - 1;
+        if (roadAOnBottomEdge || roadBOnTopEdge) {
+            let buildAMinY = roadAOnBottomEdge ? roadA.y + roadA.height : mapRect.y;
+            let buildAMaxY = Math.min(assistMaxY, buildAMinY + buildDepth);
+            let buildBMaxY = roadBOnTopEdge ? roadB.y : mapRect.y + mapRect.height;
+            let buildBMinY = Math.max(assistMinY, buildBMaxY - buildDepth);
+            this._buildAreas.A = cc.rect(bounds.minX, buildAMinY, bounds.maxX - bounds.minX, Math.max(24, buildAMaxY - buildAMinY));
+            this._assistArea = cc.rect(bounds.minX, buildAMaxY, bounds.maxX - bounds.minX, Math.max(24, buildBMinY - buildAMaxY));
+            this._buildAreas.B = cc.rect(bounds.minX, buildBMinY, bounds.maxX - bounds.minX, Math.max(24, buildBMaxY - buildBMinY));
             return;
         }
 
@@ -3999,7 +4035,7 @@ export default class TurnBattleMap extends cc.Component {
         if (!position) {
             return false;
         }
-        let camp = this._serverMode ? this._localCamp : this._actionCamp;
+        let camp = this._actionCamp;
         if (!camp) {
             return false;
         }

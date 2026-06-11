@@ -4,7 +4,7 @@
  <tileset firstgid="641" source="tankSprite1.tsx"/>
  <layer id="1" name="_tmLayerGroup " width="20" height="30">
   <data encoding="csv">
-641,641,641,641,641,641,641,641,641,641,641,641,641,641,641,641,641,641,642,643,
+1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,
 681,681,681,681,681,681,681,681,681,681,681,681,681,681,681,681,681,641,642,643,
 721,721,721,721,721,721,721,721,721,721,721,721,721,721,721,721,721,641,642,643,
 641,642,643,643,643,643,643,643,643,643,643,643,643,643,643,643,643,643,643,643,
@@ -33,74 +33,10 @@
 1041,1081,1082,1083,1084,1084,1084,1084,1044,1044,1044,1044,1044,1041,1081,961,1081,1082,1083,1084,
 1081,1081,1081,1081,1081,1081,1082,1083,1084,1084,1084,1084,1084,1081,1081,1001,1081,1082,1083,1084,
 1082,1083,1084,1084,1084,1084,1084,1084,1084,1084,1044,1044,1044,1044,1044,1041,1081,1081,1082,1083,
-1081,1081,1081,1081,1081,1081,1081,1082,1083,1084,1084,1084,1084,1084,1084,1081,1081,1082,1083,1084
+1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016,1016
 </data>
  </layer>
  <objectgroup id="2" name="_tmLayerObstacle">
-  <object id="1" name="qiang" x="32" y="0" width="32" height="32"/>
-  <object id="4" name="qiang" x="0" y="0" width="32" height="32"/>
-  <object id="5" name="qiang" x="64" y="0" width="32" height="32"/>
-  <object id="6" name="qiang" x="96" y="0" width="32" height="32"/>
-  <object id="7" name="qiang" x="128" y="0" width="32" height="32"/>
-  <object id="8" name="qiang" x="192" y="0" width="32" height="32"/>
-  <object id="9" name="qiang" x="160" y="0" width="32" height="32"/>
-  <object id="10" name="qiang" x="256" y="0" width="32" height="32"/>
-  <object id="11" name="qiang" x="224" y="0" width="32" height="32"/>
-  <object id="12" name="qiang" x="288" y="0" width="32" height="32"/>
-  <object id="13" name="qiang" x="320" y="0" width="32" height="32"/>
-  <object id="14" name="qiang" x="352" y="0" width="32" height="32"/>
-  <object id="15" name="qiang" x="416" y="0" width="32" height="32"/>
-  <object id="16" name="qiang" x="384" y="0" width="32" height="32"/>
-  <object id="17" name="qiang" x="480" y="0" width="32" height="32"/>
-  <object id="18" name="qiang" x="448" y="0" width="32" height="32"/>
-  <object id="19" name="qiang" x="512" y="0" width="32" height="32"/>
-  <object id="20" name="qiang" x="544" y="0" width="32" height="32"/>
-  <object id="21" name="qiang" x="576" y="0" width="32" height="32"/>
-  <object id="23" name="qiang" x="608" y="0" width="32" height="32"/>
-  <object id="24" name="qiang" x="32" y="928" width="32" height="32"/>
-  <object id="25" name="qiang" x="0" y="928" width="32" height="32"/>
-  <object id="26" name="qiang" x="64" y="928" width="32" height="32"/>
-  <object id="27" name="qiang" x="96" y="928" width="32" height="32"/>
-  <object id="28" name="qiang" x="128" y="928" width="32" height="32"/>
-  <object id="29" name="qiang" x="192" y="928" width="32" height="32"/>
-  <object id="30" name="qiang" x="160" y="928" width="32" height="32"/>
-  <object id="31" name="qiang" x="256" y="928" width="32" height="32"/>
-  <object id="32" name="qiang" x="224" y="928" width="32" height="32"/>
-  <object id="33" name="qiang" x="288" y="928" width="32" height="32"/>
-  <object id="34" name="qiang" x="320" y="928" width="32" height="32"/>
-  <object id="35" name="qiang" x="352" y="928" width="32" height="32"/>
-  <object id="36" name="qiang" x="416" y="928" width="32" height="32"/>
-  <object id="37" name="qiang" x="384" y="928" width="32" height="32"/>
-  <object id="38" name="qiang" x="480" y="928" width="32" height="32"/>
-  <object id="39" name="qiang" x="448" y="928" width="32" height="32"/>
-  <object id="40" name="qiang" x="512" y="928" width="32" height="32"/>
-  <object id="41" name="qiang" x="544" y="928" width="32" height="32"/>
-  <object id="42" name="qiang" x="576" y="928" width="32" height="32"/>
-  <object id="43" name="qiang" x="608" y="928" width="32" height="32"/>
-  <object id="44" name="qiang" x="0" y="32" width="32" height="32"/>
-  <object id="45" name="qiang" x="0" y="64" width="32" height="32"/>
-  <object id="46" name="qiang" x="0" y="96" width="32" height="32"/>
-  <object id="47" name="qiang" x="0" y="160" width="32" height="32"/>
-  <object id="48" name="qiang" x="0" y="128" width="32" height="32"/>
-  <object id="49" name="qiang" x="0" y="192" width="32" height="32"/>
-  <object id="59" name="qiang" x="608" y="32" width="32" height="32"/>
-  <object id="60" name="qiang" x="608" y="64" width="32" height="32"/>
-  <object id="61" name="qiang" x="608" y="96" width="32" height="32"/>
-  <object id="62" name="qiang" x="608" y="160" width="32" height="32"/>
-  <object id="63" name="qiang" x="608" y="128" width="32" height="32"/>
-  <object id="64" name="qiang" x="608" y="192" width="32" height="32"/>
-  <object id="81" name="qiang" x="0" y="736" width="32" height="32"/>
-  <object id="82" name="qiang" x="0" y="768" width="32" height="32"/>
-  <object id="83" name="qiang" x="0" y="800" width="32" height="32"/>
-  <object id="84" name="qiang" x="0" y="832" width="32" height="32"/>
-  <object id="85" name="qiang" x="0" y="864" width="32" height="32"/>
-  <object id="86" name="qiang" x="0" y="896" width="32" height="32"/>
-  <object id="95" name="qiang" x="608" y="736" width="32" height="32"/>
-  <object id="96" name="qiang" x="608" y="768" width="32" height="32"/>
-  <object id="97" name="qiang" x="608" y="800" width="32" height="32"/>
-  <object id="98" name="qiang" x="608" y="832" width="32" height="32"/>
-  <object id="99" name="qiang" x="608" y="864" width="32" height="32"/>
-  <object id="100" name="qiang" x="608" y="896" width="32" height="32"/>
   <object id="108" name="qiang" x="352" y="384" width="32" height="32"/>
   <object id="109" name="qiang" x="256" y="320" width="32" height="32"/>
   <object id="110" name="qiang" x="224" y="448" width="32" height="32"/>
@@ -111,13 +47,11 @@
   <object id="116" name="qiang" x="352" y="576" width="32" height="32"/>
  </objectgroup>
  <objectgroup id="3" name="_tmLayerBorn">
-  <object id="101" name="crystalA" x="288" y="32" width="64" height="64"/>
-  <object id="102" name="crystalB" x="288" y="864" width="64" height="64"/>
-  <object id="103" name="tankA" x="304" y="224" width="32" height="32"/>
-  <object id="104" name="tankB" x="304" y="704" width="32" height="32"/>
+  <object id="103" name="tankA" x="304" y="0" width="32" height="32"/>
+  <object id="104" name="tankB" x="304" y="928" width="32" height="32"/>
  </objectgroup>
  <objectgroup id="4" name="_tmLayerTurnAreas">
-  <object id="106" name="roadB" x="0" y="704" width="640" height="32"/>
-  <object id="107" name="roadA" x="0" y="224" width="640" height="32"/>
+  <object id="106" name="roadB" x="0" y="928" width="640" height="32"/>
+  <object id="107" name="roadA" x="0" y="0" width="640" height="32"/>
  </objectgroup>
 </map>

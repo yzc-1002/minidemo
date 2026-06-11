@@ -277,14 +277,13 @@ const TURN_MAP_LAYOUT = {
   // Sync with `assets/map1/turn_defense_01.tmx` object layer `_tmLayerTurnAreas`.
   mapRect: { minX: -320, maxX: 320, minY: -480, maxY: 480 },
   buildAreas: {
-    // Must match client's `deriveLayerAreas()` (TurnBattleMap.ts): build area extends
-    // from the outer map edge up to the player's own road, inset by one tile horizontally.
-    A: { minX: -288, maxX: 288, minY: -480, maxY: -256 },
-    B: { minX: -288, maxX: 288, minY: 256, maxY: 480 },
+    // Must match client's `deriveLayerAreas()` when roads sit on the map edges.
+    A: { minX: -288, maxX: 288, minY: -448, maxY: -224 },
+    B: { minX: -288, maxX: 288, minY: 224, maxY: 448 },
   },
   roadRects: {
-    A: { minX: -320, maxX: 320, minY: -256, maxY: -224 },
-    B: { minX: -320, maxX: 320, minY: 224, maxY: 256 },
+    A: { minX: -320, maxX: 320, minY: -480, maxY: -448 },
+    B: { minX: -320, maxX: 320, minY: 448, maxY: 480 },
   },
   assistArea: {
     minX: -288,
@@ -293,14 +292,14 @@ const TURN_MAP_LAYOUT = {
     maxY: 224,
   },
   assistStaticObstacleCandidates: [
-    { key: 'qiang_32_384', name: 'qiang', x: 48, y: 80, width: 32, height: 32 },
-    { key: 'qiang_64_352', name: 'qiang', x: -240, y: 112, width: 32, height: 32 },
-    { key: 'qiang_96_512', name: 'qiang', x: -208, y: -48, width: 32, height: 32 },
-    { key: 'qiang_224_448', name: 'qiang', x: -80, y: 16, width: 32, height: 32 },
-    { key: 'qiang_256_320', name: 'qiang', x: -48, y: 144, width: 32, height: 32 },
-    { key: 'qiang_352_576', name: 'qiang', x: 48, y: -112, width: 32, height: 32 },
-    { key: 'qiang_352_384', name: 'qiang', x: 48, y: 80, width: 32, height: 32 },
-    { key: 'qiang_448_448', name: 'qiang', x: 144, y: 16, width: 32, height: 32 },
+    { key: 'qiang_352_384', name: 'qiang', x: 32, y: 64, width: 32, height: 32 },
+    { key: 'qiang_256_320', name: 'qiang', x: -64, y: 128, width: 32, height: 32 },
+    { key: 'qiang_224_448', name: 'qiang', x: -96, y: 0, width: 32, height: 32 },
+    { key: 'qiang_448_448', name: 'qiang', x: 128, y: 0, width: 32, height: 32 },
+    { key: 'qiang_96_512', name: 'qiang', x: -224, y: -64, width: 32, height: 32 },
+    { key: 'qiang_64_352', name: 'qiang', x: -256, y: 96, width: 32, height: 32 },
+    { key: 'qiang_576_512', name: 'qiang', x: 256, y: -64, width: 32, height: 32 },
+    { key: 'qiang_352_576', name: 'qiang', x: 32, y: -128, width: 32, height: 32 },
   ],
 };
 
@@ -360,6 +359,37 @@ function distanceBetweenPoints(a, b) {
   const dx = (Number(a.x) || 0) - (Number(b.x) || 0);
   const dy = (Number(a.y) || 0) - (Number(b.y) || 0);
   return Math.sqrt(dx * dx + dy * dy);
+}
+
+function isPointInTurnBuildArea(camp, point) {
+  const area = TURN_MAP_LAYOUT.buildAreas[camp === 'B' ? 'B' : 'A'];
+  return !!(
+    point
+    && area
+    && point.x >= area.minX
+    && point.x <= area.maxX
+    && point.y >= area.minY
+    && point.y <= area.maxY
+  );
+}
+
+function getTurnTankHitCamp(roomState, bullet) {
+  if (!roomState || !bullet || !roomState.tankPoses) {
+    return '';
+  }
+  const bulletRadius = Number(TURN_CONFIG.bulletRadius) || 10;
+  const tankRadius = 38;
+  for (let i = 0; i < TURN_CAMPS.length; i++) {
+    const camp = TURN_CAMPS[i];
+    if (!bullet.hasBounced && camp === bullet.camp) {
+      continue;
+    }
+    const pose = roomState.tankPoses[camp];
+    if (pose && distanceBetweenPoints(bullet.position, pose) <= tankRadius + bulletRadius) {
+      return camp;
+    }
+  }
+  return '';
 }
 
 const TURN_CONFIG = {
@@ -1748,12 +1778,12 @@ function isTurnAssistZonePositionValid(roomState, point, radius) {
   ) {
     return false;
   }
-  const crystalPadding = 12;
-  const crystalA = { x: 0, y: -420, radius: 28 };
-  const crystalB = { x: 0, y: 420, radius: 28 };
+  const tankPadding = 12;
+  const tankA = roomState.tankPoses && roomState.tankPoses.A ? { ...roomState.tankPoses.A, radius: 38 } : { x: 0, y: getTurnRoadCenterY('A'), radius: 38 };
+  const tankB = roomState.tankPoses && roomState.tankPoses.B ? { ...roomState.tankPoses.B, radius: 38 } : { x: 0, y: getTurnRoadCenterY('B'), radius: 38 };
   if (
-    distanceBetweenPoints(point, crystalA) < radius + crystalA.radius + crystalPadding
-    || distanceBetweenPoints(point, crystalB) < radius + crystalB.radius + crystalPadding
+    distanceBetweenPoints(point, tankA) < radius + tankA.radius + tankPadding
+    || distanceBetweenPoints(point, tankB) < radius + tankB.radius + tankPadding
   ) {
     return false;
   }
@@ -2466,13 +2496,8 @@ function handleTurnAttackAction(ws, msg) {
     sendTurnError(ws, '攻击参数无效', 'invalidAttack');
     return;
   }
-  if (
-    aimPoint.x < TURN_MAP_LAYOUT.assistArea.minX
-    || aimPoint.x > TURN_MAP_LAYOUT.assistArea.maxX
-    || aimPoint.y < TURN_MAP_LAYOUT.assistArea.minY
-    || aimPoint.y > TURN_MAP_LAYOUT.assistArea.maxY
-  ) {
-    sendTurnError(ws, '只能点击中间辅助区发射', 'attackOutOfAssistArea');
+  if (isPointInTurnBuildArea(player.camp, aimPoint)) {
+    sendTurnError(ws, '不能点击自己建造区发射', 'attackInOwnBuildArea');
     return;
   }
   const pose = updateTurnTankPose(roomState, player.camp, fromPoint.x, aimPoint.x, aimPoint.y);
@@ -2794,14 +2819,12 @@ function resolveTurnBulletHit(roomState, bullet, result) {
     return false;
   }
 
-  const targetCamp = bullet.hasBounced ? getTurnBuildCampAt(bullet.position) : getEnemyCamp(bullet.camp);
-  if (!targetCamp || (!bullet.hasBounced && targetCamp === bullet.camp)) {
+  const targetCamp = getTurnTankHitCamp(roomState, bullet);
+  if (!targetCamp) {
     return false;
   }
   const crystal = roomState && roomState.crystals ? roomState.crystals[targetCamp] : null;
-  const crystalCenter = targetCamp === 'A' ? { x: 0, y: -420 } : { x: 0, y: 420 };
-  const crystalRadius = 28;
-  if (crystal && distanceBetweenPoints(bullet.position, crystalCenter) <= crystalRadius + (Number(TURN_CONFIG.bulletRadius) || 10)) {
+  if (crystal) {
     const appliedDamage = Math.min(Math.max(0, Number(crystal.hp) || 0), Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0)));
     result.hitType = 'crystal';
     result.targetCamp = targetCamp;
