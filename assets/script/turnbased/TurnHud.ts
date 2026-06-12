@@ -379,7 +379,8 @@ export default class TurnHud extends cc.Component {
         if (!this._moveButtonsRoot) {
             return;
         }
-        this._moveButtonsRoot.opacity = this._moveButtonsEnabled ? 255 : 130;
+        this._moveButtonsRoot.active = !!this._moveButtonsEnabled;
+        this._moveButtonsRoot.opacity = 255;
     }
 
     cancelBuildDrag() {

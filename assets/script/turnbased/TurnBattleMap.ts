@@ -1705,11 +1705,12 @@ export default class TurnBattleMap extends cc.Component {
         board.parent = this.contentRoot;
         let graphics = board.addComponent(cc.Graphics);
         graphics.fillColor = new cc.Color(36, 44, 54, 255);
+        graphics.fillColor = new cc.Color(0, 0, 0, 0);
         graphics.rect(-this._config.mapWidth / 2, -this._config.mapHeight / 2, this._config.mapWidth, this._config.mapHeight);
         graphics.fill();
 
-        this.drawArea("BuildAreaA", this._config.buildArea.A, new cc.Color(54, 93, 62, 110));
-        this.drawArea("BuildAreaB", this._config.buildArea.B, new cc.Color(93, 54, 62, 110));
+        this.drawArea("BuildAreaA", this._config.buildArea.A, new cc.Color(255, 215, 64, 150));
+        this.drawArea("BuildAreaB", this._config.buildArea.B, new cc.Color(218, 168, 48, 120));
         this.drawRoad("A");
         this.drawRoad("B");
         this.drawCenterLine();
@@ -3477,6 +3478,7 @@ export default class TurnBattleMap extends cc.Component {
         return Math.max(minHp, Math.min(maxHp, safeSnapshotHp));
     }
 
+    //地图放置资源血量文本
     private refreshObstacleHpLabel(obstacle: TurnObstacleState) {
         if (!obstacle || !obstacle.node) {
             return;
@@ -3489,13 +3491,17 @@ export default class TurnBattleMap extends cc.Component {
         }
         let cellSize = this._dynamicObstacleSize.width;
         let layout = obstacle.layout && obstacle.layout.length > 0 ? obstacle.layout : [cc.v2(0, 0)];
+        let fontSize = 14;
+        let bottomPadding = -3;
         for (let i = 0; i < layout.length && i < obstacle.cellHp.length; i++) {
             let cell = layout[i];
             let hp = Math.max(0, Math.floor(Number(obstacle.cellHp[i]) || 0));
-            let label = this.createLabel(String(hp), 14);
+            let label = this.createLabel(String(hp), fontSize);
+            label.verticalAlign = cc.Label.VerticalAlign.BOTTOM;
             label.node.name = "ObstacleCellHpLabel";
             label.node.parent = obstacle.node;
-            label.node.setPosition(cell.x * cellSize, cell.y * cellSize);
+            label.node.setAnchorPoint(0.5, 0);
+            label.node.setPosition(cell.x * cellSize, cell.y * cellSize - cellSize / 2 + bottomPadding);
             label.node.zIndex = 5;
             label.node.color = new cc.Color(255, 248, 220, 255);
         }
@@ -4275,13 +4281,13 @@ export default class TurnBattleMap extends cc.Component {
                 let graphics = node.addComponent(cc.Graphics);
                 let isActive = activeTileKey === tx + ":" + ty;
                 graphics.fillColor = isActive
-                    ? new cc.Color(255, 238, 120, 145)
-                    : new cc.Color(120, 230, 140, 72);
+                    ? new cc.Color(255, 200, 60, 200)
+                    : new cc.Color(255, 220, 80, 130);
                 graphics.rect(-this._tileSize.width / 2, -this._tileSize.height / 2, this._tileSize.width, this._tileSize.height);
                 graphics.fill();
                 graphics.strokeColor = isActive
-                    ? new cc.Color(255, 248, 190, 220)
-                    : new cc.Color(175, 255, 190, 84);
+                    ? new cc.Color(255, 248, 190, 240)
+                    : new cc.Color(255, 235, 140, 180);
                 graphics.lineWidth = isActive ? 2 : 1;
                 graphics.rect(-this._tileSize.width / 2, -this._tileSize.height / 2, this._tileSize.width, this._tileSize.height);
                 graphics.stroke();
