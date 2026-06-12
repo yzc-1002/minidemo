@@ -396,7 +396,7 @@ const TURN_CONFIG = {
   buildSeconds: 15,
   attackSeconds: 20,
   waitBulletSeconds: 5,
-  settleSeconds: 2,
+  settleSeconds: 1,
   upgradeSeconds: 6,
   attackRounds: 1,
   crystalHp: 100,
@@ -2547,21 +2547,8 @@ function handleTurnBuildAction(ws, msg) {
     player.placedThisRound = true;
     logTurn(roomState, `buildAction place ok: camp=${player.camp} slotId="${slot.slotId}" obstacleId=${id} type=${slotType} at ${roomState.obstacles[id].x},${roomState.obstacles[id].y} coins=${player.coins}`);
   } else if (op === 'move') {
-    if (!point || !obstacleId || !roomState.obstacles[obstacleId]) {
-      sendTurnError(ws, '移动掩体参数无效', 'invalidObstacle');
-      return;
-    }
-    const obstacle = roomState.obstacles[obstacleId];
-    if (obstacle.camp !== player.camp) {
-      sendTurnError(ws, '不能移动对方掩体', 'notOwner');
-      return;
-    }
-    if (!isTurnBuildPlacementValid(roomState, player.camp, point.x, point.y, obstacle.layout, obstacleId)) {
-      sendTurnError(ws, '目标位置已有掩体', 'occupied');
-      return;
-    }
-    obstacle.x = Math.round(point.x);
-    obstacle.y = Math.round(point.y);
+    sendTurnError(ws, '已放置资源不能移动', 'moveDisabled');
+    return;
   } else if (op === 'remove') {
     if (!obstacleId || !roomState.obstacles[obstacleId]) {
       sendTurnError(ws, '移除掩体参数无效', 'invalidObstacle');

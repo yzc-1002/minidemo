@@ -1021,14 +1021,8 @@ export default class TurnBattleMap extends cc.Component {
     private onTouchStart(event: cc.Event.EventTouch) {
         let position = this.getLocalTouchPosition(event);
         if (this._phase === "build") {
-            this._dragObstacle = this.findObstacleAt(position);
-            if (this._dragObstacle && !this.canControlCamp(this._dragObstacle.camp)) {
-                this._dragObstacle = null;
-            }
-            if (this._dragObstacle) {
-                this._dragStartPosition = this.getNodePosition(this._dragObstacle.node);
-                this._dragObstacle.node.opacity = 180;
-            }
+            this._dragObstacle = null;
+            this._dragStartPosition = null;
             return;
         }
 
@@ -4418,7 +4412,7 @@ export default class TurnBattleMap extends cc.Component {
                 node.parent = this._buildHighlightLayer;
                 node.setPosition(center.x, center.y);
                 let graphics = node.addComponent(cc.Graphics);
-                graphics.fillColor = new cc.Color(255, 54, 54, 115);
+                graphics.fillColor = new cc.Color(255, 54, 54, 150);
                 graphics.rect(-this._tileSize.width / 2, -this._tileSize.height / 2, this._tileSize.width, this._tileSize.height);
                 graphics.fill();
                 graphics.strokeColor = new cc.Color(255, 120, 120, 190);

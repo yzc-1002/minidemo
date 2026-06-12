@@ -125,7 +125,7 @@ export default class TurnHud extends cc.Component {
         }
 
         this.setBuildPaletteAttackMode(snapshot.phase === "attack");
-        this.setPhaseHudVisible(snapshot.phase !== "attack");
+        this.setPhaseHudVisible(snapshot.phase !== "attack" && snapshot.phase !== "waitBullet" && snapshot.phase !== "settle");
         let phaseText = this.getPhaseText(snapshot);
         if (this._lastPhase !== phaseText) {
             this._lastPhase = phaseText;

@@ -327,7 +327,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     buildSeconds: 15,
     attackSeconds: 20,
     waitBulletSeconds: 0,
-    settleSeconds: 2,
+    settleSeconds: 1,
     upgradeSeconds: 6,
     attackRounds: 1,
     initialRoundResourceTotal: 3,
