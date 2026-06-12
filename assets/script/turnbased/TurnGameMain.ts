@@ -314,6 +314,9 @@ export default class TurnGameMain extends cc.Component {
                 hpText: this._battleMap.getObstacleSlotHpPreview(slot.type, slot.count),
                 coinCost: slotCost,
                 affordable: !this.useServer || slotCost <= 0 || coins >= slotCost,
+                layout: Array.isArray(slot.layout)
+                    ? slot.layout.map((cell) => ({ x: Number(cell.x) || 0, y: Number(cell.y) || 0 }))
+                    : null,
             })),
             this._battleMap.isBuildPhaseActiveForCamp(localCamp),
         );

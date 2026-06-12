@@ -40,7 +40,7 @@ export default class TurnHud extends cc.Component {
     private _buildPaletteCamp: TurnCamp = "A";
     private _buildPaletteCount = 0;
     private _buildPaletteEnabled = false;
-    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean }[] = [];
+    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[] }[] = [];
     private _refreshButton: cc.Node = null;
     private _refreshButtonLabel: cc.Label = null;
     private _refreshAvailable = false;
@@ -139,7 +139,7 @@ export default class TurnHud extends cc.Component {
         this.inventoryLabel.string = "掩体 A: " + aCount + "  |  B: " + bCount;
     }
 
-    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean }[], enabled: boolean) {
+    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[] }[], enabled: boolean) {
         this.ensureBuildPalette();
         this._buildPaletteCamp = camp || "A";
         this._buildPaletteSlots = Array.isArray(slots) ? slots.slice() : [];
@@ -593,14 +593,17 @@ export default class TurnHud extends cc.Component {
             let slot = slots[i];
             let x = startX + i * (width + gap);
             let y = 0;
-            graphics.fillColor = this.getSlotColor(slot.type, slot.placed);
+
+            graphics.fillColor = new cc.Color(48, 56, 76, 200);
             graphics.roundRect(x - width / 2, y - width / 2, width, width, 8);
             graphics.fill();
-            graphics.strokeColor = new cc.Color(240, 240, 240, slot.placed ? 120 : 220);
-            graphics.lineWidth = 2;
+            graphics.strokeColor = new cc.Color(170, 180, 210, slot.placed ? 110 : 180);
+            graphics.lineWidth = 1.5;
             graphics.roundRect(x - width / 2, y - width / 2, width, width, 8);
             graphics.stroke();
-            this.drawSlotMark(graphics, slot.type, x, y);
+
+            this.drawSlotShape(graphics, slot, x, y, width - 8);
+
             if (slot.slotId === this._selectedBuildSlotId) {
                 graphics.strokeColor = new cc.Color(255, 235, 120, 255);
                 graphics.lineWidth = 3;
@@ -609,6 +612,95 @@ export default class TurnHud extends cc.Component {
             }
             this.createBuildSlotInfo(slot, x, y - width / 2 - 10);
         }
+    }
+
+    private drawSlotShape(
+        graphics: cc.Graphics,
+        slot: { type: TurnObstacleResourceType; placed: boolean; count: number; layout?: { x: number; y: number }[]; shapeKey?: string },
+        centerX: number,
+        centerY: number,
+        innerSize: number,
+    ) {
+        let cells = this.getSlotLayoutCells(slot);
+        if (cells.length <= 0) {
+            cells = [{ x: 0, y: 0 }];
+        }
+        let minX = cells[0].x;
+        let maxX = cells[0].x;
+        let minY = cells[0].y;
+        let maxY = cells[0].y;
+        for (let i = 1; i < cells.length; i++) {
+            let cell = cells[i];
+            if (cell.x < minX) { minX = cell.x; }
+            if (cell.x > maxX) { maxX = cell.x; }
+            if (cell.y < minY) { minY = cell.y; }
+            if (cell.y > maxY) { maxY = cell.y; }
+        }
+        let dimX = Math.max(1, maxX - minX + 1);
+        let dimY = Math.max(1, maxY - minY + 1);
+        let dim = Math.max(dimX, dimY);
+        let cellGap = dim > 1 ? 2 : 0;
+        let cellSize = Math.floor((innerSize - (dim - 1) * cellGap) / dim);
+        if (cellSize < 6) {
+            cellSize = 6;
+        }
+        let totalW = dimX * cellSize + (dimX - 1) * cellGap;
+        let totalH = dimY * cellSize + (dimY - 1) * cellGap;
+        let originX = centerX - totalW / 2 - minX * (cellSize + cellGap);
+        let originY = centerY - totalH / 2 - minY * (cellSize + cellGap);
+        let fillColor = this.getSlotColor(slot.type, slot.placed);
+        let strokeAlpha = slot.placed ? 140 : 220;
+        for (let i = 0; i < cells.length; i++) {
+            let cell = cells[i];
+            let cx = originX + cell.x * (cellSize + cellGap);
+            let cy = originY + cell.y * (cellSize + cellGap);
+            graphics.fillColor = fillColor;
+            graphics.roundRect(cx, cy, cellSize, cellSize, Math.max(2, Math.floor(cellSize * 0.18)));
+            graphics.fill();
+            graphics.strokeColor = new cc.Color(245, 248, 252, strokeAlpha);
+            graphics.lineWidth = 1.5;
+            graphics.roundRect(cx, cy, cellSize, cellSize, Math.max(2, Math.floor(cellSize * 0.18)));
+            graphics.stroke();
+            if (cellSize >= 16) {
+                this.drawSlotMark(graphics, slot.type, cx + cellSize / 2, cy + cellSize / 2);
+            }
+        }
+        if (cellSize < 16) {
+            this.drawSlotMark(graphics, slot.type, centerX, centerY);
+        }
+    }
+
+    private getSlotLayoutCells(slot: { layout?: { x: number; y: number }[]; shapeKey?: string; count?: number }): { x: number; y: number }[] {
+        if (Array.isArray(slot.layout) && slot.layout.length > 0) {
+            return slot.layout.map((cell) => ({
+                x: Math.round(Number(cell.x) || 0),
+                y: Math.round(Number(cell.y) || 0),
+            }));
+        }
+        let key = String(slot.shapeKey || "");
+        if (key) {
+            let result: { x: number; y: number }[] = [];
+            let parts = key.split("|");
+            for (let i = 0; i < parts.length; i++) {
+                let part = parts[i];
+                if (!part) {
+                    continue;
+                }
+                let xy = part.split(":");
+                if (xy.length < 2) {
+                    continue;
+                }
+                let cx = parseInt(xy[0], 10);
+                let cy = parseInt(xy[1], 10);
+                if (Number.isFinite(cx) && Number.isFinite(cy)) {
+                    result.push({ x: cx, y: cy });
+                }
+            }
+            if (result.length > 0) {
+                return result;
+            }
+        }
+        return [];
     }
 
     private getBuildSlotWidth(): number {
@@ -628,7 +720,7 @@ export default class TurnHud extends cc.Component {
         this._buildSlotInfoNodes = [];
     }
 
-    private createBuildSlotInfo(slot: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean }, x: number, y: number) {
+    private createBuildSlotInfo(slot: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[] }, x: number, y: number) {
         let root = new cc.Node("BuildSlotInfo");
         root.parent = this._buildPaletteBlock;
         root.setPosition(x, y);
