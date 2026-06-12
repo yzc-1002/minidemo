@@ -235,6 +235,7 @@ export default class TurnBattleMap extends cc.Component {
     private _phase: TurnPhase = "init";
     private _roundIndex = 1;
     private _actionCamp: TurnCamp = "A";
+    private _phaseTimeLeft = 0;
     private _hasFiredInAction = false;
     private _shotsLeftInAction = 0;
     private _attackSnapshot: TurnAttackSnapshotState = null;
@@ -331,6 +332,7 @@ export default class TurnBattleMap extends cc.Component {
         };
         this._phase = "init";
         this._actionCamp = "A";
+        this._phaseTimeLeft = 0;
         this._hasFiredInAction = false;
         this._shotsLeftInAction = 0;
         this._attackSnapshot = null;
@@ -423,6 +425,7 @@ export default class TurnBattleMap extends cc.Component {
         let previousPhase = this._phase;
         this._phase = snapshot.phase;
         this._roundIndex = Math.max(1, Math.floor(Number(snapshot.roundIndex) || this._roundIndex || 1));
+        this._phaseTimeLeft = Math.max(0, Number(snapshot.phaseTimeLeft) || 0);
         this.setActionCamp(snapshot.actionCamp);
         this.handlePhaseChanged(previousPhase, snapshot.phase);
         this.refreshBuildInteractionView();
@@ -450,6 +453,18 @@ export default class TurnBattleMap extends cc.Component {
             if (snapshot.phase !== "settle") {
                 this._settlementSnapshots = { A: null, B: null };
             }
+        }
+    }
+
+    setPhaseTimeLeft(seconds: number) {
+        let next = Math.max(0, Number(seconds) || 0);
+        if (Math.ceil(next) === Math.ceil(this._phaseTimeLeft)) {
+            this._phaseTimeLeft = next;
+            return;
+        }
+        this._phaseTimeLeft = next;
+        if (this._phase === "attack") {
+            this.refreshBuildInteractionView();
         }
     }
 
@@ -1300,7 +1315,7 @@ export default class TurnBattleMap extends cc.Component {
                 let cellIndex = hitInfo.cellIndex;
                 let cellHp = Math.max(0, Number(obstacle.cellHp[cellIndex]) || 0);
                 let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, cellHp);
-                this.playBulletHitSound();
+                this.playBulletHitSound(true);
                 this.reflectBulletOffRect(bullet, hitInfo.rect);
                 bullet.hasBounced = true;
                 this.applyFirstBounceDamageBoostIfNeeded(bullet);
@@ -1311,7 +1326,7 @@ export default class TurnBattleMap extends cc.Component {
             let cellIndex = hitInfo.cellIndex;
             let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, bullet.remainingDamage);
             if (appliedDamage > 0) {
-                this.playBulletHitSound();
+                this.playBulletHitSound(obstacle.cellHp[cellIndex] <= 0);
             }
             this.consumeBulletDamage(bullet, appliedDamage);
             if (this._serverMode && bullet.camp === "A" && appliedDamage > 0) {
@@ -1528,13 +1543,13 @@ export default class TurnBattleMap extends cc.Component {
         return null;
     }
 
-    private playBulletHitSound() {
+    private playBulletHitSound(resourceBroken: boolean = false) {
         let now = Date.now();
         if (now - this._lastBulletHitSoundAt < 50) {
             return;
         }
         this._lastBulletHitSoundAt = now;
-        MusicManager.playEffect("boom");
+        MusicManager.playEffect(resourceBroken ? "jisui" : "boom");
     }
 
     private finishGame(winnerCamp: TurnCamp) {
@@ -1884,7 +1899,7 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         tank.root.active = true;
-        tank.preview.active = true;
+        tank.preview.active = active && this.isLocalAttackTurn(camp);
         tank.root.opacity = 255;
         tank.root.scale = active ? 1.08 : 1;
         // tank.preview.opacity = active ? 210 : 90;
@@ -4166,6 +4181,7 @@ export default class TurnBattleMap extends cc.Component {
         let nextPosition = this.getNodePosition(tank.root);
         tank.aim = nextPosition.add(currentDir.mul(120));
         this.drawPreviewLine(tank.preview, currentDir);
+        tank.preview.active = this.isLocalAttackTurn(this._actionCamp);
         this.sendTankPoseIfNeeded(false, false);
     }
 
@@ -4181,9 +4197,10 @@ export default class TurnBattleMap extends cc.Component {
         }
         let start = this.getNodePosition(tank.root);
         let dir = this.clampAimDirection(camp, start, target);
-        tank.aim = start.add(dir.mul(120));
+        tank.aim = start.add(dir.mul(240));
         tank.turret.angle = this.vectorToAngle(dir) - 90;
         this.drawPreviewLine(tank.preview, dir);
+        tank.preview.active = this.isLocalAttackTurn(camp);
         if (notifyServer) {
             this.sendTankPoseIfNeeded(true, true);
         }
@@ -4209,10 +4226,23 @@ export default class TurnBattleMap extends cc.Component {
             graphics = node.addComponent(cc.Graphics);
         }
         graphics.clear();
-        graphics.strokeColor = new cc.Color(255, 240, 160, 210);
-        graphics.lineWidth = 2;
+        graphics.strokeColor = new cc.Color(255, 252, 96, 255);
+        graphics.lineWidth = 4;
+        let length = 282;
+        let endX = dir.x * length;
+        let endY = dir.y * length;
         graphics.moveTo(0, 0);
-        graphics.lineTo(dir.x * 94, dir.y * 94);
+        graphics.lineTo(endX, endY);
+        let arrowLength = 24;
+        let arrowWidth = 14;
+        let leftX = endX - dir.x * arrowLength - dir.y * arrowWidth;
+        let leftY = endY - dir.y * arrowLength + dir.x * arrowWidth;
+        let rightX = endX - dir.x * arrowLength + dir.y * arrowWidth;
+        let rightY = endY - dir.y * arrowLength - dir.x * arrowWidth;
+        graphics.moveTo(endX, endY);
+        graphics.lineTo(leftX, leftY);
+        graphics.moveTo(endX, endY);
+        graphics.lineTo(rightX, rightY);
         graphics.stroke();
     }
 
@@ -4275,6 +4305,10 @@ export default class TurnBattleMap extends cc.Component {
         return !this._serverMode || camp === this._localCamp;
     }
 
+    private isLocalAttackTurn(camp: TurnCamp): boolean {
+        return this._phase === "attack" && camp === this._actionCamp && camp === this._localCamp;
+    }
+
     private refreshBuildInteractionView() {
         this.ensureBuildOverlayLayers();
         if (!this._buildHighlightLayer) {
@@ -4282,6 +4316,12 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         this._buildHighlightLayer.removeAllChildren();
+        if (this._phase === "attack") {
+            this._buildOverlayLayer.active = true;
+            this.drawAttackAreaHighlight();
+            return;
+        }
+
         if (this._phase !== "build") {
             if (this._buildOverlayLayer) {
                 this._buildOverlayLayer.active = false;
@@ -4345,6 +4385,57 @@ export default class TurnBattleMap extends cc.Component {
                 graphics.rect(-this._tileSize.width / 2, -this._tileSize.height / 2, this._tileSize.width, this._tileSize.height);
                 graphics.stroke();
             }
+        }
+    }
+
+    private drawAttackAreaHighlight() {
+        let buildArea = this.getBuildArea(this._actionCamp);
+        if (!buildArea || this._tileSize.width <= 0 || this._tileSize.height <= 0) {
+            return;
+        }
+
+        let mapSize = this._mapTileSize.width > 0 && this._mapTileSize.height > 0
+            ? this._mapTileSize
+            : cc.size(
+                Math.max(1, Math.round(this._mapPixelSize.width / this._tileSize.width)),
+                Math.max(1, Math.round(this._mapPixelSize.height / this._tileSize.height)),
+            );
+
+        for (let tx = 0; tx < mapSize.width; tx++) {
+            for (let ty = 0; ty < mapSize.height; ty++) {
+                let center = this.tileToGamePos(cc.v2(tx, ty));
+                let tileRect = cc.rect(
+                    center.x - this._tileSize.width / 2,
+                    center.y - this._tileSize.height / 2,
+                    this._tileSize.width,
+                    this._tileSize.height,
+                );
+                if (!this.rectContainsRect(buildArea, tileRect)) {
+                    continue;
+                }
+
+                let node = new cc.Node("AttackTile" + tx + "_" + ty);
+                node.parent = this._buildHighlightLayer;
+                node.setPosition(center.x, center.y);
+                let graphics = node.addComponent(cc.Graphics);
+                graphics.fillColor = new cc.Color(255, 54, 54, 115);
+                graphics.rect(-this._tileSize.width / 2, -this._tileSize.height / 2, this._tileSize.width, this._tileSize.height);
+                graphics.fill();
+                graphics.strokeColor = new cc.Color(255, 120, 120, 190);
+                graphics.lineWidth = 1;
+                graphics.rect(-this._tileSize.width / 2, -this._tileSize.height / 2, this._tileSize.width, this._tileSize.height);
+                graphics.stroke();
+            }
+        }
+
+        let seconds = Math.ceil(Math.max(0, this._phaseTimeLeft));
+        if (seconds > 0 && seconds <= 5) {
+            let label = this.createLabel(seconds + "s", 42);
+            label.node.name = "AttackCountdown";
+            label.node.parent = this._buildHighlightLayer;
+            label.node.setPosition(buildArea.x + buildArea.width / 2, buildArea.y + buildArea.height / 2);
+            label.node.color = new cc.Color(255, 245, 245, 255);
+            label.node.zIndex = 10;
         }
     }
 

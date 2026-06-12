@@ -304,6 +304,7 @@ export default class TurnGameMain extends cc.Component {
         if (this.useServer) {
             return;
         }
+        this._battleMap.setPhaseTimeLeft(snapshot.phaseTimeLeft);
         this._hud.refreshTimer(snapshot);
     }
 
@@ -603,6 +604,7 @@ export default class TurnGameMain extends cc.Component {
 
     private applyServerTimer(msg: any) {
         let snapshot = this.buildSnapshotFromServer(msg);
+        this._battleMap.setPhaseTimeLeft(snapshot.phaseTimeLeft);
         this._hud.refreshTimer(snapshot);
     }
 

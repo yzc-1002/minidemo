@@ -43,6 +43,7 @@ export default class TurnHud extends cc.Component {
     private _buildPaletteCamp: TurnCamp = "A";
     private _buildPaletteCount = 0;
     private _buildPaletteEnabled = false;
+    private _buildPaletteAttackMode = false;
     private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[] }[] = [];
     private _refreshButton: cc.Node = null;
     private _refreshButtonLabel: cc.Label = null;
@@ -83,7 +84,7 @@ export default class TurnHud extends cc.Component {
         this._phaseLabelBackgroundHeight = 0;
         this.refreshPhaseLabelBackground();
         // this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -200, 190);
-        this.expLabel = this.createLabel("A: 0  |  B: 0", 20, -200, 160);
+        this.expLabel = this.createLabel("A: 0  |  B: 0", 20, -200, 0);
         this.expLabel.node.color = new cc.Color(0, 0, 0, 0);
         // this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -210, 130);
         // this.zoneLabel = this.createLabel("场上辅助区: 0", 20, -210, 100);
@@ -93,6 +94,7 @@ export default class TurnHud extends cc.Component {
         // this.bondLabel.node.width = 580;
         this.coinLabel = this.createLabel("金币 A: 0  |  B: 0", 20, -200, 130);
         this.coinLabel.node.color = new cc.Color(0, 0, 0, 0);
+        this.coinLabel.node.active = false;
         this._upgradeRoot = null;
         this._upgradeHintRoot = null;
         this._settlementRoot = null;
@@ -102,6 +104,7 @@ export default class TurnHud extends cc.Component {
         this._buildPaletteHintLabel = null;
         this._refreshCoinLabel = null;
         this._campCoins = { A: 0, B: 0 };
+        this._buildPaletteAttackMode = false;
         this._buildPaletteSlots = [];
         this._buildDragNode = null;
         this._lastBuildDragWorldPos = null;
@@ -121,6 +124,8 @@ export default class TurnHud extends cc.Component {
             this.initHud();
         }
 
+        this.setBuildPaletteAttackMode(snapshot.phase === "attack");
+        this.setPhaseHudVisible(snapshot.phase !== "attack");
         let phaseText = this.getPhaseText(snapshot);
         if (this._lastPhase !== phaseText) {
             this._lastPhase = phaseText;
@@ -494,6 +499,18 @@ export default class TurnHud extends cc.Component {
         graphics.stroke();
     }
 
+    private setPhaseHudVisible(visible: boolean) {
+        if (this.phaseLabel) {
+            this.phaseLabel.node.active = !!visible;
+        }
+        if (this.timerLabel) {
+            this.timerLabel.node.active = !!visible;
+        }
+        if (this._phaseLabelBackground) {
+            this._phaseLabelBackground.active = !!visible;
+        }
+    }
+
     private getLabelVisualBounds(label: cc.Label): { minX: number; maxX: number; minY: number; maxY: number } {
         let node = label.node;
         let fontSize = Math.max(1, Number(label.fontSize) || 20);
@@ -583,11 +600,15 @@ export default class TurnHud extends cc.Component {
         if (!this._buildPaletteBlock || !this._buildPaletteCountLabel || !this._buildPaletteHintLabel || !this._buildPaletteRoot) {
             return;
         }
-        this._buildPaletteRoot.active = !!this._buildPaletteEnabled;
+        this._buildPaletteRoot.active = !!this._buildPaletteEnabled && !this._buildPaletteAttackMode;
         if (!this._buildPaletteRoot.active) {
+            this.setExpLabelVisible(false);
             return;
         }
 
+        this._buildPaletteBlock.active = true;
+        this.setExpLabelVisible(this._buildPaletteBlock.active);
+        this._buildPaletteHintLabel.node.active = true;
         this.drawBuildSlots(this._buildPaletteBlock);
         // this._buildPaletteCountLabel.string = "总数 x" + this._buildPaletteCount;
         // this._buildPaletteCountLabel.node.color = this.isBuildPaletteAvailable()
@@ -630,7 +651,21 @@ export default class TurnHud extends cc.Component {
         }
         let camp = this._buildPaletteCamp === "B" ? "B" : "A";
         this._refreshCoinLabel.string = "金币:" + Math.max(0, Math.floor(Number(this._campCoins[camp]) || 0));
-        this._refreshCoinLabel.node.active = !!this._buildPaletteEnabled;
+        this._refreshCoinLabel.node.active = !!this._buildPaletteEnabled && !this._buildPaletteAttackMode;
+    }
+
+    private setBuildPaletteAttackMode(enabled: boolean) {
+        if (this._buildPaletteAttackMode === !!enabled) {
+            return;
+        }
+        this._buildPaletteAttackMode = !!enabled;
+        this.refreshBuildPaletteView();
+    }
+
+    private setExpLabelVisible(visible: boolean) {
+        if (this.expLabel) {
+            this.expLabel.node.active = !!visible;
+        }
     }
 
     private onRefreshButtonTouchStart(event: cc.Event.EventTouch) {
