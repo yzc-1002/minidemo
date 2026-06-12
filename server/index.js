@@ -2008,6 +2008,35 @@ function startTurnBuildPhase(roomState) {
   });
 }
 
+function isTurnBuildPlayerDone(player) {
+  if (!player) {
+    return false;
+  }
+  if (player.placedThisRound) {
+    return true;
+  }
+  const slotCost = Math.max(0, Math.floor(Number(TURN_CONFIG.coinEconomy && TURN_CONFIG.coinEconomy.slotCost) || 0));
+  const coins = Math.max(0, Math.floor(Number(player.coins) || 0));
+  return slotCost > 0 && coins < slotCost;
+}
+
+function tryCompleteTurnBuildPhaseEarly(roomState) {
+  if (!roomState || roomState.finished || roomState.phase !== TURN_PHASE.BUILD) {
+    return false;
+  }
+  if (!roomState.players || roomState.players.length <= 0 || !roomState.players.every((player) => isTurnBuildPlayerDone(player))) {
+    return false;
+  }
+
+  clearTurnTimers(roomState);
+  roomState.players.forEach((player) => {
+    roomState.roundAttackSnapshots[player.camp] = buildTurnAttackSnapshot(roomState, player);
+  });
+  logTurn(roomState, `phase build early complete round=${roomState.roundIndex}`);
+  startTurnAttackPhase(roomState, 'A');
+  return true;
+}
+
 function startTurnAttackPhase(roomState, camp) {
   roomState.actionCamp = camp;
   roomState.attackTurnIndex = camp === 'A' ? 1 : 2;
@@ -2580,6 +2609,7 @@ function handleTurnBuildAction(ws, msg) {
     },
   });
   broadcastTurnSnapshot(roomState);
+  tryCompleteTurnBuildPhaseEarly(roomState);
 }
 
 function handleTurnZoneAction(ws, msg) {
@@ -2608,6 +2638,7 @@ function handleTurnRefreshSlots(ws, msg) {
   createTurnRoundSlots(player, roomState, roomState.roundIndex);
   logTurn(roomState, `refreshSlots ok: camp=${player.camp} cost=${refreshCost} coins=${player.coins}`);
   broadcastTurnSnapshot(roomState);
+  tryCompleteTurnBuildPhaseEarly(roomState);
 }
 
 function handleTurnTankPose(ws, msg) {

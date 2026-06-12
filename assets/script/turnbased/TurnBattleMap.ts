@@ -1018,6 +1018,10 @@ export default class TurnBattleMap extends cc.Component {
         this.refreshBuildInteractionView();
     }
 
+    cancelAimTouch() {
+        this._attackTouchActive = false;
+    }
+
     private onTouchStart(event: cc.Event.EventTouch) {
         let position = this.getLocalTouchPosition(event);
         if (this._phase === "build") {
@@ -1028,6 +1032,9 @@ export default class TurnBattleMap extends cc.Component {
 
         if (this._phase === "attack") {
             if (!this.canControlCamp(this._actionCamp)) {
+                return;
+            }
+            if (this.isTankMovingInputActive()) {
                 return;
             }
             this._attackTouchActive = !this.isPointInOwnBuildArea(position);
@@ -1051,6 +1058,9 @@ export default class TurnBattleMap extends cc.Component {
             if (!this.canControlCamp(this._actionCamp)) {
                 return;
             }
+            if (this.isTankMovingInputActive()) {
+                return;
+            }
             if (this._attackTouchActive && !this.isPointInOwnBuildArea(position)) {
                 this.updateAimPreview(position, true);
             }
@@ -1066,6 +1076,10 @@ export default class TurnBattleMap extends cc.Component {
 
         if (this._phase === "attack") {
             if (!this.canControlCamp(this._actionCamp)) {
+                return;
+            }
+            if (this.isTankMovingInputActive()) {
+                this._attackTouchActive = false;
                 return;
             }
             if (this.isPointInOwnBuildArea(position)) {
@@ -4147,6 +4161,9 @@ export default class TurnBattleMap extends cc.Component {
         if (this._phase !== "attack" || !this.canControlCamp(this._actionCamp)) {
             return;
         }
+        if (this._attackTouchActive) {
+            return;
+        }
         let tank = this._tanks[this._actionCamp];
         if (!tank) {
             return;
@@ -4301,6 +4318,10 @@ export default class TurnBattleMap extends cc.Component {
 
     private isLocalAttackTurn(camp: TurnCamp): boolean {
         return this._phase === "attack" && camp === this._actionCamp && camp === this._localCamp;
+    }
+
+    private isTankMovingInputActive(): boolean {
+        return !!(this._moveLeftPressed || this._moveRightPressed);
     }
 
     private refreshBuildInteractionView() {

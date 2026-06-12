@@ -694,6 +694,7 @@ export default class TurnGameMain extends cc.Component {
         if (!this.isLocalAttackTurn()) {
             return;
         }
+        this._battleMap.cancelAimTouch();
         let pose = this._battleMap.getTankPose("A");
         if (!pose) {
             return;

@@ -233,7 +233,7 @@ export default class TurnHud extends cc.Component {
         this.hideUpgradeOptions();
         this._upgradeRoot = new cc.Node("TurnUpgradePanel");
         this._upgradeRoot.parent = this.node;
-        this._upgradeRoot.setPosition(0, 20);
+        this._upgradeRoot.setPosition(0, -90);
 
         let bg = this._upgradeRoot.addComponent(cc.Graphics);
         bg.fillColor = new cc.Color(24, 30, 42, 225);
@@ -1167,7 +1167,8 @@ export default class TurnHud extends cc.Component {
         let stackText = option.maxStacks == null
             ? "Lv." + currentStacks
             : "Lv." + currentStacks + "/" + option.maxStacks;
-        let label = this.createLabel("[" + stackText + "] " + option.name + "  " + option.desc, 18, 0, -3);
+        // let label = this.createLabel("[" + stackText + "] " + option.name, 18, 0, -3);
+        let label = this.createLabel(option.name, 18, 0, -3);
         label.node.parent = node;
         node.on(cc.Node.EventType.TOUCH_END, function (event: cc.Event.EventTouch) {
             event.stopPropagation();
