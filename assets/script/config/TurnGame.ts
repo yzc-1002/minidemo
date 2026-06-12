@@ -325,7 +325,7 @@ export interface TurnGameConfig {
 export const TURN_GAME_CONFIG: TurnGameConfig = {
     crystalHp: 100,
     buildSeconds: 15,
-    attackSeconds: 8,
+    attackSeconds: 20,
     waitBulletSeconds: 0,
     settleSeconds: 2,
     upgradeSeconds: 6,

@@ -1,4 +1,6 @@
 import { TURN_GAME_CONFIG, TurnCamp, TurnGameConfig, TurnUpgradeConfig, TurnUpgradeId } from "../config/TurnGame";
+import { MusicManager } from "../base/MusicManager";
+import { Utils } from "../base/Utils";
 import { NetworkManager } from "../network/NetworkManager";
 import TurnBattleMap from "./TurnBattleMap";
 import TurnHud from "./TurnHud";
@@ -92,6 +94,9 @@ export default class TurnGameMain extends cc.Component {
     }
 
     start() {
+        // Utils.initMusicEffect();
+        // MusicManager.initConfig();
+        // MusicManager.playMusic("bg");
         this._hud.initHud();
         this.refreshHudNumbers();
 
@@ -372,7 +377,7 @@ export default class TurnGameMain extends cc.Component {
                     this._hud.showUpgradeHint("已提交升级，等待服务端确认...");
                 }
                 else {
-                    this._hud.showUpgradeHint("等待服务端下发升级选项...");
+                    this._hud.showUpgradeHint("当前经验不足升级...");
                 }
                 return;
             }

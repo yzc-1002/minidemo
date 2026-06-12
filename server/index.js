@@ -394,7 +394,7 @@ function getTurnTankHitCamp(roomState, bullet) {
 
 const TURN_CONFIG = {
   buildSeconds: 15,
-  attackSeconds: 8,
+  attackSeconds: 20,
   waitBulletSeconds: 5,
   settleSeconds: 2,
   upgradeSeconds: 6,
@@ -2255,8 +2255,21 @@ function sendTurnUpgradeOptions(roomState, player) {
   return true;
 }
 
+function canTurnPlayerUpgrade(player) {
+  return !!(player && Math.max(0, Number(player.exp) || 0) >= Math.max(0, Number(player.expNeed) || 0));
+}
+
 function startTurnUpgradePhase(roomState) {
   roomState.actionCamp = '';
+  if (!roomState.players.some((player) => canTurnPlayerUpgrade(player))) {
+    roomState.players.forEach((player) => {
+      player.pendingUpgradeOptions = [];
+    });
+    logTurn(roomState, `skip upgrade round=${roomState.roundIndex}: no player can upgrade`);
+    roomState.roundIndex += 1;
+    startTurnBuildPhase(roomState);
+    return;
+  }
   roomState.players.forEach((player) => {
     player.pendingUpgradeOptions = [];
     sendTurnUpgradeOptions(roomState, player);

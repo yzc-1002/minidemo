@@ -46,9 +46,11 @@ export default class TurnHud extends cc.Component {
     private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[] }[] = [];
     private _refreshButton: cc.Node = null;
     private _refreshButtonLabel: cc.Label = null;
+    private _refreshCoinLabel: cc.Label = null;
     private _refreshAvailable = false;
     private _refreshCost = 0;
     private _refreshLockedByPlacement = false;
+    private _campCoins: { [camp: string]: number } = { A: 0, B: 0 };
     private _selectedBuildSlotId = "";
     private _buildSlotInfoNodes: cc.Node[] = [];
     private _buildDragNode: cc.Node = null;
@@ -72,9 +74,9 @@ export default class TurnHud extends cc.Component {
 
     initHud() {
         this.node.removeAllChildren();
-        this.phaseLabel = this.createLabel("回合制塔防", 26, 0, 260);
+        this.phaseLabel = this.createLabel("回合制塔防", 26, 0, 140);
         this.phaseLabel.node.zIndex = 2;
-        this.timerLabel = this.createLabel("倒计时 0.0", 22, 0, 220);
+        this.timerLabel = this.createLabel("倒计时 0", 22, 0, 100);
         this.timerLabel.node.zIndex = 2;
         this._phaseLabelBackground = null;
         this._phaseLabelBackgroundWidth = 0;
@@ -98,6 +100,8 @@ export default class TurnHud extends cc.Component {
         this._buildPaletteBlock = null;
         this._buildPaletteCountLabel = null;
         this._buildPaletteHintLabel = null;
+        this._refreshCoinLabel = null;
+        this._campCoins = { A: 0, B: 0 };
         this._buildPaletteSlots = [];
         this._buildDragNode = null;
         this._lastBuildDragWorldPos = null;
@@ -131,7 +135,7 @@ export default class TurnHud extends cc.Component {
             return;
         }
 
-        this.timerLabel.string = "倒计时 " + snapshot.phaseTimeLeft.toFixed(1) + "s";
+        this.timerLabel.string = "倒计时 " + Math.ceil(Math.max(0, snapshot.phaseTimeLeft)) + "s";
     }
 
     refreshCrystals(aHp: number, bHp: number) {
@@ -204,10 +208,12 @@ export default class TurnHud extends cc.Component {
     }
 
     refreshCoins(aCoins: number, bCoins: number) {
-        if (!this.coinLabel) {
-            return;
+        this._campCoins.A = Math.max(0, Math.floor(Number(aCoins) || 0));
+        this._campCoins.B = Math.max(0, Math.floor(Number(bCoins) || 0));
+        if (this.coinLabel) {
+            this.coinLabel.string = "金币 A: " + this._campCoins.A + "  |  B: " + this._campCoins.B;
         }
-        this.coinLabel.string = "金币 A: " + Math.max(0, Math.floor(Number(aCoins) || 0)) + "  |  B: " + Math.max(0, Math.floor(Number(bCoins) || 0));
+        this.refreshBuildPaletteCoinView();
     }
 
     refreshRefreshButton(camp: TurnCamp, available: boolean, cost: number, lockedByPlacement: boolean) {
@@ -233,7 +239,7 @@ export default class TurnHud extends cc.Component {
         bg.roundRect(-250, -142, 500, 284, 14);
         bg.stroke();
 
-        let title = this.createLabel("阵营 " + camp + " 选择升级", 24, 0, 104);
+        let title = this.createLabel("选择升级", 24, 0, 104);
         title.node.parent = this._upgradeRoot;
         for (let i = 0; i < options.length; i++) {
             this.createUpgradeButton(options[i], i, onPick);
@@ -304,7 +310,8 @@ export default class TurnHud extends cc.Component {
         let title = this.createLabel("战斗结算", 30, 0, 88);
         title.node.parent = panel;
 
-        let result = this.createLabel("阵营 " + winnerCamp + " 获胜", 28, 0, 28);
+        let campStr  = winnerCamp == "A" ? "我方" : "敌方";
+        let result = this.createLabel(campStr + " 获胜", 28, 0, 28);
         result.node.parent = panel;
         result.node.color = winnerCamp === "A" ? new cc.Color(120, 230, 150, 255) : new cc.Color(255, 120, 140, 255);
 
@@ -406,11 +413,12 @@ export default class TurnHud extends cc.Component {
         if (snapshot.phase === "build") {
             return "第 " + snapshot.roundIndex + " 轮：放置期";
         }
+        let campStr  = snapshot.actionCamp == "A" ? "我方" : "敌方";
         if (snapshot.phase === "attack") {
-            return "第 " + snapshot.roundIndex + " 轮：攻击期 - 阵营 " + snapshot.actionCamp + " 第 " + snapshot.attackTurnIndex + "/2 次行动";
+            return "第 " + snapshot.roundIndex + " 轮：攻击期 - " + campStr + " 第 " + snapshot.attackTurnIndex + "/2 次行动";
         }
         if (snapshot.phase === "waitBullet") {
-            return "等待阵营 " + snapshot.actionCamp + " 攻击效果结束";
+            return "等待" + campStr + " 攻击效果结束";
         }
         if (snapshot.phase === "settle") {
             return "第 " + snapshot.roundIndex + " 轮：结算期";
@@ -418,9 +426,10 @@ export default class TurnHud extends cc.Component {
         if (snapshot.phase === "upgrade") {
             return "第 " + snapshot.roundIndex + " 轮：升级期";
         }
+        let campStr1  = snapshot.winnerCamp == "A" ? "我方" : "敌方";
         if (snapshot.phase === "finish") {
             if (snapshot.winnerCamp) {
-                return "战斗结束：阵营 " + snapshot.winnerCamp + " 获胜";
+                return "战斗结束： " + campStr1 + " 获胜";
             }
             return "战斗结束";
         }
@@ -528,8 +537,8 @@ export default class TurnHud extends cc.Component {
         bg.roundRect(-paletteW / 2, -paletteH / 2, paletteW, paletteH, 12);
         bg.stroke();
 
-        let title = this.createLabel("己方掩体", 18, 0, paletteH / 2 - 16);
-        title.node.parent = this._buildPaletteRoot;
+        // let title = this.createLabel("己方掩体", 18, 0, paletteH / 2 - 16);
+        // title.node.parent = this._buildPaletteRoot;
 
         this._buildPaletteBlock = new cc.Node("BuildPaletteBlock");
         this._buildPaletteBlock.parent = this._buildPaletteRoot;
@@ -537,13 +546,14 @@ export default class TurnHud extends cc.Component {
 
         this._buildPaletteCountLabel = this.createLabel("总数 x0", 16, 0, -paletteH / 2 + 30);
         this._buildPaletteCountLabel.node.parent = this._buildPaletteRoot;
+        this._buildPaletteCountLabel.node.active = false
         this._buildPaletteHintLabel = this.createLabel("等待改造期", 13, 0, -paletteH / 2 + 12);
         this._buildPaletteHintLabel.node.parent = this._buildPaletteRoot;
         this._buildPaletteHintLabel.node.color = new cc.Color(190, 200, 220, 255);
 
         this._refreshButton = new cc.Node("BuildRefreshButton");
         this._refreshButton.parent = this._buildPaletteRoot;
-        this._refreshButton.setPosition(paletteW / 2 - 48, -paletteH / 2 + 30);
+        this._refreshButton.setPosition(paletteW / 2 - 150, -paletteH / 2 + 75);
         this._refreshButton.setContentSize(88, 40);
         this._refreshButton.zIndex = 21;
         let refreshGfx = this._refreshButton.addComponent(cc.Graphics);
@@ -558,6 +568,10 @@ export default class TurnHud extends cc.Component {
         this._refreshButton.on(cc.Node.EventType.TOUCH_START, this.onRefreshButtonTouchStart, this);
         this._refreshButton.on(cc.Node.EventType.TOUCH_END, this.onRefreshButtonClicked, this);
         this._refreshButton.on(cc.Node.EventType.TOUCH_CANCEL, this.onRefreshButtonTouchCancel, this);
+        this._refreshCoinLabel = this.createLabel("金币:0", 16, 0, 0);
+        this._refreshCoinLabel.node.parent = this._buildPaletteRoot;
+        this._refreshCoinLabel.node.setPosition(this._refreshButton.x, this._refreshButton.y - 40);
+        this._refreshCoinLabel.node.color = new cc.Color(255, 218, 96, 255);
 
         this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_START, this.onBuildPaletteTouchStart, this);
         this._buildPaletteRoot.on(cc.Node.EventType.TOUCH_MOVE, this.onBuildPaletteTouchMove, this);
@@ -575,10 +589,10 @@ export default class TurnHud extends cc.Component {
         }
 
         this.drawBuildSlots(this._buildPaletteBlock);
-        this._buildPaletteCountLabel.string = "总数 x" + this._buildPaletteCount;
-        this._buildPaletteCountLabel.node.color = this.isBuildPaletteAvailable()
-            ? new cc.Color(245, 245, 245, 255)
-            : new cc.Color(150, 160, 178, 255);
+        // this._buildPaletteCountLabel.string = "总数 x" + this._buildPaletteCount;
+        // this._buildPaletteCountLabel.node.color = this.isBuildPaletteAvailable()
+        //     ? new cc.Color(245, 245, 245, 255)
+        //     : new cc.Color(150, 160, 178, 255);
         if (this.isBuildPaletteAvailable()) {
             this._buildPaletteHintLabel.string = "拖到己方建造区";
         }
@@ -590,6 +604,7 @@ export default class TurnHud extends cc.Component {
         }
         this._buildPaletteRoot.opacity = this.isBuildPaletteAvailable() ? 255 : 170;
         this.refreshRefreshButtonView();
+        this.refreshBuildPaletteCoinView();
     }
 
     private refreshRefreshButtonView() {
@@ -607,6 +622,15 @@ export default class TurnHud extends cc.Component {
             ? new cc.Color(255, 218, 96, 255)
             : new cc.Color(255, 120, 120, 255);
         this._refreshButton.opacity = usable ? 255 : 140;
+    }
+
+    private refreshBuildPaletteCoinView() {
+        if (!this._refreshCoinLabel) {
+            return;
+        }
+        let camp = this._buildPaletteCamp === "B" ? "B" : "A";
+        this._refreshCoinLabel.string = "金币:" + Math.max(0, Math.floor(Number(this._campCoins[camp]) || 0));
+        this._refreshCoinLabel.node.active = !!this._buildPaletteEnabled;
     }
 
     private onRefreshButtonTouchStart(event: cc.Event.EventTouch) {
@@ -798,31 +822,20 @@ export default class TurnHud extends cc.Component {
         root.setPosition(x, y);
         this._buildSlotInfoNodes.push(root);
 
-        let lineHeight = 20;
+        let lineHeight = 10;
         let cursorY = 0;
-
-        let name = this.createChildLabel(root, this.getSlotDisplayName(slot.type, slot.name), 13, 0, cursorY);
+        let name = this.createChildLabel(root, this.getSlotDisplayName(slot.type, slot.name), 13, 0, 75);
         name.node.color = slot.slotId === this._selectedBuildSlotId
             ? new cc.Color(255, 235, 120, 255)
             : new cc.Color(230, 235, 244, 255);
         cursorY -= lineHeight + 2;
 
-        // let status = this.createChildLabel(root, "x" + Math.max(0, slot.count || 0) + " " + (slot.placed ? "已放置" : "未放置"), 11, 0, cursorY);
-        // status.node.color = slot.placed
-        //     ? new cc.Color(180, 188, 200, 255)
-        //     : new cc.Color(170, 240, 180, 255);
-        // cursorY -= lineHeight;
-
-        if (slot.hpText) {
-            let hp = this.createChildLabel(root, slot.hpText, 10, 0, cursorY);
-            hp.node.color = new cc.Color(255, 221, 132, 255);
-            cursorY -= lineHeight;
-        }
-        // if (slot.shapeKey) {
-        //     let shape = this.createChildLabel(root, this.summarizeShape(slot.shapeKey), 10, 0, cursorY);
-        //     shape.node.color = new cc.Color(180, 196, 220, 255);
+        // if (slot.hpText) {
+        //     let hp = this.createChildLabel(root, slot.hpText, 10, 0, cursorY);
+        //     hp.node.color = new cc.Color(255, 221, 132, 255);
         //     cursorY -= lineHeight;
         // }
+
         let coinCost = Math.max(0, Math.floor(Number(slot.coinCost) || 0));
         if (coinCost > 0) {
             let affordable = slot.affordable !== false;

@@ -19,6 +19,7 @@ import {
     TURN_GAME_CONFIG,
 } from "../config/TurnGame";
 import { GameMap } from "../GameMap";
+import { MusicManager } from "../base/MusicManager";
 import { TurnStateSnapshot } from "./TurnStateMachine";
 
 const { ccclass, property } = cc._decorator;
@@ -285,6 +286,7 @@ export default class TurnBattleMap extends cc.Component {
     private _pointerAim: cc.Vec2 = null;
     private _attackTouchActive = false;
     private _lastSentTankPoseAt = 0;
+    private _lastBulletHitSoundAt = 0;
     private _localCamp: TurnCamp = "A";
     private _selectedBuildSlotType: TurnObstacleResourceType = "normal";
 
@@ -342,6 +344,7 @@ export default class TurnBattleMap extends cc.Component {
         this._pointerAim = null;
         this._attackTouchActive = false;
         this._lastSentTankPoseAt = 0;
+        this._lastBulletHitSoundAt = 0;
         this._gameFinished = false;
         this._pendingBulletResult = {
             hitType: "",
@@ -823,7 +826,8 @@ export default class TurnBattleMap extends cc.Component {
             this.refreshCampResourceHpByUpgrade(camp, option.effect.targetResourceType, previousStacks);
         }
 
-        this.showFloatText("阵营 " + camp + " 升级", cc.v2(camp === "A" ? -150 : 150, 0), cc.Color.YELLOW);
+        let campStr  = camp == "A" ? "我方" : "敌方";
+        this.showFloatText(campStr + " 升级", cc.v2(camp === "A" ? -150 : 150, 0), cc.Color.YELLOW);
         this.emitStatsChanged();
     }
 
@@ -943,7 +947,7 @@ export default class TurnBattleMap extends cc.Component {
 
     private placeBuildObstacleAt(camp: TurnCamp, position: cc.Vec2, slotId?: string) {
         if (!camp || !this.canControlCamp(camp)) {
-            this.showFloatText("只能放在可操作阵营建造区", position, cc.Color.RED);
+            this.showFloatText("只能放在可操作方建造区", position, cc.Color.RED);
             return;
         }
         let slot = slotId ? this.getObstacleSlotState(camp, slotId) : this.getFirstAvailableObstacleSlot(camp);
@@ -957,7 +961,7 @@ export default class TurnBattleMap extends cc.Component {
         }
         let targetCamp = this.getBuildCampAt(position);
         if (targetCamp !== camp) {
-            this.showFloatText("只能放在可操作阵营建造区", position, cc.Color.RED);
+            this.showFloatText("只能放在可操作方建造区", position, cc.Color.RED);
             return;
         }
         let snappedPosition = this.snapBuildPosition(position);
@@ -1244,6 +1248,7 @@ export default class TurnBattleMap extends cc.Component {
             damageBoostTempAttack: snapshot ? snapshot.damageBoostTempAttack : derived.damageBoostTempAttack,
             blackHoleStrengthMultiplier: snapshot ? snapshot.blackHoleStrengthMultiplier : derived.blackHoleStrengthMultiplier,
         });
+        MusicManager.playEffect("shoot");
     }
 
     private updateBullets(dt: number) {
@@ -1295,6 +1300,7 @@ export default class TurnBattleMap extends cc.Component {
                 let cellIndex = hitInfo.cellIndex;
                 let cellHp = Math.max(0, Number(obstacle.cellHp[cellIndex]) || 0);
                 let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, cellHp);
+                this.playBulletHitSound();
                 this.reflectBulletOffRect(bullet, hitInfo.rect);
                 bullet.hasBounced = true;
                 this.applyFirstBounceDamageBoostIfNeeded(bullet);
@@ -1304,6 +1310,9 @@ export default class TurnBattleMap extends cc.Component {
             }
             let cellIndex = hitInfo.cellIndex;
             let appliedDamage = this.applyObstacleCellDamage(obstacle, cellIndex, bullet.remainingDamage);
+            if (appliedDamage > 0) {
+                this.playBulletHitSound();
+            }
             this.consumeBulletDamage(bullet, appliedDamage);
             if (this._serverMode && bullet.camp === "A" && appliedDamage > 0) {
                 this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
@@ -1421,6 +1430,7 @@ export default class TurnBattleMap extends cc.Component {
                 obstacleId: obstacle.id,
                 obstacleName: obstacle.name,
             });
+            this.playBulletHitSound();
             return this.tryConsumeBounce(bullet, obstacle.rect);
         }
         return false;
@@ -1475,6 +1485,9 @@ export default class TurnBattleMap extends cc.Component {
         }
         let crystal = this._crystals[targetCamp];
         let appliedDamage = Math.min(crystal.hp, Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0)));
+        if (appliedDamage > 0) {
+            this.playBulletHitSound();
+        }
         crystal.hp = Math.max(0, crystal.hp - appliedDamage);
         this.consumeBulletDamage(bullet, appliedDamage);
         this.refreshCrystalView(targetCamp);
@@ -1513,6 +1526,15 @@ export default class TurnBattleMap extends cc.Component {
             }
         }
         return null;
+    }
+
+    private playBulletHitSound() {
+        let now = Date.now();
+        if (now - this._lastBulletHitSoundAt < 50) {
+            return;
+        }
+        this._lastBulletHitSoundAt = now;
+        MusicManager.playEffect("boom");
     }
 
     private finishGame(winnerCamp: TurnCamp) {
