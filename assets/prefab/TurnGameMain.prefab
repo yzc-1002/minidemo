@@ -4931,6 +4931,14 @@
     "hudRoot": null,
     "autoStart": true,
     "useServer": true,
+    "tankBodySpriteFrame": {
+      "__uuid__": "8ee4cb4a-6021-45d0-8597-95f27798e4af"
+    },
+    "tankBarrelSpriteFrame": {
+      "__uuid__": "0c558876-7a07-4292-8a24-2b3f8c421a67"
+    },
+    "tankBodyScale": 1,
+    "tankBarrelScale": 1,
     "_id": ""
   },
   {

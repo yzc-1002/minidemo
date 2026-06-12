@@ -278,16 +278,16 @@ const TURN_MAP_LAYOUT = {
   mapRect: { minX: -320, maxX: 320, minY: -480, maxY: 480 },
   buildAreas: {
     // Must match client's `deriveLayerAreas()` when roads sit on the map edges.
-    A: { minX: -288, maxX: 288, minY: -448, maxY: -224 },
-    B: { minX: -288, maxX: 288, minY: 224, maxY: 448 },
+    A: { minX: -320, maxX: 320, minY: -448, maxY: -224 },
+    B: { minX: -320, maxX: 320, minY: 224, maxY: 448 },
   },
   roadRects: {
     A: { minX: -320, maxX: 320, minY: -480, maxY: -448 },
     B: { minX: -320, maxX: 320, minY: 448, maxY: 480 },
   },
   assistArea: {
-    minX: -288,
-    maxX: 288,
+    minX: -320,
+    maxX: 320,
     minY: -224,
     maxY: 224,
   },

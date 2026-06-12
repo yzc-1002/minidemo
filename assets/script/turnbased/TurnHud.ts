@@ -30,6 +30,9 @@ export default class TurnHud extends cc.Component {
     coinLabel: cc.Label = null;
 
     private _lastPhase = "";
+    private _phaseLabelBackground: cc.Node = null;
+    private _phaseLabelBackgroundWidth = 0;
+    private _phaseLabelBackgroundHeight = 0;
     private _upgradeRoot: cc.Node = null;
     private _upgradeHintRoot: cc.Node = null;
     private _settlementRoot: cc.Node = null;
@@ -69,18 +72,25 @@ export default class TurnHud extends cc.Component {
 
     initHud() {
         this.node.removeAllChildren();
-        this.phaseLabel = this.createLabel("回合制塔防", 26, 0, 20);
-        this.timerLabel = this.createLabel("倒计时 0.0", 22, 0, -20);
-        this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -200, 190);
+        this.phaseLabel = this.createLabel("回合制塔防", 26, 0, 260);
+        this.phaseLabel.node.zIndex = 2;
+        this.timerLabel = this.createLabel("倒计时 0.0", 22, 0, 220);
+        this.timerLabel.node.zIndex = 2;
+        this._phaseLabelBackground = null;
+        this._phaseLabelBackgroundWidth = 0;
+        this._phaseLabelBackgroundHeight = 0;
+        this.refreshPhaseLabelBackground();
+        // this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -200, 190);
         this.expLabel = this.createLabel("A: 0  |  B: 0", 20, -200, 160);
-        this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -210, 130);
-        this.zoneLabel = this.createLabel("场上辅助区: 0", 20, -210, 100);
-        this.bondLabel = this.createLabel("A 羁绊: -", 18, -190, 70);
-        this.bondLabel.horizontalAlign = cc.Label.HorizontalAlign.LEFT;
-        this.bondLabel.overflow = cc.Label.Overflow.RESIZE_HEIGHT;
-        this.bondLabel.node.width = 580;
-        this.coinLabel = this.createLabel("金币 A: 0  |  B: 0", 20, -200, 40);
-        this.coinLabel.node.color = new cc.Color(255, 218, 96, 255);
+        this.expLabel.node.color = new cc.Color(0, 0, 0, 0);
+        // this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -210, 130);
+        // this.zoneLabel = this.createLabel("场上辅助区: 0", 20, -210, 100);
+        // this.bondLabel = this.createLabel("A 羁绊: -", 18, -190, 70);
+        // this.bondLabel.horizontalAlign = cc.Label.HorizontalAlign.LEFT;
+        // this.bondLabel.overflow = cc.Label.Overflow.RESIZE_HEIGHT;
+        // this.bondLabel.node.width = 580;
+        this.coinLabel = this.createLabel("金币 A: 0  |  B: 0", 20, -200, 130);
+        this.coinLabel.node.color = new cc.Color(0, 0, 0, 0);
         this._upgradeRoot = null;
         this._upgradeHintRoot = null;
         this._settlementRoot = null;
@@ -113,6 +123,7 @@ export default class TurnHud extends cc.Component {
             this.phaseLabel.string = phaseText;
         }
         this.refreshTimer(snapshot);
+        this.refreshPhaseLabelBackground();
     }
 
     refreshTimer(snapshot: TurnStateSnapshot) {
@@ -167,11 +178,6 @@ export default class TurnHud extends cc.Component {
         let paletteX = position.x + 120;
         let paletteY = position.y + 110;
         this._buildPaletteRoot.setPosition(paletteX, paletteY);
-        if (this._refreshButton) {
-            let paletteW = this._buildPaletteRoot.getContentSize().width || 300;
-            let paletteH = this._buildPaletteRoot.getContentSize().height || 210;
-            this._refreshButton.setPosition(paletteX + paletteW / 2 + 56, paletteY + paletteH / 2 - 22);
-        }
     }
 
     refreshExp(aExp: number, aLevel: number, aExpNeed: number, bExp: number, bLevel: number, bExpNeed: number) {
@@ -425,14 +431,79 @@ export default class TurnHud extends cc.Component {
         let node = new cc.Node("TurnHudLabel");
         node.parent = this.node;
         node.setPosition(x, y);
-        node.color = new cc.Color(245, 245, 245, 255);
-
+        node.color = new cc.Color(255, 255, 0, 255);
         let label = node.addComponent(cc.Label);
         label.string = text;
         label.fontSize = size;
         label.lineHeight = size + 6;
         label.horizontalAlign = cc.Label.HorizontalAlign.CENTER;
         return label;
+    }
+
+    private refreshPhaseLabelBackground() {
+        if (!this.phaseLabel) {
+            return;
+        }
+        if (!this._phaseLabelBackground) {
+            this._phaseLabelBackground = new cc.Node("PhaseLabelBackground");
+            this._phaseLabelBackground.parent = this.node;
+            this._phaseLabelBackground.zIndex = 1;
+        }
+
+        let bounds = this.getLabelVisualBounds(this.phaseLabel);
+        if (this.timerLabel) {
+            let timerBounds = this.getLabelVisualBounds(this.timerLabel);
+            bounds.minX = Math.min(bounds.minX, timerBounds.minX);
+            bounds.maxX = Math.max(bounds.maxX, timerBounds.maxX);
+            bounds.minY = Math.min(bounds.minY, timerBounds.minY);
+            bounds.maxY = Math.max(bounds.maxY, timerBounds.maxY);
+        }
+
+        let centerX = (bounds.minX + bounds.maxX) / 2;
+        let centerY = (bounds.minY + bounds.maxY) / 2;
+        this._phaseLabelBackground.setPosition(centerX, centerY);
+
+        let paddingX = 48;
+        let paddingY = 20;
+        let targetWidth = Math.ceil(bounds.maxX - bounds.minX + paddingX);
+        let targetHeight = Math.ceil(bounds.maxY - bounds.minY + paddingY);
+        this._phaseLabelBackgroundWidth = Math.max(this._phaseLabelBackgroundWidth, targetWidth);
+        this._phaseLabelBackgroundHeight = Math.max(this._phaseLabelBackgroundHeight, targetHeight);
+        this._phaseLabelBackground.setContentSize(this._phaseLabelBackgroundWidth, this._phaseLabelBackgroundHeight);
+
+        let graphics = this._phaseLabelBackground.getComponent(cc.Graphics);
+        if (!graphics) {
+            graphics = this._phaseLabelBackground.addComponent(cc.Graphics);
+        }
+        graphics.clear();
+        graphics.fillColor = new cc.Color(18, 24, 36, 210);
+        graphics.roundRect(-this._phaseLabelBackgroundWidth / 2, -this._phaseLabelBackgroundHeight / 2, this._phaseLabelBackgroundWidth, this._phaseLabelBackgroundHeight, 12);
+        graphics.fill();
+        graphics.strokeColor = new cc.Color(220, 230, 245, 150);
+        graphics.lineWidth = 2;
+        graphics.roundRect(-this._phaseLabelBackgroundWidth / 2, -this._phaseLabelBackgroundHeight / 2, this._phaseLabelBackgroundWidth, this._phaseLabelBackgroundHeight, 12);
+        graphics.stroke();
+    }
+
+    private getLabelVisualBounds(label: cc.Label): { minX: number; maxX: number; minY: number; maxY: number } {
+        let node = label.node;
+        let fontSize = Math.max(1, Number(label.fontSize) || 20);
+        let lineHeight = Math.max(fontSize, Number(label.lineHeight) || fontSize + 6);
+        let width = this.measureTextWidth(label.string || "", fontSize);
+        return {
+            minX: node.x - width / 2,
+            maxX: node.x + width / 2,
+            minY: node.y - lineHeight / 2,
+            maxY: node.y + lineHeight / 2,
+        };
+    }
+
+    private measureTextWidth(text: string, fontSize: number): number {
+        let width = 0;
+        for (let i = 0; i < text.length; i++) {
+            width += text.charCodeAt(i) > 255 ? fontSize : fontSize * 0.56;
+        }
+        return width;
     }
 
     private ensureBuildPalette() {
@@ -471,8 +542,8 @@ export default class TurnHud extends cc.Component {
         this._buildPaletteHintLabel.node.color = new cc.Color(190, 200, 220, 255);
 
         this._refreshButton = new cc.Node("BuildRefreshButton");
-        this._refreshButton.parent = this.node;
-        this._refreshButton.setPosition(-220 + paletteW / 2 + 56, -245 + paletteH / 2 - 22);
+        this._refreshButton.parent = this._buildPaletteRoot;
+        this._refreshButton.setPosition(paletteW / 2 - 48, -paletteH / 2 + 30);
         this._refreshButton.setContentSize(88, 40);
         this._refreshButton.zIndex = 21;
         let refreshGfx = this._refreshButton.addComponent(cc.Graphics);

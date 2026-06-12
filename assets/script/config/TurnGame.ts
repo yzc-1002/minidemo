@@ -539,8 +539,8 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         B: 420,
     },
     buildArea: {
-        A: cc.rect(-288, -480, 576, 224),
-        B: cc.rect(-288, 256, 576, 224),
+        A: cc.rect(-320, -480, 640, 224),
+        B: cc.rect(-320, 256, 640, 224),
     },
     upgradePool: [
         { id: "bullet_bounce_add", name: "反弹 +1", desc: "子弹可以额外反弹一次", maxStacks: 5, effect: { type: "bullet_bounce", stackMode: "add", value: 1 } },

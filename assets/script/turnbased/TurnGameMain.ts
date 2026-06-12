@@ -24,6 +24,18 @@ export default class TurnGameMain extends cc.Component {
     @property
     useServer = true;
 
+    @property({ type: cc.SpriteFrame, tooltip: "坦克车身贴图，建议绑定 texture/tank_own_01_01" })
+    tankBodySpriteFrame: cc.SpriteFrame = null;
+
+    @property({ type: cc.SpriteFrame, tooltip: "坦克炮管贴图，建议绑定 texture/tank_own_01_02" })
+    tankBarrelSpriteFrame: cc.SpriteFrame = null;
+
+    @property({ tooltip: "坦克车身贴图渲染缩放" })
+    tankBodyScale: number = 1.0;
+
+    @property({ tooltip: "坦克炮管贴图渲染缩放" })
+    tankBarrelScale: number = 1.0;
+
     private _config: TurnGameConfig = TURN_GAME_CONFIG;
     private _stateMachine: TurnStateMachine = new TurnStateMachine();
     private _battleMap: TurnBattleMap = null;
@@ -209,6 +221,18 @@ export default class TurnGameMain extends cc.Component {
         this._battleMap = this.mapRoot.getComponent(TurnBattleMap);
         if (!this._battleMap) {
             this._battleMap = this.mapRoot.addComponent(TurnBattleMap);
+        }
+        if (this.tankBodySpriteFrame) {
+            this._battleMap.tankBodySpriteFrame = this.tankBodySpriteFrame;
+        }
+        if (this.tankBarrelSpriteFrame) {
+            this._battleMap.tankBarrelSpriteFrame = this.tankBarrelSpriteFrame;
+        }
+        if (this.tankBodyScale > 0) {
+            this._battleMap.tankBodyScale = this.tankBodyScale;
+        }
+        if (this.tankBarrelScale > 0) {
+            this._battleMap.tankBarrelScale = this.tankBarrelScale;
         }
 
         this._hud = this.hudRoot.getComponent(TurnHud);

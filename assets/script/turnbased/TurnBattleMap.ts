@@ -201,6 +201,18 @@ export default class TurnBattleMap extends cc.Component {
     @property(cc.Prefab)
     tiledMapPrefab: cc.Prefab = null;
 
+    @property({ type: cc.SpriteFrame, tooltip: "坦克车身贴图，建议绑定 texture/tank_own_01_01" })
+    tankBodySpriteFrame: cc.SpriteFrame = null;
+
+    @property({ type: cc.SpriteFrame, tooltip: "坦克炮管贴图，建议绑定 texture/tank_own_01_02" })
+    tankBarrelSpriteFrame: cc.SpriteFrame = null;
+
+    @property({ tooltip: "坦克车身贴图渲染缩放" })
+    tankBodyScale: number = 1.0;
+
+    @property({ tooltip: "坦克炮管贴图渲染缩放" })
+    tankBarrelScale: number = 1.0;
+
     onStatsChanged: () => void = null;
     onAttackFired: () => void = null;
     onBulletsCleared: () => void = null;
@@ -860,13 +872,6 @@ export default class TurnBattleMap extends cc.Component {
                 if (this.circleRectIntersects(this.getNodePosition(zone.node), zone.radius, obstacleRect)) {
                     return false;
                 }
-            }
-
-            let crystalA = this._crystals.A;
-            let crystalB = this._crystals.B;
-            if ((crystalA && this.circleRectIntersects(this.getNodePosition(crystalA.node), crystalA.radius, obstacleRect))
-                || (crystalB && this.circleRectIntersects(this.getNodePosition(crystalB.node), crystalB.radius, obstacleRect))) {
-                return false;
             }
 
             for (let k = 0; k < this._obstacles.length; k++) {
@@ -1783,24 +1788,49 @@ export default class TurnBattleMap extends cc.Component {
 
         let body = new cc.Node("Body");
         body.parent = root;
-        let bodyGraphics = body.addComponent(cc.Graphics);
-        bodyGraphics.fillColor = camp === "A" ? new cc.Color(92, 214, 124, 255) : new cc.Color(224, 96, 112, 255);
-        bodyGraphics.roundRect(-34, -18, 68, 36, 8);
-        bodyGraphics.fill();
+        if (this.tankBodySpriteFrame) {
+            let bodySprite = body.addComponent(cc.Sprite);
+            bodySprite.sizeMode = cc.Sprite.SizeMode.RAW;
+            bodySprite.trim = false;
+            bodySprite.spriteFrame = this.tankBodySpriteFrame;
+            let scale = Math.max(0.01, Number(this.tankBodyScale) || 1);
+            body.setScale(scale, scale);
+            if (camp === "B") {
+                body.angle = 180;
+            }
+        }
+        else {
+            let bodyGraphics = body.addComponent(cc.Graphics);
+            bodyGraphics.fillColor = camp === "A" ? new cc.Color(92, 214, 124, 255) : new cc.Color(224, 96, 112, 255);
+            bodyGraphics.roundRect(-34, -18, 68, 36, 8);
+            bodyGraphics.fill();
+        }
 
         let turret = new cc.Node("Turret");
         turret.parent = root;
-        let turretGraphics = turret.addComponent(cc.Graphics);
-        turretGraphics.fillColor = new cc.Color(235, 235, 235, 255);
-        turretGraphics.rect(-4, 0, 8, 42);
-        turretGraphics.fill();
+        if (this.tankBarrelSpriteFrame) {
+            let turretSprite = turret.addComponent(cc.Sprite);
+            turretSprite.sizeMode = cc.Sprite.SizeMode.RAW;
+            turretSprite.trim = false;
+            turretSprite.spriteFrame = this.tankBarrelSpriteFrame;
+            // 锚点改成底部中心，让炮管以根部为枢轴旋转
+            turret.setAnchorPoint(0.5, 0);
+            let scale = Math.max(0.01, Number(this.tankBarrelScale) || 1);
+            turret.setScale(scale, scale);
+        }
+        else {
+            let turretGraphics = turret.addComponent(cc.Graphics);
+            turretGraphics.fillColor = new cc.Color(235, 235, 235, 255);
+            turretGraphics.rect(-4, 0, 8, 42);
+            turretGraphics.fill();
+        }
 
         let preview = new cc.Node("Preview");
         preview.parent = root;
         let label = this.createLabel(camp, 18);
         label.node.name = "TankHp" + camp;
         label.node.parent = root;
-        label.node.y = -54;
+        label.node.y = camp === "A" ? -10 : 5;//-54;
 
         let tankState: TurnTankState = {
             root: root,
@@ -1822,6 +1852,7 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         crystal.hpLabel.string = camp + " HP " + crystal.hp + "/" + crystal.maxHp;
+        crystal.hpLabel.node.color = new cc.Color(0, 0, 0, 0);
     }
 
     private updateTankState(camp: TurnCamp, active: boolean) {
@@ -1832,9 +1863,9 @@ export default class TurnBattleMap extends cc.Component {
 
         tank.root.active = true;
         tank.preview.active = true;
-        tank.root.opacity = active ? 255 : 100;
+        tank.root.opacity = 255;
         tank.root.scale = active ? 1.08 : 1;
-        tank.preview.opacity = active ? 210 : 90;
+        // tank.preview.opacity = active ? 210 : 90;
     }
 
     private createCampStats(): TurnCampStats {
@@ -3814,7 +3845,7 @@ export default class TurnBattleMap extends cc.Component {
 
     private getInteriorHorizontalBounds(): { minX: number; maxX: number } {
         let mapRect = this.getMapRect();
-        let inset = Math.max(this._tileSize.width, 24);
+        let inset = Math.max(this._tileSize.width, 24) - this._tileSize.width;
         let minX = mapRect.x + inset;
         let maxX = mapRect.x + mapRect.width - inset;
         for (let i = 0; i < this._staticObstacles.length; i++) {
