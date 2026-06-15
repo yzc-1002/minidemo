@@ -852,6 +852,20 @@ function buildTurnViewPayload(player, payload) {
   if (next.targetCamp) {
     next.targetCamp = getTurnViewCamp(player, next.targetCamp);
   }
+  if (next.pose) {
+    const posePoint = toPlayerViewPoint(player, next.pose);
+    const aimPoint = toPlayerViewPoint(player, {
+      x: next.pose.aimX,
+      y: next.pose.aimY,
+    });
+    next.pose = {
+      ...next.pose,
+      x: Math.round(posePoint.x),
+      y: Math.round(posePoint.y),
+      aimX: Math.round(aimPoint.x),
+      aimY: Math.round(aimPoint.y),
+    };
+  }
   if (next.crystals) {
     const crystals = {};
     Object.keys(next.crystals).forEach((camp) => {
@@ -2012,7 +2026,11 @@ function isTurnBuildPlayerDone(player) {
   if (!player) {
     return false;
   }
-  if (player.placedThisRound) {
+  const slots = player.inventory && Array.isArray(player.inventory.roundSlots)
+    ? player.inventory.roundSlots
+    : [];
+  const hasUnplacedSlot = slots.some((slot) => slot && !slot.placed && !slot.placedObstacleId && Math.max(0, Number(slot.count) || 0) > 0);
+  if (!hasUnplacedSlot) {
     return true;
   }
   const slotCost = Math.max(0, Math.floor(Number(TURN_CONFIG.coinEconomy && TURN_CONFIG.coinEconomy.slotCost) || 0));
@@ -2657,7 +2675,6 @@ function handleTurnTankPose(ws, msg) {
     aimPoint ? aimPoint.x : roomState.tankPoses[player.camp].aimX,
     aimPoint ? aimPoint.y : roomState.tankPoses[player.camp].aimY,
   );
-  broadcastTurnSnapshot(roomState);
   broadcastTurn(roomState, {
     type: 'tankPose',
     roomId: roomState.id,

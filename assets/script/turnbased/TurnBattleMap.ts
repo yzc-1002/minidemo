@@ -616,6 +616,9 @@ export default class TurnBattleMap extends cc.Component {
             return;
         }
         let camp = (payload.camp || this._actionCamp || "A") as TurnCamp;
+        if (this.shouldIgnoreLocalTankPoseEcho(camp)) {
+            return;
+        }
         let tankState = this._tanks[camp];
         if (!tankState) {
             return;
@@ -1561,6 +1564,9 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private finishGame(winnerCamp: TurnCamp) {
+        if (this._serverMode) {
+            return;
+        }
         if (this._gameFinished) {
             return;
         }
@@ -1830,6 +1836,7 @@ export default class TurnBattleMap extends cc.Component {
         let root = new cc.Node("TurnTank" + camp);
         root.parent = this._obstacleLayer || this.contentRoot;
         root.setPosition(position.x, position.y);
+        root.zIndex = 200;
 
         let body = new cc.Node("Body");
         body.parent = root;
@@ -1871,10 +1878,13 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         let preview = new cc.Node("Preview");
-        preview.parent = root;
+        preview.parent = this._effectLayer || this.contentRoot;
+        preview.setPosition(position.x, position.y);
+        preview.zIndex = 100;
         let label = this.createLabel(camp, 18);
         label.node.name = "TankHp" + camp;
         label.node.parent = root;
+        label.node.zIndex = 110;
         label.node.y = camp === "A" ? -10 : 5;//-54;
 
         let tankState: TurnTankState = {
@@ -4191,6 +4201,7 @@ export default class TurnBattleMap extends cc.Component {
         tank.root.y = road.y + road.height / 2;
         let nextPosition = this.getNodePosition(tank.root);
         tank.aim = nextPosition.add(currentDir.mul(120));
+        tank.preview.setPosition(nextPosition.x, nextPosition.y);
         this.drawPreviewLine(tank.preview, currentDir);
         tank.preview.active = this.isLocalAttackTurn(this._actionCamp);
         this.sendTankPoseIfNeeded(false, false);
@@ -4210,6 +4221,7 @@ export default class TurnBattleMap extends cc.Component {
         let dir = this.clampAimDirection(camp, start, target);
         tank.aim = start.add(dir.mul(240));
         tank.turret.angle = this.vectorToAngle(dir) - 90;
+        tank.preview.setPosition(start.x, start.y);
         this.drawPreviewLine(tank.preview, dir);
         tank.preview.active = this.isLocalAttackTurn(camp);
         if (notifyServer) {
@@ -4318,6 +4330,10 @@ export default class TurnBattleMap extends cc.Component {
 
     private isLocalAttackTurn(camp: TurnCamp): boolean {
         return this._phase === "attack" && camp === this._actionCamp && camp === this._localCamp;
+    }
+
+    private shouldIgnoreLocalTankPoseEcho(camp: TurnCamp): boolean {
+        return this._serverMode && this.isLocalAttackTurn(camp) && this.isTankMovingInputActive();
     }
 
     private isTankMovingInputActive(): boolean {

@@ -261,6 +261,7 @@ export class NetworkManager {
             case "zoneAction":
             case "attackAction":
             case "bulletResult":
+            case "tankPose":
             case "upgradeOptions":
             case "upgradePick":
             case "turnGameEnded":
