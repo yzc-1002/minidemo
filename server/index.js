@@ -394,10 +394,10 @@ function getTurnTankHitCamp(roomState, bullet) {
 
 const TURN_CONFIG = {
   buildSeconds: 15,
-  attackSeconds: 20,
+  attackSeconds: 25,
   waitBulletSeconds: 5,
   settleSeconds: 1,
-  upgradeSeconds: 6,
+  upgradeSeconds: 0,
   attackRounds: 1,
   crystalHp: 100,
   initialRoundResourceTotal: 3,
@@ -406,16 +406,18 @@ const TURN_CONFIG = {
   slotCountPerRound: 3,
   slotMinResource: 1,
   slotMaxResource: 4,
-  baseExp: 10,
-  obstacleHitExp: 8,
-  expWallDestroyExp: 50,
+  baseExp: 0,
+  obstacleHitExp: 0,
+  expWallDestroyExp: 0,
   energyWallRoundHeal: 10,
   bloodBlockHealPerStack: 1,
-  crystalHitExp: 25,
-  expNeed: 60,
+  crystalHitExp: 0,
+  expNeed: 0,
   baseBulletCount: 1,
   bulletDamage: 10,
   baseBulletBounce: 0,
+  roundBulletBounceGrowth: 1,
+  maxRoundBulletBounce: 4,
   baseFireInterval: 0,
   bulletBlockExtraShotInterval: 0.5,
   bulletMaxLifeSeconds: 30,
@@ -428,6 +430,7 @@ const TURN_CONFIG = {
       maxSimultaneous: 3,
     },
     maxPlacementRetries: 24,
+    enabledTypes: ['spread', 'damageBoost'],
     allowOverlap: false,
     types: {
       blackHole: {
@@ -504,6 +507,8 @@ const TURN_CONFIG = {
     baseRoundReward: 10,
     slotCost: 10,
     refreshCost: 5,
+    destroyedEnemyResourceCoinReward: 1,
+    enemyTankHitCoinReward: 1,
     perDestroyedEnemyCell: 1,
     perCoinBlockSettlement: 1,
   },
@@ -596,25 +601,8 @@ const TURN_PHASE = {
   FINISH: 'finish',
 };
 const TURN_CAMPS = ['A', 'B'];
-const TURN_UPGRADE_POOL = [
-  { id: 'bullet_bounce_add', name: '反弹 +1', desc: '子弹可以额外反弹一次', maxStacks: 5, effect: { type: 'bullet_bounce', stackMode: 'add', value: 1 } },
-  { id: 'first_bounce_damage_x2', name: '首弹反弹增伤', desc: '第一次反弹后，子弹剩余伤害 x2', maxStacks: 1, effect: { type: 'first_bounce_damage', stackMode: 'multiply', value: 2 } },
-  { id: 'round_resource_add', name: '回合资源 +1', desc: '后续每回合可生成的总资源数 +1', maxStacks: 9, effect: { type: 'round_resource', stackMode: 'add', value: 1 } },
-  { id: 'normal_hp_add', name: '普通方块 HP +10', desc: '普通方块资源血量 +10，最大 50', maxStacks: 4, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'normal', maxValue: 50 } },
-  { id: 'exp_hp_add', name: '经验块 HP +10', desc: '经验块血量 +10，最大 30', maxStacks: 2, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'exp', maxValue: 30 } },
-  { id: 'energy_hp_add', name: '能量块 HP +10', desc: '能量块血量 +10，最大 30', maxStacks: 2, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'energy', maxValue: 30 } },
-  { id: 'bullet_hp_add', name: '子弹块 HP +10', desc: '子弹块血量 +10，最大 30', maxStacks: 2, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'bullet', maxValue: 30 } },
-  { id: 'bleed_hp_add', name: '滴血块 HP +10', desc: '滴血块血量 +10，最大 30', maxStacks: 2, effect: { type: 'resource_hp', stackMode: 'add', value: 10, targetResourceType: 'bleed', maxValue: 30 } },
-  { id: 'spread_extra_split_add', name: '扩散分裂 +1', desc: '穿过扩散区域后额外分裂数 +1', maxStacks: null, effect: { type: 'spread_extra_split', stackMode: 'add', value: 1 } },
-  { id: 'damage_boost_temp_attack_add', name: '增伤区域攻击 +10', desc: '穿过伤害翻倍区域后临时额外获得 +10 攻击', maxStacks: null, effect: { type: 'damage_boost_temp_attack', stackMode: 'add', value: 10 } },
-  { id: 'black_hole_strength_pct', name: '黑洞引力 +10%', desc: '黑洞区域引力效果 +10%', maxStacks: null, effect: { type: 'black_hole_strength', stackMode: 'add', value: 0.1 } },
-  { id: 'missile_explosion_radius_add', name: '导弹爆炸 +1格', desc: '导弹爆炸范围向四周增加 1 个地图格子', maxStacks: null, effect: { type: 'missile_explosion_radius', stackMode: 'add', value: 1 } },
-  { id: 'missile_damage_add', name: '导弹伤害 +10', desc: '导弹命中伤害 +10', maxStacks: null, effect: { type: 'missile_damage', stackMode: 'add', value: 10 } },
-  { id: 'missile_main_cannon_chance_add', name: '导弹命中主炮 +10%', desc: '导弹优先命中敌方主炮概率 +10%', maxStacks: 10, effect: { type: 'missile_main_cannon_chance', stackMode: 'add', value: 0.1, maxValue: 1 } },
-  { id: 'coin_drop_pct', name: '攻击金币掉落 +10%', desc: '攻击掉敌方资源获得金币 +10%', maxStacks: null, effect: { type: 'coin_drop', stackMode: 'add', value: 0.1 } },
-  { id: 'exp_drop_pct', name: '攻击经验掉落 +10%', desc: '攻击掉敌方资源获得经验 +10%', maxStacks: null, effect: { type: 'exp_drop', stackMode: 'add', value: 0.1 } },
-];
-const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'exp', 'energy', 'bleed', 'bullet', 'attack', 'missile_silo', 'coin'];
+const TURN_UPGRADE_POOL = [];
+const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'energy', 'bleed', 'bullet', 'attack', 'missile_silo', 'coin'];
 const TURN_OBSTACLE_LAYOUT_LIBRARY = {
   1: [
     [{ x: 0, y: 0 }],
@@ -1452,7 +1440,15 @@ function getTurnBondValue(type, count) {
   return safeCount * amountPerBlock * multiplier;
 }
 
-function buildTurnAttackSnapshotFromCounts(counts, player) {
+function getTurnRoundBulletBounce(roundIndex) {
+  const round = Math.max(1, Math.floor(Number(roundIndex) || 1));
+  const baseBounce = Math.max(0, Math.floor(Number(TURN_CONFIG.baseBulletBounce) || 0));
+  const growth = Math.max(0, Math.floor(Number(TURN_CONFIG.roundBulletBounceGrowth) || 0));
+  const maxBounce = Math.max(baseBounce, Math.floor(Number(TURN_CONFIG.maxRoundBulletBounce) || baseBounce));
+  return Math.min(maxBounce, baseBounce + Math.max(0, round - 1) * growth);
+}
+
+function buildTurnAttackSnapshotFromCounts(counts, player, roundIndex) {
   const baseBulletDamage = Math.max(1, Number(TURN_CONFIG.bulletDamage) || 20);
   const safeCounts = createTurnBondCountMap(counts);
   const derived = refreshTurnDerivedUpgradeState(player);
@@ -1474,7 +1470,7 @@ function buildTurnAttackSnapshotFromCounts(counts, player) {
     bonusDamageFromUpgrade,
     bonusDamageFromAttackBlock,
     bulletDamage: Math.max(1, baseBulletDamage + bonusDamageFromUpgrade + bonusDamageFromAttackBlock),
-    bulletBounce: Math.max(0, Math.floor(Number(TURN_CONFIG.baseBulletBounce) || 0)) + bulletBounce,
+    bulletBounce: getTurnRoundBulletBounce(roundIndex) + bulletBounce,
     firstBounceDamageMultiplier: Math.max(1, Number(derived.firstBounceDamageMultiplier) || 1),
     spreadExtraSplit: Math.max(0, Number(derived.spreadExtraSplit) || 0),
     damageBoostTempAttack: Math.max(0, Number(derived.damageBoostTempAttack) || 0),
@@ -1484,7 +1480,7 @@ function buildTurnAttackSnapshotFromCounts(counts, player) {
 }
 
 function buildTurnAttackSnapshot(roomState, player) {
-  return buildTurnAttackSnapshotFromCounts(buildTurnBondCountsFromRoom(roomState, player.camp), player);
+  return buildTurnAttackSnapshotFromCounts(buildTurnBondCountsFromRoom(roomState, player.camp), player, roomState ? roomState.roundIndex : 1);
 }
 
 function createTurnServerBullet(roomState, camp, pose, attackSnapshot) {
@@ -1532,13 +1528,12 @@ function buildTurnSettlementSnapshot(roomState, camp) {
   const expMultiplier = getTurnBondMultiplier('exp', ownCounts.exp);
   const energyMultiplier = getTurnBondMultiplier('energy', ownCounts.energy);
   const bleedMultiplier = getTurnBondMultiplier('bleed', ownCounts.bleed);
-  const expGain = getTurnBondValue('exp', ownCounts.exp);
   const totalHeal = getTurnBondValue('energy', ownCounts.energy);
   const blockedHealByEnemy = getTurnBondValue('bleed', enemyCounts.bleed);
   return {
     expBlockCount: ownCounts.exp,
     expMultiplier,
-    expGain,
+    expGain: 0,
     energyBlockCount: ownCounts.energy,
     energyMultiplier,
     totalHeal,
@@ -1706,9 +1701,9 @@ function getTurnStateSnapshot(roomState) {
     },
     exp: roomState.players.reduce((result, player) => {
       result[player.camp] = {
-        exp: player.exp,
-        expNeed: player.expNeed,
-        level: Math.max(1, Math.floor((player.expNeed - TURN_CONFIG.expNeed) / 20) + 1),
+        exp: 0,
+        expNeed: 0,
+        level: 1,
       };
       return result;
     }, {}),
@@ -1789,6 +1784,16 @@ function getTurnAssistZoneTypeConfig(zoneType) {
   return (types && types[zoneType]) || (types && types.blackHole) || {};
 }
 
+function getTurnAssistZoneEnabledTypes() {
+  const configured = TURN_CONFIG.assistZones && Array.isArray(TURN_CONFIG.assistZones.enabledTypes)
+    ? TURN_CONFIG.assistZones.enabledTypes
+    : ['spread', 'damageBoost'];
+  const types = TURN_CONFIG.assistZones && TURN_CONFIG.assistZones.types ? TURN_CONFIG.assistZones.types : {};
+  return configured
+    .map((type) => mapZoneTypeFromClient(String(type || '')))
+    .filter((type, index, list) => type && type !== 'blackHole' && !!types[type] && list.indexOf(type) === index);
+}
+
 function getTurnAssistZoneSpawnCount(roundIndex) {
   const rule = TURN_CONFIG.assistZones && TURN_CONFIG.assistZones.spawnRule;
   const round = Math.max(1, Math.floor(Number(roundIndex) || 1));
@@ -1802,8 +1807,11 @@ function getTurnAssistZoneSpawnCount(roundIndex) {
 }
 
 function randomTurnAssistZoneType() {
-  const candidates = ['blackHole', 'spread', 'damageBoost'];
-  return candidates[Math.floor(Math.random() * candidates.length)] || 'blackHole';
+  const candidates = getTurnAssistZoneEnabledTypes();
+  if (candidates.length <= 0) {
+    return '';
+  }
+  return candidates[Math.floor(Math.random() * candidates.length)] || '';
 }
 
 function randomTurnAssistZoneRadius(zoneType) {
@@ -2142,7 +2150,8 @@ function startTurnSettlePhase(roomState) {
   applyTurnRoundSettlement(roomState);
   logTurn(roomState, `phase settle round=${roomState.roundIndex}`);
   setTurnPhase(roomState, TURN_PHASE.SETTLE, TURN_CONFIG.settleSeconds, () => {
-    startTurnUpgradePhase(roomState);
+    roomState.roundIndex += 1;
+    startTurnBuildPhase(roomState);
   });
 }
 
@@ -2156,6 +2165,9 @@ function spawnTurnAssistZones(roomState) {
   const maxRetries = Math.max(1, Number(TURN_CONFIG.assistZones && TURN_CONFIG.assistZones.maxPlacementRetries) || 1);
   for (let i = 0; i < spawnCount; i++) {
     const zoneType = randomTurnAssistZoneType();
+    if (!zoneType) {
+      continue;
+    }
     const radius = randomTurnAssistZoneRadius(zoneType);
     const minX = assistArea.minX + radius + 8;
     const maxX = assistArea.maxX - radius - 8;
@@ -2308,24 +2320,12 @@ function canTurnPlayerUpgrade(player) {
 
 function startTurnUpgradePhase(roomState) {
   roomState.actionCamp = '';
-  if (!roomState.players.some((player) => canTurnPlayerUpgrade(player))) {
-    roomState.players.forEach((player) => {
-      player.pendingUpgradeOptions = [];
-    });
-    logTurn(roomState, `skip upgrade round=${roomState.roundIndex}: no player can upgrade`);
-    roomState.roundIndex += 1;
-    startTurnBuildPhase(roomState);
-    return;
-  }
   roomState.players.forEach((player) => {
     player.pendingUpgradeOptions = [];
-    sendTurnUpgradeOptions(roomState, player);
   });
-  logTurn(roomState, `phase upgrade round=${roomState.roundIndex}`);
-  setTurnPhase(roomState, TURN_PHASE.UPGRADE, TURN_CONFIG.upgradeSeconds, () => {
-    roomState.roundIndex += 1;
-    startTurnBuildPhase(roomState);
-  });
+  logTurn(roomState, `skip upgrade round=${roomState.roundIndex}: upgrade module disabled`);
+  roomState.roundIndex += 1;
+  startTurnBuildPhase(roomState);
 }
 
 function startTurnRoom(roomState) {
@@ -2770,10 +2770,8 @@ function applyTurnRoundSettlement(roomState) {
     const settlement = buildTurnSettlementSnapshot(roomState, player.camp);
     const coinGain = getTurnCoinSettlementGain(roomState, player.camp);
     settlement.coinGain = coinGain;
+    settlement.expGain = 0;
     roomState.settlementSnapshots[player.camp] = settlement;
-    if (settlement.expGain > 0) {
-      player.exp += settlement.expGain;
-    }
     if (coinGain > 0) {
       player.coins = Math.max(0, Math.floor(Number(player.coins) || 0)) + coinGain;
     }
@@ -2810,25 +2808,7 @@ function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
       continue;
     }
     if (zone.zoneType === 'blackHole') {
-      const config = getTurnAssistZoneTypeConfig('blackHole');
-      const center = getTurnZoneCenter(zone);
-      const offset = {
-        x: center.x - bullet.position.x,
-        y: center.y - bullet.position.y,
-      };
-      const distance = vecLength(offset);
-      if (distance > 1 && distance <= radius) {
-        const ratio = 1 - distance / radius;
-        const strength = Math.max(0, Number(config.blackHoleStrength) || 0) * Math.max(1, Number(bullet.blackHoleStrengthMultiplier) || 1);
-        const curvePower = Math.max(0.1, Number(config.blackHoleCurvePower) || 1);
-        const maxOffsetPerTick = Math.max(0, Number(config.blackHoleMaxOffsetPerTick) || 0);
-        const curvedRatio = Math.pow(Math.max(0, ratio), curvePower);
-        let offsetStep = strength * curvedRatio * dt;
-        if (maxOffsetPerTick > 0) {
-          offsetStep = Math.min(offsetStep, maxOffsetPerTick);
-        }
-        bullet.dir = normalizeVec(addVec(bullet.dir, mulVec(normalizeVec(offset, bullet.dir), offsetStep)), bullet.dir);
-      }
+      // 黑洞区域已从回合制联网玩法中关闭，保留分支仅兼容旧快照。
       continue;
     }
     if (zone.zoneType === 'damageBoost') {
@@ -3174,6 +3154,9 @@ function resolveTurnBulletHit(roomState, bullet, result) {
     result.hitType = 'crystal';
     result.targetCamp = targetCamp;
     result.damage += appliedDamage;
+    if (targetCamp !== bullet.camp && appliedDamage > 0) {
+      result.enemyTankHitCount = Math.max(0, Math.floor(Number(result.enemyTankHitCount) || 0)) + 1;
+    }
     consumeTurnBulletDamage(bullet, appliedDamage);
     return bullet.remainingDamage <= 0;
   }
@@ -3226,6 +3209,7 @@ function simulateTurnBulletResults(roomState, player) {
       destroyedCells: [],
       missileEvents: [],
       expGain: 0,
+      enemyTankHitCount: 0,
     };
   }
   const bulletQueue = [];
@@ -3243,6 +3227,7 @@ function simulateTurnBulletResults(roomState, player) {
     destroyedCells: [],
     missileEvents: [],
     expGain: 0,
+    enemyTankHitCount: 0,
   };
   const dt = 1 / 20;
   const bulletSpeed = Math.max(1, Number(TURN_CONFIG.bulletSpeed) || 620);
@@ -3275,21 +3260,12 @@ function handleTurnBulletResult(ws, msg) {
     return;
   }
   const simulated = simulateTurnBulletResults(roomState, player);
-  let awardedExp = 0;
   let awardedCoins = 0;
   let destroyedEnemyCellCount = 0;
   if (simulated.hitType === 'crystal' && simulated.targetCamp && roomState.crystals[simulated.targetCamp]) {
     roomState.crystals[simulated.targetCamp].hp = Math.max(0, roomState.crystals[simulated.targetCamp].hp - simulated.damage);
-    awardedExp += TURN_CONFIG.crystalHitExp;
   }
   if (simulated.obstacleHits.length > 0) {
-    const missileDestroyedIds = new Set(
-      simulated.obstacleHits
-        .filter((hit) => hit && hit.source === 'missile_silo')
-        .map((hit) => hit.obstacleId),
-    );
-    const destroyedObstacleIds = new Set(simulated.destroyedIds.filter((id) => !missileDestroyedIds.has(id)));
-    awardedExp += destroyedObstacleIds.size * TURN_CONFIG.obstacleHitExp;
     if (Array.isArray(simulated.destroyedCells)) {
       for (let i = 0; i < simulated.destroyedCells.length; i++) {
         const cell = simulated.destroyedCells[i];
@@ -3299,14 +3275,15 @@ function handleTurnBulletResult(ws, msg) {
       }
     }
   }
-  const derived = refreshTurnDerivedUpgradeState(player);
-  const expMultiplier = Math.max(1, Number(derived && derived.expDropMultiplier) || 1);
-  const coinMultiplier = Math.max(1, Number(derived && derived.coinDropMultiplier) || 1);
-  awardedExp = Math.floor(awardedExp * expMultiplier);
   const coinEconomy = TURN_CONFIG.coinEconomy || {};
-  const coinPerCell = Math.max(0, Number(coinEconomy.perDestroyedEnemyCell) || 0);
-  awardedCoins = Math.floor(destroyedEnemyCellCount * coinPerCell * coinMultiplier);
-  player.exp += awardedExp;
+  const coinPerCell = Math.max(0, Number(
+    coinEconomy.destroyedEnemyResourceCoinReward != null
+      ? coinEconomy.destroyedEnemyResourceCoinReward
+      : coinEconomy.perDestroyedEnemyCell,
+  ) || 0);
+  const coinPerEnemyTankHit = Math.max(0, Number(coinEconomy.enemyTankHitCoinReward) || 0);
+  const hitEnemyTankCount = Math.max(0, Math.floor(Number(simulated.enemyTankHitCount) || 0));
+  awardedCoins = Math.floor(destroyedEnemyCellCount * coinPerCell + hitEnemyTankCount * coinPerEnemyTankHit);
   if (awardedCoins > 0) {
     player.coins = Math.max(0, Math.floor(Number(player.coins) || 0)) + awardedCoins;
   }
@@ -3321,8 +3298,9 @@ function handleTurnBulletResult(ws, msg) {
       targetId: simulated.targetId,
       targetCamp: simulated.targetCamp,
       damage: simulated.damage,
-      expGain: awardedExp,
+      expGain: 0,
       coinGain: awardedCoins,
+      enemyTankHitCount: hitEnemyTankCount,
       destroyedIds: simulated.destroyedIds,
       missileEvents: simulated.missileEvents,
     },
@@ -3373,37 +3351,7 @@ function refreshTurnCampResourceHpByUpgrade(roomState, camp, targetResourceType,
 }
 
 function handleTurnUpgradePick(ws, msg) {
-  const roomState = getTurnRoom(ws);
-  const player = getTurnPlayer(roomState, ws);
-  if (!roomState || !player || roomState.phase !== TURN_PHASE.UPGRADE) {
-    sendTurnError(ws, '当前不能选择升级', 'invalidPhase');
-    return;
-  }
-  if (player.exp < player.expNeed) {
-    sendTurnError(ws, '经验不足', 'notEnoughExp');
-    return;
-  }
-  const payload = getTurnActionPayload(msg);
-  const optionId = mapUpgradeIdFromClient(String(payload.optionId || msg.optionId || ''));
-  const options = getTurnUpgradeOptions(roomState, player);
-  const option = options.find((item) => item.id === optionId);
-  if (!option) {
-    sendTurnError(ws, '升级选项无效', 'invalidUpgrade');
-    return;
-  }
-  player.exp -= player.expNeed;
-  player.expNeed += 20;
-  player.pendingUpgradeOptions = [];
-  applyTurnUpgrade(player, option);
-  broadcastTurn(roomState, {
-    type: 'upgradePick',
-    roomId: roomState.id,
-    camp: player.camp,
-    playerId: player.playerId,
-    option: { ...option, currentStacks: getTurnUpgradeStack(player, option.id) },
-  });
-  broadcastTurnSnapshot(roomState);
-  sendTurnUpgradeOptions(roomState, player);
+  sendTurnError(ws, '升级模块已关闭', 'upgradeDisabled');
 }
 
 function handleTurnDisconnect(ws) {

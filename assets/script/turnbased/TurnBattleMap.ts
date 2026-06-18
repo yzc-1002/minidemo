@@ -668,9 +668,7 @@ export default class TurnBattleMap extends cc.Component {
             return "(" + perCell + "HP/格)";
         }
         if (slotType === "exp") {
-            let maxHp = this.getObstacleMaxHp(slotType, safeCount);
-            let settlement = buildTurnSettlementBondSnapshot({ exp: safeCount }, null, this._config);
-            return "结算+" + settlement.expGain + "EXP x" + settlement.expMultiplier;
+            return "";
         }
         if (slotType === "energy") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
@@ -761,7 +759,7 @@ export default class TurnBattleMap extends cc.Component {
         let settlement = this._settlementSnapshots[camp] || this.buildSettlementSnapshotForCamp(camp);
         return [
             camp + " 攻击: 子弹" + attack.extraShotsFromBulletBlock + " 攻击+" + attack.bonusDamageFromAttackBlock,
-            "结算: EXP+" + settlement.expGain + " 回血" + settlement.finalHeal + " 禁疗" + settlement.blockedHeal,
+            "结算: 回血" + settlement.finalHeal + " 禁疗" + settlement.blockedHeal,
         ].join("  |  ");
     }
 
@@ -782,12 +780,9 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     grantRoundBaseExp() {
-        this.addExp("A", this._config.baseExpPerRound, cc.v2(-160, 0));
-        this.addExp("B", this._config.baseExpPerRound, cc.v2(160, 0));
     }
 
     settleRound() {
-        this.grantRoundBaseExp();
         this.applyRoundSettlementForCamp("A");
         this.applyRoundSettlementForCamp("B");
         this.emitStatsChanged();
@@ -1363,13 +1358,9 @@ export default class TurnBattleMap extends cc.Component {
             if (obstacle.hp > 0) {
                 return bullet.remainingDamage <= 0;
             }
-            let expGain = this.getObstacleDestroyExp(obstacle);
             obstacle.node.destroy();
             this._obstacles.splice(i, 1);
             this.clearObstaclePlacedSlot(obstacle);
-            if (expGain > 0) {
-                this.addExp(bullet.camp, expGain, this.getNodePosition(bullet.node));
-            }
             if (this._serverMode && bullet.camp === "A" && this._pendingBulletResult.destroyedIds.indexOf(obstacle.id) < 0) {
                 this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
                 this._pendingBulletResult.destroyedIds.push(obstacle.id);
@@ -1378,7 +1369,7 @@ export default class TurnBattleMap extends cc.Component {
                 camp: bullet.camp,
                 obstacleCamp: obstacle.camp,
                 obstacleId: obstacle.id,
-                expGain: expGain,
+                expGain: 0,
             });
             this.getCampStats(obstacle.camp).energyTowers = this.countPlacedEnergyTowers(obstacle.camp);
             this.emitStatsChanged();
@@ -1423,13 +1414,9 @@ export default class TurnBattleMap extends cc.Component {
         if (obstacle.hp > 0) {
             return;
         }
-        let expGain = this.getObstacleDestroyExp(obstacle);
         obstacle.node.destroy();
         this._obstacles.splice(obstacleIndex, 1);
         this.clearObstaclePlacedSlot(obstacle);
-        if (expGain > 0) {
-            this.addExp(bullet.camp, expGain, this.getNodePosition(bullet.node));
-        }
         if (this._serverMode && bullet.camp === "A" && this._pendingBulletResult.destroyedIds.indexOf(obstacle.id) < 0) {
             this._pendingBulletResult.hitType = this._pendingBulletResult.hitType || "obstacle";
             this._pendingBulletResult.destroyedIds.push(obstacle.id);
@@ -1438,7 +1425,7 @@ export default class TurnBattleMap extends cc.Component {
             camp: bullet.camp,
             obstacleCamp: obstacle.camp,
             obstacleId: obstacle.id,
-            expGain: expGain,
+            expGain: 0,
         });
         this.getCampStats(obstacle.camp).energyTowers = this.countPlacedEnergyTowers(obstacle.camp);
         this.emitStatsChanged();
@@ -1518,7 +1505,13 @@ export default class TurnBattleMap extends cc.Component {
         this.consumeBulletDamage(bullet, appliedDamage);
         this.refreshCrystalView(targetCamp);
         this.showFloatText("-" + appliedDamage, this.getNodePosition(crystal.node).add(cc.v2(0, 44)), cc.Color.RED);
-        this.addExp(bullet.camp, this._config.crystalHitExp, this.getNodePosition(crystal.node).add(cc.v2(0, 76)));
+        if (!this._serverMode && targetCamp !== bullet.camp && appliedDamage > 0) {
+            let economy = this._config.coinEconomy || {} as any;
+            let coinGain = Math.max(0, Math.floor(Number(economy.enemyTankHitCoinReward) || 0));
+            if (coinGain > 0) {
+                this.addCoins(bullet.camp, coinGain, this.getNodePosition(crystal.node).add(cc.v2(0, 76)));
+            }
+        }
         this.emitStatsChanged();
         if (this._serverMode && bullet.camp === "A") {
             this._pendingBulletResult.hitType = "crystal";
@@ -1530,7 +1523,7 @@ export default class TurnBattleMap extends cc.Component {
             targetCamp: targetCamp,
             damage: appliedDamage,
             hp: crystal.hp,
-            expGain: this._config.crystalHitExp,
+            expGain: 0,
         });
 
         if (crystal.hp <= 0) {
@@ -1632,6 +1625,9 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private createAssistZone(_camp: TurnCamp, type: TurnAssistZoneType, position: cc.Vec2, forcedId?: string, forcedRadius?: number, extra?: any) {
+        if (type === "black_hole") {
+            return;
+        }
         let zoneId = forcedId || String(this._nextAssistZoneId++);
         let typeConfig = getTurnAssistZoneTypeConfig(type, this._config);
         let radius = Math.max(1, Number(forcedRadius) || Number(typeConfig.minRadius) || 1);
@@ -2324,7 +2320,7 @@ export default class TurnBattleMap extends cc.Component {
             spreadExtraSplit: stats.derivedUpgrades.spreadExtraSplit,
             damageBoostTempAttack: stats.derivedUpgrades.damageBoostTempAttack,
             blackHoleStrengthMultiplier: stats.derivedUpgrades.blackHoleStrengthMultiplier,
-        }, this._config);
+        }, this._config, this._roundIndex);
     }
 
     private buildSettlementSnapshotForCamp(camp: TurnCamp): TurnSettlementBondSnapshot {
@@ -2511,9 +2507,6 @@ export default class TurnBattleMap extends cc.Component {
     private applyRoundSettlementForCamp(camp: TurnCamp) {
         let settlement = this.buildSettlementSnapshotForCamp(camp);
         this._settlementSnapshots[camp] = settlement;
-        if (settlement.expGain > 0) {
-            this.addExp(camp, settlement.expGain, cc.v2(camp === "A" ? -120 : 120, camp === "A" ? -70 : 70));
-        }
         if (settlement.totalHeal <= 0) {
             return;
         }
@@ -2540,12 +2533,16 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private addExp(camp: TurnCamp, amount: number, position: cc.Vec2) {
-        let stats = this.getCampStats(camp);
-        stats.exp += amount;
-        if (this._serverMode && camp === "A") {
-            this._pendingBulletResult.expGain += amount;
+    }
+
+    private addCoins(camp: TurnCamp, amount: number, position: cc.Vec2) {
+        let coinGain = Math.max(0, Math.floor(Number(amount) || 0));
+        if (coinGain <= 0) {
+            return;
         }
-        this.showFloatText("+" + amount + " EXP", position, cc.Color.YELLOW);
+        let stats = this.getCampStats(camp);
+        stats.coins = Math.max(0, Math.floor(Number(stats.coins) || 0)) + coinGain;
+        this.showFloatText("+" + coinGain + " 金币", position, new cc.Color(255, 218, 96, 255));
         this.emitStatsChanged();
     }
 
@@ -2574,18 +2571,8 @@ export default class TurnBattleMap extends cc.Component {
                 continue;
             }
             if (zone.type === "black_hole") {
-                let zoneConfig = getTurnAssistZoneTypeConfig(zone.type, this._config);
-                let ratio = 1 - distance / zone.radius;
-                let strength = Math.max(0, Number(zoneConfig.blackHoleStrength) || 0) * Math.max(1, Number(bullet.blackHoleStrengthMultiplier) || 1);
-                let curvePower = Math.max(0.1, Number(zoneConfig.blackHoleCurvePower) || 1);
-                let maxOffsetPerTick = Math.max(0, Number(zoneConfig.blackHoleMaxOffsetPerTick) || 0);
-                let curvedRatio = Math.pow(Math.max(0, ratio), curvePower);
-                let offsetStep = strength * curvedRatio * dt;
-                if (maxOffsetPerTick > 0) {
-                    offsetStep = Math.min(offsetStep, maxOffsetPerTick);
-                }
-                bullet.dir = bullet.dir.add(offset.normalize().mul(offsetStep)).normalize();
-                bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
+                // 黑洞区域已从回合制联网玩法中关闭，保留分支仅兼容旧快照。
+                continue;
             }
             else if (zone.type === "damage_boost") {
                 nextDamageBoostZoneIds.push(zone.id);
@@ -2855,10 +2842,14 @@ export default class TurnBattleMap extends cc.Component {
             if (!zone) {
                 continue;
             }
+            let zoneType = (zone.zoneType || zone.type || "spread") as TurnAssistZoneType;
+            if (zoneType === "black_hole") {
+                continue;
+            }
             let id = String(zone.id);
             this.createAssistZone(
                 "A",
-                (zone.zoneType || zone.type || "black_hole") as TurnAssistZoneType,
+                zoneType,
                 cc.v2(Number(zone.x) || 0, Number(zone.y) || 0),
                 id,
                 Number(zone.radius) || 0,
@@ -3594,7 +3585,7 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private getObstacleDestroyExp(obstacle: TurnObstacleState): number {
-        return this._config.obstacleHitExp;
+        return 0;
     }
 
     private clearObstaclePlacedSlot(obstacle: TurnObstacleState) {
@@ -4055,8 +4046,18 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private pickRandomAssistZoneType(): TurnAssistZoneType {
-        let candidates: TurnAssistZoneType[] = ["black_hole", "spread", "damage_boost"];
-        return candidates[Math.floor(Math.random() * candidates.length)] || "black_hole";
+        let configured = this._config.assistZones && Array.isArray((this._config.assistZones as any).enabledTypes)
+            ? (this._config.assistZones as any).enabledTypes
+            : ["spread", "damage_boost"];
+        let typeConfigs = this._config.assistZones && this._config.assistZones.types ? this._config.assistZones.types : null;
+        let candidates: TurnAssistZoneType[] = [];
+        for (let i = 0; i < configured.length; i++) {
+            let type = String(configured[i] || "") as TurnAssistZoneType;
+            if (type && type !== "black_hole" && typeConfigs && typeConfigs[type] && candidates.indexOf(type) < 0) {
+                candidates.push(type);
+            }
+        }
+        return candidates[Math.floor(Math.random() * candidates.length)] || "spread";
     }
 
     private randomAssistZoneRadius(type: TurnAssistZoneType): number {

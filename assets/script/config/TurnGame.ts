@@ -64,6 +64,7 @@ export interface TurnAssistZoneSpawnRuleConfig {
 
 export interface TurnAssistZoneConfig {
     spawnRule: TurnAssistZoneSpawnRuleConfig;
+    enabledTypes: TurnAssistZoneType[];
     maxPlacementRetries: number;
     allowOverlap: boolean;
     types: {
@@ -150,6 +151,8 @@ export interface TurnCoinEconomyConfig {
     baseRoundReward: number;
     slotCost: number;
     refreshCost: number;
+    destroyedEnemyResourceCoinReward: number;
+    enemyTankHitCoinReward: number;
     perDestroyedEnemyCell: number;
     perCoinBlockSettlement: number;
 }
@@ -259,6 +262,8 @@ export interface TurnGameConfig {
     baseBulletCount: number;
     bulletDamage: number;
     baseBulletBounce: number;
+    roundBulletBounceGrowth: number;
+    maxRoundBulletBounce: number;
     baseFireInterval: number;
     bulletBlockExtraShotInterval: number;
     bulletMaxLifeSeconds: number;
@@ -325,10 +330,10 @@ export interface TurnGameConfig {
 export const TURN_GAME_CONFIG: TurnGameConfig = {
     crystalHp: 100,
     buildSeconds: 15,
-    attackSeconds: 20,
+    attackSeconds: 25,
     waitBulletSeconds: 0,
     settleSeconds: 1,
-    upgradeSeconds: 6,
+    upgradeSeconds: 0,
     attackRounds: 1,
     initialRoundResourceTotal: 3,
     roundResourceGrowth: 1,
@@ -336,13 +341,15 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     slotCountPerRound: 3,
     slotMinResource: 1,
     slotMaxResource: 4,
-    baseExpPerRound: 10,
-    obstacleHitExp: 8,
-    crystalHitExp: 25,
-    levelUpExp: 60,
+    baseExpPerRound: 0,
+    obstacleHitExp: 0,
+    crystalHitExp: 0,
+    levelUpExp: 0,
     baseBulletCount: 1,
     bulletDamage: 10,
     baseBulletBounce: 0,
+    roundBulletBounceGrowth: 1,
+    maxRoundBulletBounce: 4,
     baseFireInterval: 0,
     bulletBlockExtraShotInterval: 0.5,
     bulletMaxLifeSeconds: 30,
@@ -357,6 +364,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
             maxSimultaneous: 3,
         },
         maxPlacementRetries: 24,
+        enabledTypes: ["spread", "damage_boost"],
         allowOverlap: false,
         types: {
             black_hole: {
@@ -432,6 +440,8 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         baseRoundReward: 10,
         slotCost: 10,
         refreshCost: 5,
+        destroyedEnemyResourceCoinReward: 1,
+        enemyTankHitCoinReward: 1,
         perDestroyedEnemyCell: 1,
         perCoinBlockSettlement: 1,
     },
@@ -513,13 +523,12 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         },
     },
     obstacleSlotMaxResources: 4,
-    expWallDestroyExp: 50,
+    expWallDestroyExp: 0,
     energyWallRoundHeal: 10,
     bloodBlockHealPerStack: 1,
     obstacleSlots: [
         { type: "normal", name: "普通方块" },
         { type: "mirror", name: "反弹块" },
-        { type: "exp", name: "经验墙" },
         { type: "energy", name: "能量墙" },
         { type: "bleed", name: "滴血块" },
         { type: "bullet", name: "子弹块" },
@@ -542,24 +551,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         A: cc.rect(-320, -480, 640, 224),
         B: cc.rect(-320, 256, 640, 224),
     },
-    upgradePool: [
-        { id: "bullet_bounce_add", name: "反弹 +1", desc: "子弹可以额外反弹一次", maxStacks: 5, effect: { type: "bullet_bounce", stackMode: "add", value: 1 } },
-        { id: "first_bounce_damage_x2", name: "首弹反弹增伤", desc: "第一次反弹后，子弹剩余伤害 x2", maxStacks: 1, effect: { type: "first_bounce_damage", stackMode: "multiply", value: 2 } },
-        { id: "round_resource_add", name: "回合资源 +1", desc: "后续每回合可生成的总资源数 +1", maxStacks: 9, effect: { type: "round_resource", stackMode: "add", value: 1 } },
-        { id: "normal_hp_add", name: "普通方块 HP +10", desc: "普通方块资源血量 +10，最大 50", maxStacks: 4, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "normal", maxValue: 50 } },
-        { id: "exp_hp_add", name: "经验块 HP +10", desc: "经验块血量 +10，最大 30", maxStacks: 2, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "exp", maxValue: 30 } },
-        { id: "energy_hp_add", name: "能量块 HP +10", desc: "能量块血量 +10，最大 30", maxStacks: 2, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "energy", maxValue: 30 } },
-        { id: "bullet_hp_add", name: "子弹块 HP +10", desc: "子弹块血量 +10，最大 30", maxStacks: 2, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "bullet", maxValue: 30 } },
-        { id: "bleed_hp_add", name: "滴血块 HP +10", desc: "滴血块血量 +10，最大 30", maxStacks: 2, effect: { type: "resource_hp", stackMode: "add", value: 10, targetResourceType: "bleed", maxValue: 30 } },
-        { id: "spread_extra_split_add", name: "扩散分裂 +1", desc: "穿过扩散区域后额外分裂数 +1", maxStacks: null, effect: { type: "spread_extra_split", stackMode: "add", value: 1 } },
-        { id: "damage_boost_temp_attack_add", name: "增伤区域攻击 +10", desc: "穿过伤害翻倍区域后临时额外获得 +10 攻击", maxStacks: null, effect: { type: "damage_boost_temp_attack", stackMode: "add", value: 10 } },
-        { id: "black_hole_strength_pct", name: "黑洞引力 +10%", desc: "黑洞区域引力效果 +10%", maxStacks: null, effect: { type: "black_hole_strength", stackMode: "add", value: 0.1 } },
-        { id: "missile_explosion_radius_add", name: "导弹爆炸 +1格", desc: "导弹爆炸范围向四周增加 1 个地图格子", maxStacks: null, effect: { type: "missile_explosion_radius", stackMode: "add", value: 1 } },
-        { id: "missile_damage_add", name: "导弹伤害 +10", desc: "导弹命中伤害 +10", maxStacks: null, effect: { type: "missile_damage", stackMode: "add", value: 10 } },
-        { id: "missile_main_cannon_chance_add", name: "导弹命中主炮 +10%", desc: "导弹优先命中敌方主炮概率 +10%", maxStacks: 10, effect: { type: "missile_main_cannon_chance", stackMode: "add", value: 0.1, maxValue: 1 } },
-        { id: "coin_drop_pct", name: "攻击金币掉落 +10%", desc: "攻击掉敌方资源获得金币 +10%", maxStacks: null, effect: { type: "coin_drop", stackMode: "add", value: 0.1 } },
-        { id: "exp_drop_pct", name: "攻击经验掉落 +10%", desc: "攻击掉敌方资源获得经验 +10%", maxStacks: null, effect: { type: "exp_drop", stackMode: "add", value: 0.1 } },
-    ],
+    upgradePool: [],
 };
 
 export function getRoundObstacleGain(roundIndex: number, config?: TurnGameConfig): number {
@@ -653,6 +645,15 @@ export function getTurnBulletExtraShots(count: number, config?: TurnGameConfig):
     return Math.floor(safeCount / blocksPerExtraShot);
 }
 
+export function getTurnRoundBulletBounce(roundIndex: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let round = Math.max(1, Math.floor(Number(roundIndex) || 1));
+    let baseBounce = Math.max(0, Math.floor(Number(cfg.baseBulletBounce) || 0));
+    let growth = Math.max(0, Math.floor(Number(cfg.roundBulletBounceGrowth) || 0));
+    let maxBounce = Math.max(baseBounce, Math.floor(Number(cfg.maxRoundBulletBounce) || baseBounce));
+    return Math.min(maxBounce, baseBounce + Math.max(0, round - 1) * growth);
+}
+
 export function getTurnBondValue(type: Exclude<TurnBondResourceType, "bullet">, count: number, config?: TurnGameConfig): number {
     let cfg = config || TURN_GAME_CONFIG;
     let safeCount = Math.max(0, Math.floor(Number(count) || 0));
@@ -665,7 +666,7 @@ export function getTurnBondValue(type: Exclude<TurnBondResourceType, "bullet">, 
     return safeCount * amountPerBlock * multiplier;
 }
 
-export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, upgrades?: Partial<TurnBondUpgradeSnapshot>, config?: TurnGameConfig): TurnAttackBondSnapshot {
+export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, upgrades?: Partial<TurnBondUpgradeSnapshot>, config?: TurnGameConfig, roundIndex?: number): TurnAttackBondSnapshot {
     let cfg = config || TURN_GAME_CONFIG;
     let safeCounts = createTurnBondCountMap(counts);
     let extraShotsFromUpgrade = Math.max(0, Math.floor(Number(upgrades && upgrades.extraShots) || 0));
@@ -690,7 +691,7 @@ export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, u
         bonusDamageFromUpgrade: bonusDamageFromUpgrade,
         bonusDamageFromAttackBlock: bonusDamageFromAttackBlock,
         bulletDamage: Math.max(1, Number(cfg.bulletDamage) || 1) + bonusDamageFromUpgrade + bonusDamageFromAttackBlock,
-        bulletBounce: Math.max(0, Math.floor(Number(cfg.baseBulletBounce) || 0)) + bulletBounce,
+        bulletBounce: getTurnRoundBulletBounce(roundIndex, cfg) + bulletBounce,
         firstBounceDamageMultiplier: firstBounceDamageMultiplier,
         spreadExtraSplit: spreadExtraSplit,
         damageBoostTempAttack: damageBoostTempAttack,

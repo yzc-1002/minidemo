@@ -86,6 +86,7 @@ export default class TurnHud extends cc.Component {
         // this.crystalLabel = this.createLabel("A HP: 100  |  B HP: 100", 20, -200, 190);
         this.expLabel = this.createLabel("A: 0  |  B: 0", 20, -200, 0);
         this.expLabel.node.color = new cc.Color(0, 0, 0, 0);
+        this.expLabel.node.active = false;
         // this.inventoryLabel = this.createLabel("掩体 A: 3  |  B: 3", 20, -210, 130);
         // this.zoneLabel = this.createLabel("场上辅助区: 0", 20, -210, 100);
         // this.bondLabel = this.createLabel("A 羁绊: -", 18, -190, 70);
@@ -194,7 +195,8 @@ export default class TurnHud extends cc.Component {
             return;
         }
 
-        this.expLabel.string = "A Lv." + aLevel + ": " + aExp + "/" + aExpNeed + "  |  B Lv." + bLevel + ": " + bExp + "/" + bExpNeed;
+        this.expLabel.string = "";
+        this.expLabel.node.active = false;
     }
 
     refreshZones(aZoneCount: number, bZoneCount: number) {
@@ -664,7 +666,7 @@ export default class TurnHud extends cc.Component {
 
     private setExpLabelVisible(visible: boolean) {
         if (this.expLabel) {
-            this.expLabel.node.active = !!visible;
+            this.expLabel.node.active = false;
         }
     }
 

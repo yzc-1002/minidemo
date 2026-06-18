@@ -145,7 +145,8 @@ export class TurnStateMachine {
                 }
                 break;
             case "settle":
-                this.enterPhase("upgrade");
+                this._roundIndex += 1;
+                this.enterPhase("build");
                 break;
             case "upgrade":
                 this._roundIndex += 1;
@@ -171,9 +172,6 @@ export class TurnStateMachine {
         }
         else if (phase === "settle") {
             this._phaseDuration = this._config.settleSeconds;
-        }
-        else if (phase === "upgrade") {
-            this._phaseDuration = this._config.upgradeSeconds;
         }
         else {
             this._phaseDuration = 0;

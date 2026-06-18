@@ -289,13 +289,8 @@ export default class TurnGameMain extends cc.Component {
 
         this._hud.refreshState(snapshot);
         this.refreshHudNumbers();
-        if (snapshot.phase === "upgrade") {
-            this.beginUpgradePhase();
-        }
-        else {
-            this._hud.hideUpgradeOptions();
-            this._upgradeHintToken += 1;
-        }
+        this._hud.hideUpgradeOptions();
+        this._upgradeHintToken += 1;
         this.emitTurnEvent("turn-phase-changed", snapshot);
         cc.log("[TurnGame] phase", snapshot.phase, "round", snapshot.roundIndex, "camp", snapshot.actionCamp);
     }
@@ -371,34 +366,11 @@ export default class TurnGameMain extends cc.Component {
     }
 
     private beginUpgradePhase() {
-        if (this.useServer) {
-            if (this._upgradeOptions.length <= 0) {
-                this._hud.hideUpgradeOptions();
-                if (this._waitingForOwnUpgradeResult) {
-                    this._hud.showUpgradeHint("已提交升级，等待服务端确认...");
-                }
-                else {
-                    this._hud.showUpgradeHint("当前经验不足升级...");
-                }
-                return;
-            }
-            this._currentUpgradeCamp = "A";
-            this._waitingForOwnUpgradeResult = false;
-            this._hud.hideUpgradeHint();
-            this._hud.showUpgradeOptions("A", this._upgradeOptions, this.onUpgradePicked.bind(this));
-            return;
-        }
-        this._upgradeHintToken += 1;
-        this._battleMap.grantRoundBaseExp();
-        this.refreshHudNumbers();
-        this._upgradeQueue = [];
-        if (this._battleMap.canCampUpgrade("A")) {
-            this._upgradeQueue.push("A");
-        }
-        if (this._battleMap.canCampUpgrade("B")) {
-            this._upgradeQueue.push("B");
-        }
-        this.showNextUpgrade();
+        this._upgradeOptions = [];
+        this._waitingForOwnUpgradeResult = false;
+        this._currentUpgradeCamp = null;
+        this._hud.hideUpgradeOptions();
+        this._hud.hideUpgradeHint();
     }
 
     private showNextUpgrade() {
@@ -538,24 +510,16 @@ export default class TurnGameMain extends cc.Component {
             return;
         }
         if (msg.type === "upgradeOptions") {
-            this._upgradeOptions = Array.isArray(msg.options) ? msg.options : [];
+            this._upgradeOptions = [];
             this._waitingForOwnUpgradeResult = false;
-            if (this._serverSnapshot && this._serverSnapshot.phase === "upgrade") {
-                this.beginUpgradePhase();
-            }
+            this._hud.hideUpgradeOptions();
             return;
         }
         if (msg.type === "upgradePick") {
-            if ((msg.camp || "B") === "A") {
-                this._upgradeOptions = [];
-                this._waitingForOwnUpgradeResult = false;
-                this._currentUpgradeCamp = null;
-                this._hud.hideUpgradeOptions();
-                this._hud.showUpgradeHint("升级已确认");
-            }
-            else if (this._serverSnapshot && this._serverSnapshot.phase === "upgrade" && this._upgradeOptions.length <= 0) {
-                this._hud.showUpgradeHint("对手已确认升级");
-            }
+            this._upgradeOptions = [];
+            this._waitingForOwnUpgradeResult = false;
+            this._currentUpgradeCamp = null;
+            this._hud.hideUpgradeOptions();
             return;
         }
         if (msg.type === "turnGameEnded") {
@@ -591,15 +555,10 @@ export default class TurnGameMain extends cc.Component {
         this._battleMap.setTurnSnapshot(snapshot);
         this._hud.refreshState(snapshot);
         this.refreshMoveButtonsEnabled();
-        if (snapshot.phase !== "upgrade") {
-            this._upgradeOptions = [];
-            this._waitingForOwnUpgradeResult = false;
-            this._currentUpgradeCamp = null;
-            this._hud.hideUpgradeOptions();
-        }
-        if (snapshot.phase === "upgrade") {
-            this.beginUpgradePhase();
-        }
+        this._upgradeOptions = [];
+        this._waitingForOwnUpgradeResult = false;
+        this._currentUpgradeCamp = null;
+        this._hud.hideUpgradeOptions();
     }
 
     private applyServerTimer(msg: any) {
