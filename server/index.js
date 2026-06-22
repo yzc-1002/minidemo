@@ -471,7 +471,7 @@ const TURN_CONFIG = {
   baseFireInterval: 0,
   bulletBlockExtraShotInterval: 0.5,
   bulletMaxLifeSeconds: 30,
-  bulletSimStepSeconds: 1 / 20,
+  bulletSimStepSeconds: 1 / 60,
   maxBulletResultDamage: 80,
   resourceMerge: {
     maxLevel: 5,
@@ -2434,6 +2434,9 @@ function broadcastTurnAttackShot(roomState) {
       aimX: attack.pose.aimX,
       aimY: attack.pose.aimY,
       shotIndex,
+      bulletBlockCount: attack.snapshot.bulletBlockCount,
+      attackBlockCount: attack.snapshot.attackBlockCount,
+      attackMultiplier: attack.snapshot.attackMultiplier,
       totalShots: attack.snapshot.totalShots,
       extraShotsFromUpgrade: attack.snapshot.extraShotsFromUpgrade,
       extraShotsFromBulletBlock: attack.snapshot.extraShotsFromBulletBlock,
@@ -2441,6 +2444,10 @@ function broadcastTurnAttackShot(roomState) {
       bonusDamageFromAttackBlock: attack.snapshot.bonusDamageFromAttackBlock,
       bulletDamage: attack.snapshot.bulletDamage,
       bulletBounce: attack.snapshot.bulletBounce,
+      firstBounceDamageMultiplier: attack.snapshot.firstBounceDamageMultiplier,
+      spreadExtraSplit: attack.snapshot.spreadExtraSplit,
+      damageBoostTempAttack: attack.snapshot.damageBoostTempAttack,
+      blackHoleStrengthMultiplier: attack.snapshot.blackHoleStrengthMultiplier,
       shotsLeft: attack.snapshot.shotsLeft,
     },
   });
@@ -3629,7 +3636,7 @@ function simulateTurnBulletResults(roomState, player) {
     expGain: 0,
     enemyTankHitCount: 0,
   };
-  const dt = Math.max(0.001, Number(TURN_CONFIG.bulletSimStepSeconds) || (1 / 20));
+  const dt = Math.max(0.001, Number(TURN_CONFIG.bulletSimStepSeconds) || (1 / 60));
   const bulletSpeed = Math.max(1, Number(TURN_CONFIG.bulletSpeed) || 620);
   const maxTicks = Math.ceil((Math.max(0.1, Number(TURN_CONFIG.bulletMaxLifeSeconds) || 30) + 1) / dt);
   while (bulletQueue.length > 0) {

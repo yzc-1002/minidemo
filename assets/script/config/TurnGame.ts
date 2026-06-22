@@ -402,7 +402,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     baseFireInterval: 0,
     bulletBlockExtraShotInterval: 0.5,
     bulletMaxLifeSeconds: 30,
-    bulletSimStepSeconds: 1 / 20,
+    bulletSimStepSeconds: 1 / 60,
     bulletSpeed: 620,
     bulletRadius: 10,
     obstacleRadius: 26,

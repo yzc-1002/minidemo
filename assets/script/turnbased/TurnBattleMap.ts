@@ -419,8 +419,11 @@ export default class TurnBattleMap extends cc.Component {
 
     update(dt: number) {
         this.updateKeyboardTankMove(dt);
+        if (this._serverMode) {
+            this.stepBulletSimulation(dt);
+            return;
+        }
         this.updateBullets(dt);
-        // this.stepBulletSimulation(dt);
     }
 
     private stepBulletSimulation(frameDt: number) {
@@ -429,7 +432,7 @@ export default class TurnBattleMap extends cc.Component {
             return;
         }
         // 固定步长推进，确保客户端弹道与服务端权威模拟一致（避免反弹/分裂时轨迹发散）
-        let step = Math.max(0.001, Number(this._config.bulletSimStepSeconds) || (1 / 20));
+        let step = Math.max(0.001, Number(this._config.bulletSimStepSeconds) || (1 / 60));
         let maxStepsPerFrame = 10;
         this._bulletSimAccumulator += Math.max(0, Number(frameDt) || 0);
         let steps = 0;
