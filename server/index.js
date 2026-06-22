@@ -381,7 +381,7 @@ function getTurnTankHitCamp(roomState, bullet) {
   const tankRadius = 38;
   for (let i = 0; i < TURN_CAMPS.length; i++) {
     const camp = TURN_CAMPS[i];
-    if (!bullet.hasBounced && camp === bullet.camp) {
+    if (camp === bullet.camp && !canTurnBulletDamageOwnCamp(bullet)) {
       continue;
     }
     const pose = roomState.tankPoses[camp];
@@ -390,6 +390,56 @@ function getTurnTankHitCamp(roomState, bullet) {
     }
   }
   return '';
+}
+
+function canTurnBulletDamageOwnCamp(bullet) {
+  return !!(bullet && bullet.hasBounced && bullet.passedOwnBuildArea);
+}
+
+function updateTurnBulletOwnBuildAreaPass(bullet, previousPosition = null) {
+  if (!bullet || bullet.passedOwnBuildArea) {
+    return;
+  }
+  bullet.passedOwnBuildArea = isPointInTurnBuildArea(bullet.camp, bullet.position)
+    || (!!previousPosition && doesTurnSegmentCrossBuildArea(bullet.camp, previousPosition, bullet.position));
+}
+
+function doesTurnSegmentCrossBuildArea(camp, from, to) {
+  const area = TURN_MAP_LAYOUT.buildAreas[camp === 'B' ? 'B' : 'A'];
+  if (!area || !from || !to) {
+    return false;
+  }
+  if (isPointInTurnBuildArea(camp, from) || isPointInTurnBuildArea(camp, to)) {
+    return true;
+  }
+  const left = area.minX;
+  const right = area.maxX;
+  const bottom = area.minY;
+  const top = area.maxY;
+  return turnSegmentsIntersect(from, to, { x: left, y: bottom }, { x: right, y: bottom })
+    || turnSegmentsIntersect(from, to, { x: right, y: bottom }, { x: right, y: top })
+    || turnSegmentsIntersect(from, to, { x: right, y: top }, { x: left, y: top })
+    || turnSegmentsIntersect(from, to, { x: left, y: top }, { x: left, y: bottom });
+}
+
+function turnSegmentsIntersect(a, b, c, d) {
+  const abx = (Number(b && b.x) || 0) - (Number(a && a.x) || 0);
+  const aby = (Number(b && b.y) || 0) - (Number(a && a.y) || 0);
+  const acx = (Number(c && c.x) || 0) - (Number(a && a.x) || 0);
+  const acy = (Number(c && c.y) || 0) - (Number(a && a.y) || 0);
+  const adx = (Number(d && d.x) || 0) - (Number(a && a.x) || 0);
+  const ady = (Number(d && d.y) || 0) - (Number(a && a.y) || 0);
+  const cdx = (Number(d && d.x) || 0) - (Number(c && c.x) || 0);
+  const cdy = (Number(d && d.y) || 0) - (Number(c && c.y) || 0);
+  const cax = (Number(a && a.x) || 0) - (Number(c && c.x) || 0);
+  const cay = (Number(a && a.y) || 0) - (Number(c && c.y) || 0);
+  const cbx = (Number(b && b.x) || 0) - (Number(c && c.x) || 0);
+  const cby = (Number(b && b.y) || 0) - (Number(c && c.y) || 0);
+  const cross1 = abx * acy - aby * acx;
+  const cross2 = abx * ady - aby * adx;
+  const cross3 = cdx * cay - cdy * cax;
+  const cross4 = cdx * cby - cdy * cbx;
+  return cross1 * cross2 <= 0 && cross3 * cross4 <= 0;
 }
 
 const TURN_CONFIG = {
@@ -421,6 +471,7 @@ const TURN_CONFIG = {
   baseFireInterval: 0,
   bulletBlockExtraShotInterval: 0.5,
   bulletMaxLifeSeconds: 30,
+  bulletSimStepSeconds: 1 / 20,
   maxBulletResultDamage: 80,
   resourceMerge: {
     maxLevel: 5,
@@ -556,12 +607,58 @@ const TURN_CONFIG = {
   bondRules: {
     maxLevel: 5,
     valueThresholds: [4, 10, 18, 28, 40],
+    displayOrder: ['mirror', 'bullet', 'attack', 'coin', 'energy', 'bleed', 'missile_silo'],
+    display: {
+      mirror: {
+        name: '反弹块羁绊',
+        shortLabel: '削',
+        description: '反弹块会削弱命中的弹体伤害。',
+        levelDescriptions: ['弹体伤害降低70%', '弹体伤害降低60%', '弹体伤害降低50%', '弹体伤害降低40%', '弹体伤害降低30%'],
+      },
+      bullet: {
+        name: '子弹块羁绊',
+        shortLabel: '连',
+        description: '子弹块会让攻击额外连射。',
+        levelDescriptions: ['额外发射1发', '额外发射2发', '额外发射3发', '额外发射4发', '额外发射5发'],
+      },
+      attack: {
+        name: '攻击块羁绊',
+        shortLabel: '火',
+        description: '攻击块会提升子弹伤害。',
+        levelDescriptions: ['攻击价值x1.2', '攻击价值x1.5', '攻击价值x1.8', '攻击价值x2', '攻击价值x3'],
+      },
+      coin: {
+        name: '金币块羁绊',
+        shortLabel: '财',
+        description: '金币块会提升摧毁敌方资源获得的金币。',
+        levelDescriptions: ['金币奖励x1.2', '金币奖励x1.5', '金币奖励x1.8', '金币奖励x2', '金币奖励x3'],
+      },
+      energy: {
+        name: '能量块羁绊',
+        shortLabel: '愈',
+        description: '能量块会在回合结算时回复基地生命。',
+        levelDescriptions: ['治疗价值x1.2', '治疗价值x1.5', '治疗价值x1.8', '治疗价值x2', '治疗价值x3'],
+      },
+      bleed: {
+        name: '滴血块羁绊',
+        shortLabel: '枯',
+        description: '滴血块会削减敌方回合结算治疗。',
+        levelDescriptions: ['禁疗价值x1.2', '禁疗价值x1.5', '禁疗价值x1.8', '禁疗价值x2', '禁疗价值x3'],
+      },
+      missile_silo: {
+        name: '导弹块羁绊',
+        shortLabel: '锁',
+        description: '导弹块会提高导弹锁定敌方坦克的概率。',
+        levelDescriptions: ['锁定坦克概率+10%', '锁定坦克概率+30%', '锁定坦克概率+50%', '锁定坦克概率+75%', '锁定坦克概率+100%'],
+      },
+    },
     bullet: {
       blocksPerExtraShot: 4,
     },
     missile_silo: {
       amountPerBlock: 0,
       tiers: [],
+      attributeMultipliers: [1.2, 1.5, 1.8, 2, 3],
       hitTankChanceBonuses: [0.1, 0.3, 0.5, 0.75, 1],
     },
     mirror: {
@@ -602,6 +699,7 @@ const TURN_CONFIG = {
     coin: {
       amountPerBlock: 1,
       tiers: [],
+      attributeMultipliers: [1.2, 1.5, 1.8, 2, 3],
       bountyMultipliers: [1.2, 1.5, 1.8, 2, 3],
     },
     bleed: {
@@ -1533,8 +1631,8 @@ function getTurnCoinSettlementGain(roomState, camp) {
   const economy = TURN_CONFIG.coinEconomy || {};
   const perBlock = Math.max(0, Number(economy.perCoinBlockSettlement) || 0);
   const properties = buildTurnBondPropertiesFromRoom(roomState, camp);
-  const baseCoin = Number.isFinite(properties.coin) ? Math.max(0, Number(properties.coin) || 0) : safeCount * perBlock;
-  return Math.floor(baseCoin);
+  const baseCoin = Number.isFinite(properties.coin) && Number(properties.coin) > 0 ? Math.max(0, Number(properties.coin) || 0) : safeCount * perBlock;
+  return getTurnBondValue('coin', safeCount, baseCoin);
 }
 
 function getTurnPlayerEconomy(player) {
@@ -1558,6 +1656,22 @@ function getTurnBondMultiplier(type, count) {
   const tiers = rule && Array.isArray(rule.tiers) ? rule.tiers : [];
   const tier = tiers[Math.min(level - 1, tiers.length - 1)];
   return Math.max(0, Number(tier && tier.multiplier) || 0);
+}
+
+function getTurnBondAttributeMultiplier(type, count) {
+  const level = getTurnBondLevel(count);
+  if (level <= 0) {
+    return 1;
+  }
+  const rule = TURN_CONFIG.bondRules && TURN_CONFIG.bondRules[type];
+  let values = rule && Array.isArray(rule.attributeMultipliers) ? rule.attributeMultipliers : [];
+  if (values.length <= 0 && rule && Array.isArray(rule.tiers)) {
+    values = rule.tiers.map((tier) => Number(tier && tier.multiplier) || 0);
+  }
+  if (values.length <= 0 && rule && Array.isArray(rule.bountyMultipliers)) {
+    values = rule.bountyMultipliers;
+  }
+  return Math.max(1, Number(values[Math.min(level - 1, Math.max(0, values.length - 1))]) || 1);
 }
 
 function getTurnBondLevel(count) {
@@ -1616,9 +1730,22 @@ function getTurnBondValue(type, count, propertyValue) {
   }
   const rule = TURN_CONFIG.bondRules && TURN_CONFIG.bondRules[type];
   const amountPerBlock = Math.max(0, Number(rule && rule.amountPerBlock) || 0);
-  const multiplier = getTurnBondMultiplier(type, safeCount);
-  const baseValue = Number.isFinite(propertyValue) ? Math.max(0, Number(propertyValue) || 0) : safeCount * amountPerBlock;
-  return baseValue * multiplier;
+  const effectiveMultiplier = getTurnBondAttributeMultiplier(type, safeCount);
+  const baseValue = Number.isFinite(propertyValue) && Number(propertyValue) > 0 ? Math.max(0, Number(propertyValue) || 0) : safeCount * amountPerBlock;
+  return Math.floor(baseValue * effectiveMultiplier);
+}
+
+function getTurnAttackBondBulletDamage(baseDamage, upgradeDamage, attackCount, propertyValue) {
+  const safeCount = Math.max(0, Math.floor(Number(attackCount) || 0));
+  const base = Math.max(1, Math.floor(Number(baseDamage) || 1)) + Math.max(0, Math.floor(Number(upgradeDamage) || 0));
+  const rule = TURN_CONFIG.bondRules && TURN_CONFIG.bondRules.attack;
+  const amountPerBlock = Math.max(0, Number(rule && rule.amountPerBlock) || 0);
+  const attackProperty = Number.isFinite(propertyValue) && Number(propertyValue) > 0 ? Math.max(0, Number(propertyValue) || 0) : safeCount * amountPerBlock;
+  if (attackProperty <= 0) {
+    return base;
+  }
+  const effectiveMultiplier = getTurnBondAttributeMultiplier('attack', safeCount);
+  return Math.max(base + attackProperty, Math.floor((base + attackProperty) * effectiveMultiplier));
 }
 
 function getTurnRoundBulletBounce(roundIndex) {
@@ -1637,7 +1764,8 @@ function buildTurnAttackSnapshotFromCounts(counts, player, roundIndex, propertie
   const extraShotsFromBulletBlock = getTurnBulletBondExtraShots(safeCounts.bullet);
   const bonusDamageFromUpgrade = Math.max(0, Number(player.upgrades.damageAdd) || 0);
   const attackMultiplier = getTurnBondMultiplier('attack', safeCounts.attack);
-  const bonusDamageFromAttackBlock = getTurnBondValue('attack', safeCounts.attack, properties && properties.attack);
+  const bulletDamage = getTurnAttackBondBulletDamage(baseBulletDamage, bonusDamageFromUpgrade, safeCounts.attack, properties && properties.attack);
+  const bonusDamageFromAttackBlock = Math.max(0, bulletDamage - baseBulletDamage - bonusDamageFromUpgrade);
   const bulletBounce = Math.max(0, Number(derived.bulletBounceBonus) || 0);
   const baseBulletCount = Math.max(1, Math.floor(Number(TURN_CONFIG.baseBulletCount) || 1));
   const totalShots = Math.max(1, baseBulletCount + extraShotsFromUpgrade + extraShotsFromBulletBlock);
@@ -1650,7 +1778,7 @@ function buildTurnAttackSnapshotFromCounts(counts, player, roundIndex, propertie
     extraShotsFromBulletBlock,
     bonusDamageFromUpgrade,
     bonusDamageFromAttackBlock,
-    bulletDamage: Math.max(1, baseBulletDamage + bonusDamageFromUpgrade + bonusDamageFromAttackBlock),
+    bulletDamage,
     bulletBounce: getTurnRoundBulletBounce(roundIndex) + bulletBounce,
     firstBounceDamageMultiplier: Math.max(1, Number(derived.firstBounceDamageMultiplier) || 1),
     spreadExtraSplit: Math.max(0, Number(derived.spreadExtraSplit) || 0),
@@ -1687,6 +1815,7 @@ function createTurnServerBullet(roomState, camp, pose, attackSnapshot) {
     damageBoostLevel: 1,
     remainingBounce: Math.max(0, Number(attackSnapshot && attackSnapshot.bulletBounce) || 0),
     hasBounced: false,
+    passedOwnBuildArea: isPointInTurnBuildArea(camp, start),
     currentSpreadZoneIds: [],
     currentDamageBoostZoneIds: [],
     damageBoostAppliedZoneIds: [],
@@ -2054,6 +2183,7 @@ function cloneTurnBulletState(bullet) {
     damageBoostLevel: Math.max(1, Math.floor(Number(bullet && bullet.damageBoostLevel) || 1)),
     remainingBounce: Math.max(0, Math.floor(Number(bullet && bullet.remainingBounce) || 0)),
     hasBounced: !!(bullet && bullet.hasBounced),
+    passedOwnBuildArea: !!(bullet && bullet.passedOwnBuildArea),
     currentSpreadZoneIds: Array.isArray(bullet && bullet.currentSpreadZoneIds) ? bullet.currentSpreadZoneIds.slice() : [],
     currentDamageBoostZoneIds: Array.isArray(bullet && bullet.currentDamageBoostZoneIds) ? bullet.currentDamageBoostZoneIds.slice() : [],
     damageBoostAppliedZoneIds: Array.isArray(bullet && bullet.damageBoostAppliedZoneIds) ? bullet.damageBoostAppliedZoneIds.slice() : [],
@@ -3232,9 +3362,10 @@ function applyTurnMissileExplosion(roomState, triggerObstacle, triggerCellIndex,
   const config = TURN_CONFIG.missileSilo || {};
   const levels = normalizeObstacleCellLevels(triggerObstacle);
   const triggerLevel = clamp(Math.floor(Number(levels[triggerCellIndex]) || Number(triggerObstacle.resourceLevel) || 1), 1, getResourceMergeMaxLevel());
-  const damage = Math.max(1, Math.floor(getResourcePropertyValue('missile_silo', triggerLevel) || Number(config.directDamage) || 10));
-  const radiusCells = Math.max(0, Math.floor(Number(config.explosionRadiusCells) || 1));
   const missileCounts = buildTurnBondCountsFromRoom(roomState, triggerObstacle.camp);
+  const missileBaseDamage = Math.max(1, Math.floor(getResourcePropertyValue('missile_silo', triggerLevel) || Number(config.directDamage) || 10));
+  const damage = Math.max(1, getTurnBondValue('missile_silo', missileCounts.missile_silo, missileBaseDamage));
+  const radiusCells = Math.max(0, Math.floor(Number(config.explosionRadiusCells) || 1));
   const mainCannonChance = clamp((Number(config.mainCannonChance) || 0) + getTurnMissileSiloHitTankChanceBonus(missileCounts.missile_silo), 0, 1);
   const target = pickTurnMissileTarget(roomState, targetCamp, mainCannonChance);
   const grid = TURN_CONFIG.obstacleGrid || 32;
@@ -3321,6 +3452,18 @@ function reflectTurnBulletDir(bullet, rect) {
     nextDir.y *= -1;
   }
   bullet.dir = normalizeVec(nextDir, bullet.dir);
+  if (dx !== 0 || dy !== 0) {
+    let nx = dx;
+    let ny = dy;
+    const len = Math.sqrt(nx * nx + ny * ny);
+    if (len > 0) {
+      const pushDist = (Number(TURN_CONFIG.bulletRadius) || 10) + 1;
+      nx /= len;
+      ny /= len;
+      bullet.position.x = nearestX + nx * pushDist;
+      bullet.position.y = nearestY + ny * pushDist;
+    }
+  }
 }
 
 function getTurnBuildCampAt(point) {
@@ -3336,7 +3479,7 @@ function getTurnBuildCampAt(point) {
 }
 
 function shouldTurnBulletIgnoreOwnResource(bullet, obstacle) {
-  return !!(bullet && obstacle && obstacle.camp === bullet.camp && !bullet.hasBounced);
+  return !!(bullet && obstacle && obstacle.camp === bullet.camp && !canTurnBulletDamageOwnCamp(bullet));
 }
 
 function resolveTurnBulletHit(roomState, bullet, result) {
@@ -3486,7 +3629,7 @@ function simulateTurnBulletResults(roomState, player) {
     expGain: 0,
     enemyTankHitCount: 0,
   };
-  const dt = 1 / 20;
+  const dt = Math.max(0.001, Number(TURN_CONFIG.bulletSimStepSeconds) || (1 / 20));
   const bulletSpeed = Math.max(1, Number(TURN_CONFIG.bulletSpeed) || 620);
   const maxTicks = Math.ceil((Math.max(0.1, Number(TURN_CONFIG.bulletMaxLifeSeconds) || 30) + 1) / dt);
   while (bulletQueue.length > 0) {
@@ -3497,7 +3640,9 @@ function simulateTurnBulletResults(roomState, player) {
         break;
       }
       applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue);
+      const previousPosition = { x: bullet.position.x, y: bullet.position.y };
       bullet.position = addVec(bullet.position, mulVec(bullet.dir, bulletSpeed * dt));
+      updateTurnBulletOwnBuildAreaPass(bullet, previousPosition);
       if (!keepTurnBulletInMap(bullet)) {
         break;
       }

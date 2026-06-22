@@ -316,11 +316,12 @@ export default class TurnGameMain extends cc.Component {
         );
         let activeZones = this._battleMap.getActiveAssistZoneCount();
         this._hud.refreshZones(activeZones, activeZones);
-        this._hud.refreshBonds(
-            this._battleMap.getBondHudText("A"),
-            this._battleMap.getBondHudText("B"),
-        );
         let localCamp = this.getLocalCamp();
+        let enemyCamp: TurnCamp = localCamp === "A" ? "B" : "A";
+        this._hud.refreshBondItems(
+            this._battleMap.getBondHudItems(localCamp),
+            this._battleMap.getBondHudItems(enemyCamp),
+        );
         let coins = this._battleMap.getCampCoins(localCamp);
         let slotCost = this.useServer ? this._battleMap.getCampSlotCost(localCamp) : 0;
         this._hud.refreshCoins(

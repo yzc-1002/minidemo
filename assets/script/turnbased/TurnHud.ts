@@ -1,7 +1,28 @@
-import { TurnCamp, TurnObstacleResourceType, TurnUpgradeConfig, TurnUpgradeId } from "../config/TurnGame";
+import { getTurnObstacleShortLabel, TurnBondHudItem, TurnCamp, TurnObstacleResourceType, TurnUpgradeConfig, TurnUpgradeId } from "../config/TurnGame";
 import { TurnStateSnapshot } from "./TurnStateMachine";
 
 const { ccclass, property } = cc._decorator;
+
+interface TurnBondListView {
+    root: cc.Node;
+    toggleButton: cc.Node;
+    toggleLabel: cc.Label;
+    viewport: cc.Node;
+    content: cc.Node;
+    titleLabel: cc.Label;
+    emptyLabel: cc.Label;
+    itemNodes: cc.Node[];
+    items: TurnBondHudItem[];
+    side: "left" | "right";
+    width: number;
+    height: number;
+    scrollY: number;
+    maxScrollY: number;
+    isDragging: boolean;
+    lastTouchY: number;
+    dragDistance: number;
+    visible: boolean;
+}
 
 @ccclass
 export default class TurnHud extends cc.Component {
@@ -72,6 +93,10 @@ export default class TurnHud extends cc.Component {
     private _moveLeftBtn: cc.Node = null;
     private _moveRightBtn: cc.Node = null;
     private _moveButtonsEnabled = false;
+    private _ownBondList: TurnBondListView = null;
+    private _enemyBondList: TurnBondListView = null;
+    private _bondTooltipRoot: cc.Node = null;
+    private _lastBondPhase = "";
 
     initHud() {
         this.node.removeAllChildren();
@@ -114,10 +139,16 @@ export default class TurnHud extends cc.Component {
         this._moveButtonsRoot = null;
         this._moveLeftBtn = null;
         this._moveRightBtn = null;
+        this._ownBondList = null;
+        this._enemyBondList = null;
+        this._bondTooltipRoot = null;
+        this._lastBondPhase = "";
         this.ensureBuildPalette();
         this.refreshBuildPalette("A", [], false);
         this.ensureMoveButtons();
         this.setMoveButtonsEnabled(false);
+        this.ensureBondLists();
+        this.refreshBondItems([], []);
     }
 
     refreshState(snapshot: TurnStateSnapshot) {
@@ -127,6 +158,7 @@ export default class TurnHud extends cc.Component {
 
         this.setBuildPaletteAttackMode(snapshot.phase === "attack");
         this.setPhaseHudVisible(snapshot.phase !== "attack" && snapshot.phase !== "waitBullet" && snapshot.phase !== "settle");
+        this.refreshBondListPhaseVisibility(snapshot.phase);
         let phaseText = this.getPhaseText(snapshot);
         if (this._lastPhase !== phaseText) {
             this._lastPhase = phaseText;
@@ -212,6 +244,12 @@ export default class TurnHud extends cc.Component {
             return;
         }
         this.bondLabel.string = aText + "\n" + bText;
+    }
+
+    refreshBondItems(ownItems: TurnBondHudItem[], enemyItems: TurnBondHudItem[]) {
+        this.ensureBondLists();
+        this.refreshBondList(this._ownBondList, Array.isArray(ownItems) ? ownItems : [], "我方");
+        this.refreshBondList(this._enemyBondList, Array.isArray(enemyItems) ? enemyItems : [], "对方");
     }
 
     refreshCoins(aCoins: number, bCoins: number) {
@@ -340,6 +378,375 @@ export default class TurnHud extends cc.Component {
         this.ensureMoveButtons();
         this._moveButtonsEnabled = !!enabled;
         this.refreshMoveButtonsView();
+    }
+
+    private ensureBondLists() {
+        if (!this._ownBondList) {
+            this._ownBondList = this.createBondListView("left", -292, 0, "我方");
+        }
+        if (!this._enemyBondList) {
+            this._enemyBondList = this.createBondListView("right", 292, 0, "对方");
+        }
+    }
+
+    private createBondListView(side: "left" | "right", x: number, y: number, title: string): TurnBondListView {
+        let width = 96;
+        let height = 390;
+        let root = new cc.Node("TurnBondList" + side);
+        root.parent = this.node;
+        root.setPosition(x, y);
+        root.setContentSize(width, height);
+        root.zIndex = 18;
+
+        let bg = root.addComponent(cc.Graphics);
+        bg.fillColor = new cc.Color(16, 22, 32, 118);
+        bg.roundRect(-width / 2, -height / 2, width, height, 14);
+        bg.fill();
+        bg.strokeColor = new cc.Color(210, 220, 240, 70);
+        bg.lineWidth = 1;
+        bg.roundRect(-width / 2, -height / 2, width, height, 14);
+        bg.stroke();
+
+        let titleLabel = this.createChildLabel(root, title, 15, 0, height / 2 - 18);
+        titleLabel.node.color = new cc.Color(220, 230, 245, 230);
+
+        let toggleButton = this.createBondListToggleButton(side, x, y + height / 2 + 24);
+        let toggleLabel = toggleButton.getComponentInChildren(cc.Label);
+
+        let viewport = new cc.Node("BondViewport");
+        viewport.parent = root;
+        viewport.setPosition(0, -12);
+        viewport.setContentSize(width, height - 48);
+        let mask = viewport.addComponent(cc.Mask);
+        mask.type = cc.Mask.Type.RECT;
+
+        let content = new cc.Node("BondContent");
+        content.parent = viewport;
+        content.setContentSize(width, height - 48);
+
+        let emptyLabel = this.createChildLabel(viewport, "暂无", 14, 0, 0);
+        emptyLabel.node.color = new cc.Color(185, 195, 210, 210);
+
+        let view: TurnBondListView = {
+            root: root,
+            viewport: viewport,
+            content: content,
+            titleLabel: titleLabel,
+            emptyLabel: emptyLabel,
+            itemNodes: [],
+            items: [],
+            side: side,
+            width: width,
+            height: height - 48,
+            scrollY: 0,
+            maxScrollY: 0,
+            isDragging: false,
+            lastTouchY: 0,
+            dragDistance: 0,
+            visible: true,
+            toggleButton: toggleButton,
+            toggleLabel: toggleLabel,
+        };
+
+        viewport.on(cc.Node.EventType.TOUCH_START, (event: cc.Event.EventTouch) => {
+            event.stopPropagation();
+            view.isDragging = true;
+            view.dragDistance = 0;
+            view.lastTouchY = event.getLocation().y;
+        }, this);
+        viewport.on(cc.Node.EventType.TOUCH_MOVE, (event: cc.Event.EventTouch) => {
+            event.stopPropagation();
+            if (!view.isDragging) {
+                return;
+            }
+            let y = event.getLocation().y;
+            let delta = view.lastTouchY - y;
+            view.lastTouchY = y;
+            view.dragDistance += Math.abs(delta);
+            view.scrollY = Math.max(0, Math.min(view.maxScrollY, view.scrollY + delta));
+            this.updateBondListContentPosition(view);
+        }, this);
+        viewport.on(cc.Node.EventType.TOUCH_END, (event: cc.Event.EventTouch) => {
+            event.stopPropagation();
+            view.isDragging = false;
+        }, this);
+        viewport.on(cc.Node.EventType.TOUCH_CANCEL, (event: cc.Event.EventTouch) => {
+            event.stopPropagation();
+            view.isDragging = false;
+        }, this);
+
+        this.refreshBondListToggleView(view);
+        return view;
+    }
+
+    private createBondListToggleButton(side: "left" | "right", x: number, y: number): cc.Node {
+        let node = new cc.Node("TurnBondToggle" + side);
+        node.parent = this.node;
+        node.setPosition(x, y);
+        node.setContentSize(82, 30);
+        node.zIndex = 30;
+
+        let graphics = node.addComponent(cc.Graphics);
+        graphics.fillColor = new cc.Color(24, 30, 42, 225);
+        graphics.roundRect(-41, -15, 82, 30, 9);
+        graphics.fill();
+        graphics.strokeColor = new cc.Color(220, 230, 245, 150);
+        graphics.lineWidth = 1.5;
+        graphics.roundRect(-41, -15, 82, 30, 9);
+        graphics.stroke();
+
+        let label = this.createChildLabel(node, "", 14, 0, 0);
+        label.node.color = new cc.Color(245, 248, 255, 255);
+        node.on(cc.Node.EventType.TOUCH_END, (event: cc.Event.EventTouch) => {
+            event.stopPropagation();
+            this.toggleBondList(side);
+        }, this);
+        return node;
+    }
+
+    private toggleBondList(side: "left" | "right") {
+        let view = side === "left" ? this._ownBondList : this._enemyBondList;
+        if (!view) {
+            return;
+        }
+        this.setBondListVisible(view, !view.visible);
+    }
+
+    private setBondListVisible(view: TurnBondListView, visible: boolean) {
+        if (!view || !view.root) {
+            return;
+        }
+        view.visible = !!visible;
+        view.root.active = view.visible;
+        if (!view.visible) {
+            this.hideBondTooltip();
+        }
+        this.refreshBondListToggleView(view);
+    }
+
+    private refreshBondListToggleView(view: TurnBondListView) {
+        if (!view || !view.toggleLabel || !view.toggleButton) {
+            return;
+        }
+        let title = view.side === "left" ? "我方" : "对方";
+        view.toggleLabel.string = title + (view.visible ? "隐藏" : "显示");
+        view.toggleButton.opacity = view.visible ? 255 : 210;
+    }
+
+    private refreshBondListPhaseVisibility(phase: string) {
+        this.ensureBondLists();
+        if (this._lastBondPhase === phase) {
+            return;
+        }
+        this._lastBondPhase = phase;
+        if (phase === "build") {
+            this.setBondListVisible(this._ownBondList, true);
+            this.setBondListVisible(this._enemyBondList, true);
+            return;
+        }
+        if (phase === "attack" || phase === "waitBullet") {
+            this.setBondListVisible(this._ownBondList, false);
+            this.setBondListVisible(this._enemyBondList, false);
+        }
+    }
+
+    private refreshBondList(view: TurnBondListView, items: TurnBondHudItem[], title: string) {
+        if (!view || !view.content) {
+            return;
+        }
+        this.hideBondTooltip();
+        view.items = items.slice();
+        view.titleLabel.string = title;
+        this.clearBondListItems(view);
+        let itemGap = 70;
+        let topY = view.height / 2 - 42;
+        for (let i = 0; i < view.items.length; i++) {
+            let item = view.items[i];
+            let node = this.createBondItemNode(view, item, i);
+            node.parent = view.content;
+            node.setPosition(0, topY - i * itemGap);
+            view.itemNodes.push(node);
+        }
+        let contentHeight = view.items.length > 0 ? view.items.length * itemGap + 14 : 0;
+        view.maxScrollY = Math.max(0, contentHeight - view.height);
+        view.scrollY = Math.max(0, Math.min(view.maxScrollY, view.scrollY));
+        view.emptyLabel.node.active = view.items.length <= 0;
+        this.updateBondListContentPosition(view);
+    }
+
+    private clearBondListItems(view: TurnBondListView) {
+        for (let i = 0; i < view.itemNodes.length; i++) {
+            if (view.itemNodes[i]) {
+                view.itemNodes[i].destroy();
+            }
+        }
+        view.itemNodes = [];
+    }
+
+    private updateBondListContentPosition(view: TurnBondListView) {
+        if (!view || !view.content) {
+            return;
+        }
+        view.content.setPosition(0, -view.scrollY);
+    }
+
+    private createBondItemNode(view: TurnBondListView, item: TurnBondHudItem, index: number): cc.Node {
+        let node = new cc.Node("BondItem" + item.type + index);
+        node.setContentSize(72, 64);
+        let color = this.getBondItemColor(item.type);
+        this.drawBondItemRing(node, item, color);
+        let shortLabel = this.createChildLabel(node, item.shortLabel || getTurnObstacleShortLabel(item.type), 24, 0, 4);
+        shortLabel.node.color = new cc.Color(245, 248, 255, 255);
+        shortLabel.node.zIndex = 3;
+        let valueLabel = this.createChildLabel(node, item.value + "/" + Math.max(0, item.nextValue), 12, 20, -24);
+        valueLabel.node.color = new cc.Color(245, 248, 255, 245);
+        valueLabel.node.zIndex = 3;
+
+        node.on(cc.Node.EventType.MOUSE_ENTER, (event: cc.Event.EventMouse) => {
+            event.stopPropagation();
+            this.showBondTooltip(item, view.side, node);
+        }, this);
+        node.on(cc.Node.EventType.MOUSE_LEAVE, (event: cc.Event.EventMouse) => {
+            event.stopPropagation();
+            this.hideBondTooltip();
+        }, this);
+        return node;
+    }
+
+    private drawBondItemRing(node: cc.Node, item: TurnBondHudItem, color: cc.Color) {
+        let graphics = node.getComponent(cc.Graphics);
+        if (!graphics) {
+            graphics = node.addComponent(cc.Graphics);
+        }
+        graphics.clear();
+        graphics.fillColor = new cc.Color(30, 36, 48, 224);
+        graphics.circle(0, 0, 28);
+        graphics.fill();
+        let maxLevel = Math.max(1, Math.floor(Number(item.maxLevel) || 5));
+        let level = Math.max(0, Math.min(maxLevel, Math.floor(Number(item.level) || 0)));
+        let segmentAngle = Math.PI * 2 / maxLevel;
+        for (let i = 0; i < maxLevel; i++) {
+            let start = -Math.PI / 2 + i * segmentAngle + 0.08;
+            let end = -Math.PI / 2 + (i + 1) * segmentAngle - 0.08;
+            graphics.strokeColor = i < level ? color : new cc.Color(110, 120, 138, 170);
+            graphics.lineWidth = 6;
+            this.drawArcStroke(graphics, 0, 0, 27, start, end);
+        }
+        graphics.strokeColor = new cc.Color(235, 240, 250, 150);
+        graphics.lineWidth = 1;
+        graphics.circle(0, 0, 18);
+        graphics.stroke();
+    }
+
+    private drawArcStroke(graphics: cc.Graphics, centerX: number, centerY: number, radius: number, start: number, end: number) {
+        let steps = 10;
+        for (let i = 0; i <= steps; i++) {
+            let angle = start + (end - start) * i / steps;
+            let x = centerX + Math.cos(angle) * radius;
+            let y = centerY + Math.sin(angle) * radius;
+            if (i === 0) {
+                graphics.moveTo(x, y);
+            }
+            else {
+                graphics.lineTo(x, y);
+            }
+        }
+        graphics.stroke();
+    }
+
+    private showBondTooltip(item: TurnBondHudItem, side: "left" | "right", sourceNode: cc.Node) {
+        this.hideBondTooltip();
+        let panelWidth = 286;
+        let panelHeight = 270;
+        this._bondTooltipRoot = new cc.Node("TurnBondTooltip");
+        this._bondTooltipRoot.parent = this.node;
+        this._bondTooltipRoot.zIndex = 90;
+        let worldPos = sourceNode.convertToWorldSpaceAR(cc.v2(0, 0));
+        let localPos = this.node.convertToNodeSpaceAR(worldPos);
+        let panelX = side === "left" ? localPos.x + 176 : localPos.x - 176;
+        let panelY = Math.max(-190, Math.min(190, localPos.y));
+        this._bondTooltipRoot.setPosition(panelX, panelY);
+        this._bondTooltipRoot.setContentSize(panelWidth, panelHeight);
+
+        let bg = this._bondTooltipRoot.addComponent(cc.Graphics);
+        bg.fillColor = new cc.Color(18, 24, 36, 238);
+        bg.roundRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 12);
+        bg.fill();
+        bg.strokeColor = new cc.Color(230, 236, 248, 170);
+        bg.lineWidth = 2;
+        bg.roundRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 12);
+        bg.stroke();
+
+        let title = this.createChildLabel(this._bondTooltipRoot, item.name + "（" + item.shortLabel + "）", 18, 0, panelHeight / 2 - 26);
+        title.node.color = this.getBondItemColor(item.type);
+        this.createTooltipBody(this._bondTooltipRoot, this.buildBondTooltipBodyText(item), 14, 0, panelHeight / 2 - 54, panelWidth - 32, panelHeight - 72);
+
+        this._bondTooltipRoot.on(cc.Node.EventType.TOUCH_END, (event: cc.Event.EventTouch) => {
+            event.stopPropagation();
+        }, this);
+    }
+
+    private hideBondTooltip() {
+        if (this._bondTooltipRoot) {
+            this._bondTooltipRoot.destroy();
+            this._bondTooltipRoot = null;
+        }
+    }
+
+    private buildBondTooltipBodyText(item: TurnBondHudItem): string {
+        let lines: string[] = [];
+        lines.push(item.description || "暂无功能描述");
+        lines.push("当前等级：" + item.level + "/" + item.maxLevel + "，价值：" + item.value + "/" + item.nextValue);
+        lines.push("等级加成数值：");
+        let effects = item.effectDescriptions && item.effectDescriptions.length > 0 ? item.effectDescriptions : item.levelDescriptions;
+        let maxLevel = Math.max(1, Math.floor(Number(item.maxLevel) || 5));
+        for (let i = 0; i < maxLevel; i++) {
+            lines.push(effects && effects[i] ? effects[i] : ("Lv." + (i + 1) + " -"));
+        }
+        return lines.join("\n");
+    }
+
+    private createTooltipBody(parent: cc.Node, text: string, size: number, x: number, y: number, width: number, height: number): cc.Label {
+        let node = new cc.Node("TurnBondTooltipBody");
+        node.parent = parent;
+        node.setAnchorPoint(0.5, 1);
+        node.setPosition(x, y);
+        node.setContentSize(width, height);
+        node.color = new cc.Color(232, 236, 245, 255);
+        node.zIndex = 10;
+        let label = node.addComponent(cc.Label);
+        label.string = text;
+        label.fontSize = size;
+        label.lineHeight = size + 6;
+        label.horizontalAlign = cc.Label.HorizontalAlign.LEFT;
+        label.verticalAlign = cc.Label.VerticalAlign.TOP;
+        label.overflow = cc.Label.Overflow.NONE;
+        return label;
+    }
+
+    private getBondItemColor(type: TurnObstacleResourceType): cc.Color {
+        if (type === "mirror") {
+            return new cc.Color(180, 196, 236, 255);
+        }
+        if (type === "bullet") {
+            return new cc.Color(166, 140, 255, 255);
+        }
+        if (type === "attack") {
+            return new cc.Color(255, 146, 86, 255);
+        }
+        if (type === "coin") {
+            return new cc.Color(247, 205, 66, 255);
+        }
+        if (type === "energy") {
+            return new cc.Color(72, 168, 228, 255);
+        }
+        if (type === "bleed") {
+            return new cc.Color(224, 98, 98, 255);
+        }
+        if (type === "missile_silo") {
+            return new cc.Color(104, 132, 154, 255);
+        }
+        return new cc.Color(99, 156, 106, 255);
     }
 
     private ensureMoveButtons() {
@@ -735,7 +1142,7 @@ export default class TurnHud extends cc.Component {
             graphics.roundRect(x - width / 2, y - width / 2, width, width, 8);
             graphics.stroke();
 
-            this.drawSlotShape(graphics, slot, x, y, width - 8);
+            this.drawSlotShape(target, graphics, slot, x, y, width - 8);
 
             if (slot.slotId === this._selectedBuildSlotId) {
                 graphics.strokeColor = new cc.Color(255, 235, 120, 255);
@@ -748,6 +1155,7 @@ export default class TurnHud extends cc.Component {
     }
 
     private drawSlotShape(
+        target: cc.Node,
         graphics: cc.Graphics,
         slot: { type: TurnObstacleResourceType; placed: boolean; count: number; layout?: { x: number; y: number }[]; shapeKey?: string },
         centerX: number,
@@ -794,13 +1202,21 @@ export default class TurnHud extends cc.Component {
             graphics.lineWidth = 1.5;
             graphics.roundRect(cx, cy, cellSize, cellSize, Math.max(2, Math.floor(cellSize * 0.18)));
             graphics.stroke();
-            if (cellSize >= 16) {
-                this.drawSlotMark(graphics, slot.type, cx + cellSize / 2, cy + cellSize / 2);
-            }
+            this.createSlotTextMark(target, slot.type, cx + cellSize / 2, cy + cellSize / 2, cellSize);
         }
-        if (cellSize < 16) {
-            this.drawSlotMark(graphics, slot.type, centerX, centerY);
+    }
+
+    private createSlotTextMark(parent: cc.Node, type: TurnObstacleResourceType, x: number, y: number, cellSize: number) {
+        let text = getTurnObstacleShortLabel(type);
+        if (!text) {
+            return;
         }
+        let fontSize = Math.max(12, Math.min(20, Math.floor(cellSize * 0.62)));
+        let label = this.createChildLabel(parent, text, fontSize, x, y);
+        label.verticalAlign = cc.Label.VerticalAlign.CENTER;
+        label.node.color = new cc.Color(255, 255, 255, 245);
+        label.node.zIndex = 8;
+        this._buildSlotInfoNodes.push(label.node);
     }
 
     private getSlotLayoutCells(slot: { layout?: { x: number; y: number }[]; shapeKey?: string; count?: number }): { x: number; y: number }[] {
@@ -959,60 +1375,6 @@ export default class TurnHud extends cc.Component {
             return placed ? new cc.Color(168, 138, 56, 200) : new cc.Color(247, 205, 66, 255);
         }
         return placed ? new cc.Color(90, 104, 92, 200) : new cc.Color(99, 156, 106, 255);
-    }
-
-    private drawSlotMark(graphics: cc.Graphics, type: TurnObstacleResourceType, x: number, y: number) {
-        graphics.strokeColor = new cc.Color(250, 250, 250, 220);
-        graphics.lineWidth = 2;
-        if (type === "mirror") {
-            graphics.moveTo(x - 10, y - 10);
-            graphics.lineTo(x + 10, y + 10);
-        }
-        else if (type === "exp") {
-            graphics.moveTo(x - 7, y);
-            graphics.lineTo(x + 7, y);
-            graphics.moveTo(x, y - 7);
-            graphics.lineTo(x, y + 7);
-        }
-        else if (type === "energy") {
-            graphics.moveTo(x - 5, y + 8);
-            graphics.lineTo(x + 1, y + 1);
-            graphics.lineTo(x - 2, y + 1);
-            graphics.lineTo(x + 5, y - 8);
-        }
-        else if (type === "bleed") {
-            graphics.circle(x, y, 7);
-        }
-        else if (type === "bullet") {
-            graphics.circle(x, y, 5);
-            graphics.moveTo(x - 8, y);
-            graphics.lineTo(x + 8, y);
-        }
-        else if (type === "attack") {
-            graphics.moveTo(x - 7, y + 7);
-            graphics.lineTo(x + 7, y - 7);
-            graphics.moveTo(x - 7, y - 7);
-            graphics.lineTo(x + 7, y + 7);
-        }
-        else if (type === "missile_silo") {
-            graphics.rect(x - 7, y - 7, 14, 14);
-            graphics.moveTo(x, y + 9);
-            graphics.lineTo(x, y - 9);
-            graphics.moveTo(x - 5, y + 4);
-            graphics.lineTo(x, y + 9);
-            graphics.lineTo(x + 5, y + 4);
-        }
-        else if (type === "coin") {
-            graphics.circle(x, y, 7);
-            graphics.moveTo(x - 3, y - 4);
-            graphics.lineTo(x - 3, y + 4);
-            graphics.moveTo(x + 3, y - 4);
-            graphics.lineTo(x + 3, y + 4);
-        }
-        else {
-            graphics.rect(x - 8, y - 8, 16, 16);
-        }
-        graphics.stroke();
     }
 
     private isBuildPaletteAvailable(): boolean {

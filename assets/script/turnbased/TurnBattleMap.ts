@@ -5,12 +5,18 @@ import {
     getTurnResourceLevelHp,
     getTurnResourcePropertyValue,
     getTurnBondBountyMultiplier,
+    getTurnBondLevel,
+    getTurnBondNextValue,
+    getTurnAttackBondBulletDamage,
     getTurnMirrorDamageReductionRatio,
+    getTurnObstacleShortLabel,
     getTurnAssistZoneSpawnCount,
     getTurnAssistZoneTypeConfig,
     TurnAssistZoneType,
     TurnAttackBondSnapshot,
     TurnBondCountMap,
+    TurnBondHudItem,
+    TurnBondResourceType,
     TurnCamp,
     TurnDerivedUpgradeState,
     TurnGameConfig,
@@ -161,6 +167,7 @@ interface TurnBulletState {
     lifeLeft: number;
     bounceLeft: number;
     hasBounced: boolean;
+    passedOwnBuildArea: boolean;
     hasTriggeredSpread: boolean;
     currentSpreadZoneIds: string[];
     currentDamageBoostZoneIds: string[];
@@ -256,6 +263,8 @@ export default class TurnBattleMap extends cc.Component {
     private _nextAssistZoneId = 1;
     private _gameFinished = false;
     private _serverMode = false;
+    private _bulletSimAccumulator = 0;
+    private _waitingForServerBulletResult = false;
     private _pendingBulletResult = {
         hitType: "",
         targetCamp: "",
@@ -356,6 +365,7 @@ export default class TurnBattleMap extends cc.Component {
         this._lastSentTankPoseAt = 0;
         this._lastBulletHitSoundAt = 0;
         this._gameFinished = false;
+        this._waitingForServerBulletResult = false;
         this._pendingBulletResult = {
             hitType: "",
             targetCamp: "",
@@ -410,6 +420,33 @@ export default class TurnBattleMap extends cc.Component {
     update(dt: number) {
         this.updateKeyboardTankMove(dt);
         this.updateBullets(dt);
+        // this.stepBulletSimulation(dt);
+    }
+
+    private stepBulletSimulation(frameDt: number) {
+        if (this._bullets.length <= 0) {
+            this._bulletSimAccumulator = 0;
+            return;
+        }
+        // 固定步长推进，确保客户端弹道与服务端权威模拟一致（避免反弹/分裂时轨迹发散）
+        let step = Math.max(0.001, Number(this._config.bulletSimStepSeconds) || (1 / 20));
+        let maxStepsPerFrame = 10;
+        this._bulletSimAccumulator += Math.max(0, Number(frameDt) || 0);
+        let steps = 0;
+        while (this._bulletSimAccumulator >= step && steps < maxStepsPerFrame) {
+            this._bulletSimAccumulator -= step;
+            steps++;
+            this.updateBullets(step);
+            if (this._bullets.length <= 0) {
+                break;
+            }
+        }
+        if (steps >= maxStepsPerFrame) {
+            this._bulletSimAccumulator = 0;
+        }
+        if (this._bullets.length <= 0) {
+            this._bulletSimAccumulator = 0;
+        }
     }
 
     setServerMode(enabled: boolean) {
@@ -440,6 +477,7 @@ export default class TurnBattleMap extends cc.Component {
 
         if (snapshot.phase === "attack") {
             this._hasFiredInAction = false;
+            this._waitingForServerBulletResult = false;
             this._attackSnapshot = this._serverMode ? null : this.buildAttackSnapshotForCamp(this._actionCamp);
             this._shotsLeftInAction = this._attackSnapshot ? this._attackSnapshot.totalShots : (this._serverMode ? 1 : 0);
             if (this._serverMode && this._actionCamp === "A") {
@@ -452,10 +490,19 @@ export default class TurnBattleMap extends cc.Component {
                 B: this.buildSettlementSnapshotForCamp("B"),
             };
         }
-        else if (snapshot.phase === "waitBullet" && !this.hasActiveBullets()) {
-            this.scheduleOnce(this.emitBulletsCleared, 0);
+        else if (snapshot.phase === "waitBullet") {
+            if (this._serverMode) {
+                this._waitingForServerBulletResult = true;
+                if (!this.hasActiveBullets() && this.canControlCamp(this._actionCamp)) {
+                    this.scheduleOnce(this.emitBulletsCleared, 0);
+                }
+            }
+            else if (!this.hasActiveBullets()) {
+                this.scheduleOnce(this.emitBulletsCleared, 0);
+            }
         }
         else {
+            this._waitingForServerBulletResult = false;
             this._attackSnapshot = null;
             this._shotsLeftInAction = 0;
             if (snapshot.phase !== "settle") {
@@ -541,12 +588,17 @@ export default class TurnBattleMap extends cc.Component {
             };
         }
 
-        this.syncCrystalState("A", snapshot.crystals && snapshot.crystals.A);
-        this.syncCrystalState("B", snapshot.crystals && snapshot.crystals.B);
+        let deferCombatSnapshot = this.shouldDeferServerCombatSnapshot(snapshot);
+        if (!deferCombatSnapshot) {
+            this.syncCrystalState("A", snapshot.crystals && snapshot.crystals.A);
+            this.syncCrystalState("B", snapshot.crystals && snapshot.crystals.B);
+        }
         if (Array.isArray(snapshot.staticObstacles)) {
             this.applyServerStaticObstacleState(snapshot.staticObstacles);
         }
-        this.syncObstacleState(snapshot.obstacles || []);
+        if (!deferCombatSnapshot) {
+            this.syncObstacleState(snapshot.obstacles || []);
+        }
         this.syncAssistZoneState(snapshot.zones || []);
         this.syncTankPoseState(snapshot.tankPoses || {});
         this.emitStatsChanged();
@@ -581,6 +633,8 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     applyServerBulletResult(payload: any) {
+        this._waitingForServerBulletResult = false;
+        this.clearActiveBullets();
         let result = payload && payload.result;
         let missileEvents = result && Array.isArray(result.missileEvents) ? result.missileEvents : [];
         for (let i = 0; i < missileEvents.length; i++) {
@@ -645,6 +699,22 @@ export default class TurnBattleMap extends cc.Component {
 
     hasActiveBullets(): boolean {
         return this._bullets.length > 0;
+    }
+
+    private clearActiveBullets() {
+        for (let i = 0; i < this._bullets.length; i++) {
+            if (this._bullets[i] && this._bullets[i].node) {
+                this._bullets[i].node.destroy();
+            }
+        }
+        this._bullets = [];
+    }
+
+    private shouldDeferServerCombatSnapshot(snapshot: any): boolean {
+        return this._serverMode
+            && !!snapshot
+            && snapshot.phase === "waitBullet"
+            && this._waitingForServerBulletResult;
     }
 
     getObstacleInventory(camp: TurnCamp): number {
@@ -769,6 +839,145 @@ export default class TurnBattleMap extends cc.Component {
             camp + " 攻击: 子弹" + attack.extraShotsFromBulletBlock + " 攻击+" + attack.bonusDamageFromAttackBlock,
             "结算: 回血" + settlement.finalHeal + " 禁疗" + settlement.blockedHeal,
         ].join("  |  ");
+    }
+
+    getBondHudItems(camp: TurnCamp): TurnBondHudItem[] {
+        let counts = this.buildBondCountMap(camp);
+        let rules = this._config && this._config.bondRules;
+        let properties = this.buildBondPropertyMap(camp);
+        let fallbackOrder: TurnBondResourceType[] = ["mirror", "bullet", "attack", "coin", "energy", "bleed", "missile_silo"];
+        let order = rules && Array.isArray(rules.displayOrder) && rules.displayOrder.length > 0 ? rules.displayOrder : fallbackOrder;
+        let displayMap = rules && rules.display ? rules.display : {};
+        let maxLevel = Math.max(1, Math.floor(Number(rules && rules.maxLevel) || 5));
+        let result: TurnBondHudItem[] = [];
+        for (let i = 0; i < order.length; i++) {
+            let type = order[i];
+            let value = Math.max(0, Math.floor(Number(counts[type]) || 0));
+            if (value <= 0) {
+                continue;
+            }
+            let display = displayMap[type];
+            result.push({
+                type: type,
+                name: display && display.name ? display.name : this.getSlotDisplayName(type),
+                shortLabel: display && display.shortLabel ? display.shortLabel : getTurnObstacleShortLabel(type),
+                description: display && display.description ? display.description : "",
+                levelDescriptions: display && Array.isArray(display.levelDescriptions) ? display.levelDescriptions.slice() : [],
+                effectDescriptions: this.buildBondEffectDescriptions(type, value, properties[type], camp),
+                value: value,
+                level: getTurnBondLevel(value, this._config),
+                nextValue: getTurnBondNextValue(value, this._config),
+                maxLevel: maxLevel,
+            });
+        }
+        return result;
+    }
+
+    private buildBondEffectDescriptions(type: TurnBondResourceType, count: number, propertyValue: number, camp: TurnCamp): string[] {
+        let rules = this._config && this._config.bondRules;
+        let maxLevel = Math.max(1, Math.floor(Number(rules && rules.maxLevel) || 5));
+        let result: string[] = [];
+        for (let level = 1; level <= maxLevel; level++) {
+            result.push("Lv." + level + " " + this.getBondEffectDescription(type, level, count, propertyValue, camp));
+        }
+        return result;
+    }
+
+    private getBondEffectDescription(type: TurnBondResourceType, level: number, count: number, propertyValue: number, camp: TurnCamp): string {
+        if (type === "bullet") {
+            return "额外发射" + level + "发";
+        }
+        if (type === "attack") {
+            let stats = this.getCampStats(camp);
+            let baseDamage = Math.max(1, Number(this._config.bulletDamage) || 1);
+            let upgradeDamage = Math.max(0, Number(stats && stats.damageBonus) || 0);
+            let attackProperty = Math.max(0, Number(propertyValue) || 0);
+            let bulletDamage = attackProperty > 0
+                ? Math.max(baseDamage + upgradeDamage + attackProperty, Math.floor((baseDamage + upgradeDamage + attackProperty) * this.getBondAttributeMultiplierByLevel(type, level)))
+                : getTurnAttackBondBulletDamage(baseDamage, upgradeDamage, count, this._config, attackProperty);
+            let bonus = Math.max(0, bulletDamage - baseDamage - upgradeDamage);
+            return "子弹伤害" + bulletDamage + "（羁绊+" + bonus + "）";
+        }
+        if (type === "coin") {
+            let coinGain = Math.floor(this.getBondBaseValue(type, count, propertyValue) * this.getBondAttributeMultiplierByLevel(type, level));
+            let bountyMultiplier = this.getBondBountyMultiplierByLevel(type, level);
+            return "结算金币+" + Math.max(0, coinGain) + "，摧毁奖励x" + this.formatBondNumber(bountyMultiplier);
+        }
+        if (type === "energy") {
+            let heal = Math.floor(this.getBondBaseValue(type, count, propertyValue) * this.getBondAttributeMultiplierByLevel(type, level));
+            return "回合治疗+" + Math.max(0, heal);
+        }
+        if (type === "bleed") {
+            let blockedHeal = Math.floor(this.getBondBaseValue(type, count, propertyValue) * this.getBondAttributeMultiplierByLevel(type, level));
+            return "敌方治疗-" + Math.max(0, blockedHeal);
+        }
+        if (type === "missile_silo") {
+            let damageMultiplier = this.getBondAttributeMultiplierByLevel(type, level);
+            return "单发导弹伤害x" + this.formatBondNumber(damageMultiplier) + "，锁定坦克概率+" + this.formatBondPercent(this.getBondChanceBonusByLevel(type, level));
+        }
+        if (type === "mirror") {
+            return "弹体伤害降低" + this.formatBondPercent(this.getBondDamageReductionByLevel(type, level));
+        }
+        if (type === "exp") {
+            let exp = Math.floor(this.getBondBaseValue(type, count, propertyValue) * this.getBondAttributeMultiplierByLevel(type, level));
+            return "经验+" + Math.max(0, exp);
+        }
+        return "-";
+    }
+
+    private getBondBaseValue(type: Exclude<TurnBondResourceType, "bullet">, count: number, propertyValue: number): number {
+        if (Number.isFinite(propertyValue) && propertyValue > 0) {
+            return Math.max(0, Number(propertyValue) || 0);
+        }
+        let rule = this._config && this._config.bondRules && this._config.bondRules[type];
+        return Math.max(0, Math.floor(Number(count) || 0)) * Math.max(0, Number(rule && rule.amountPerBlock) || 0);
+    }
+
+    private getBondAttributeMultiplierByLevel(type: Exclude<TurnBondResourceType, "bullet">, level: number): number {
+        let rules = this._config && this._config.bondRules;
+        let safeLevel = Math.max(1, Math.floor(Number(level) || 1));
+        let rule = rules && rules[type];
+        let values = rule && Array.isArray(rule.attributeMultipliers) ? rule.attributeMultipliers : [];
+        if (values.length <= 0 && rule && Array.isArray(rule.tiers)) {
+            values = rule.tiers.map((tier) => Number(tier && tier.multiplier) || 0);
+        }
+        if (values.length <= 0 && rule && Array.isArray(rule.bountyMultipliers)) {
+            values = rule.bountyMultipliers;
+        }
+        return Math.max(1, Number(values[Math.min(safeLevel - 1, Math.max(0, values.length - 1))]) || 1);
+    }
+
+    private getBondBountyMultiplierByLevel(type: Exclude<TurnBondResourceType, "bullet">, level: number): number {
+        let rules = this._config && this._config.bondRules;
+        let safeLevel = Math.max(1, Math.floor(Number(level) || 1));
+        let rule = rules && rules[type];
+        let values = rule && Array.isArray(rule.bountyMultipliers) ? rule.bountyMultipliers : [];
+        return Math.max(1, Number(values[Math.min(safeLevel - 1, Math.max(0, values.length - 1))]) || 1);
+    }
+
+    private getBondChanceBonusByLevel(type: Exclude<TurnBondResourceType, "bullet">, level: number): number {
+        let rules = this._config && this._config.bondRules;
+        let safeLevel = Math.max(1, Math.floor(Number(level) || 1));
+        let rule = rules && rules[type];
+        let values = rule && Array.isArray(rule.hitTankChanceBonuses) ? rule.hitTankChanceBonuses : [];
+        return Math.max(0, Math.min(1, Number(values[Math.min(safeLevel - 1, Math.max(0, values.length - 1))]) || 0));
+    }
+
+    private getBondDamageReductionByLevel(type: Exclude<TurnBondResourceType, "bullet">, level: number): number {
+        let rules = this._config && this._config.bondRules;
+        let safeLevel = Math.max(1, Math.floor(Number(level) || 1));
+        let rule = rules && rules[type];
+        let values = rule && Array.isArray(rule.damageReductionRatios) ? rule.damageReductionRatios : [];
+        return Math.max(0, Math.min(1, Number(values[Math.min(safeLevel - 1, Math.max(0, values.length - 1))]) || 0));
+    }
+
+    private formatBondPercent(value: number): string {
+        return Math.round(Math.max(0, Number(value) || 0) * 100) + "%";
+    }
+
+    private formatBondNumber(value: number): string {
+        let safeValue = Number(value) || 0;
+        return Math.abs(safeValue - Math.round(safeValue)) < 0.001 ? String(Math.round(safeValue)) : safeValue.toFixed(1);
     }
 
     getAssistAreaBottomLeft(): cc.Vec2 {
@@ -1278,6 +1487,7 @@ export default class TurnBattleMap extends cc.Component {
             lifeLeft: Math.max(0.1, Number(this._config.bulletMaxLifeSeconds) || 30),
             bounceLeft: bounceLeft,
             hasBounced: false,
+            passedOwnBuildArea: this.isPointInOwnBuildArea(position, camp),
             hasTriggeredSpread: false,
             currentSpreadZoneIds: [],
             currentDamageBoostZoneIds: [],
@@ -1301,8 +1511,10 @@ export default class TurnBattleMap extends cc.Component {
             let bullet = this._bullets[i];
             bullet.lifeLeft -= dt;
             this.applyAssistZones(bullet, dt);
-            let nextPosition = this.getNodePosition(bullet.node).add(bullet.dir.mul(bullet.speed * dt));
+            let previousPosition = this.getNodePosition(bullet.node);
+            let nextPosition = previousPosition.add(bullet.dir.mul(bullet.speed * dt));
             bullet.node.setPosition(nextPosition.x, nextPosition.y);
+            this.updateBulletOwnBuildAreaPass(bullet, previousPosition, nextPosition);
 
             if (bullet.remainingDamage <= 0
                 || !this.keepBulletInMap(bullet)
@@ -1432,7 +1644,23 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private shouldIgnoreOwnResourceHit(bullet: TurnBulletState, obstacleCamp: TurnCamp): boolean {
-        return obstacleCamp === bullet.camp && !bullet.hasBounced;
+        return obstacleCamp === bullet.camp && !this.canBulletDamageOwnCamp(bullet);
+    }
+
+    private canBulletDamageOwnCamp(bullet: TurnBulletState): boolean {
+        if (!bullet || !bullet.hasBounced) {
+            return false;
+        }
+        return !this._serverMode || !!bullet.passedOwnBuildArea;
+    }
+
+    private updateBulletOwnBuildAreaPass(bullet: TurnBulletState, from?: cc.Vec2, to?: cc.Vec2) {
+        if (!bullet || bullet.passedOwnBuildArea) {
+            return;
+        }
+        let current = to || this.getNodePosition(bullet.node);
+        bullet.passedOwnBuildArea = this.isPointInOwnBuildArea(current, bullet.camp)
+            || (!!from && this.doesSegmentCrossOwnBuildArea(from, current, bullet.camp));
     }
 
     private recordPendingObstacleHitIfNeeded(bullet: TurnBulletState, obstacle: TurnObstacleState, cellIndex: number, appliedDamage: number) {
@@ -1593,7 +1821,7 @@ export default class TurnBattleMap extends cc.Component {
         let camps: TurnCamp[] = ["A", "B"];
         for (let i = 0; i < camps.length; i++) {
             let camp = camps[i];
-            if (!bullet.hasBounced && camp === bullet.camp) {
+            if (camp === bullet.camp && !this.canBulletDamageOwnCamp(bullet)) {
                 continue;
             }
             let target = this._crystals[camp];
@@ -1797,9 +2025,6 @@ export default class TurnBattleMap extends cc.Component {
             graphics.lineWidth = 2;
             graphics.roundRect(x, y, cellSize, cellSize, 8);
             graphics.stroke();
-            if (slotType === "exp" || slotType === "energy" || slotType === "mirror" || slotType === "missile_silo" || slotType === "coin") {
-                this.drawObstacleIcon(graphics, slotType, x, y, cellSize);
-            }
         }
     }
 
@@ -2548,61 +2773,6 @@ export default class TurnBattleMap extends cc.Component {
             return new cc.Color(247, 205, 66, 255);
         }
         return camp === "A" ? new cc.Color(99, 156, 106, 255) : new cc.Color(161, 96, 108, 255);
-    }
-
-    private drawObstacleIcon(graphics: cc.Graphics, slotType: TurnObstacleResourceType, x: number, y: number, size: number) {
-        graphics.strokeColor = new cc.Color(245, 245, 245, 210);
-        graphics.lineWidth = 2;
-        let cx = x + size / 2;
-        let cy = y + size / 2;
-        if (slotType === "exp") {
-            graphics.moveTo(cx - 6, cy);
-            graphics.lineTo(cx + 6, cy);
-            graphics.moveTo(cx, cy - 6);
-            graphics.lineTo(cx, cy + 6);
-        }
-        else if (slotType === "energy") {
-            graphics.moveTo(cx - 5, cy + 8);
-            graphics.lineTo(cx + 1, cy + 1);
-            graphics.lineTo(cx - 2, cy + 1);
-            graphics.lineTo(cx + 5, cy - 8);
-        }
-        else if (slotType === "mirror") {
-            graphics.moveTo(cx - 8, cy - 8);
-            graphics.lineTo(cx + 8, cy + 8);
-            graphics.moveTo(cx - 8, cy + 8);
-            graphics.lineTo(cx + 8, cy - 8);
-        }
-        else if (slotType === "bleed") {
-            graphics.circle(cx, cy, 6);
-        }
-        else if (slotType === "bullet") {
-            graphics.circle(cx, cy, 5);
-            graphics.moveTo(cx - 8, cy);
-            graphics.lineTo(cx + 8, cy);
-        }
-        else if (slotType === "attack") {
-            graphics.moveTo(cx - 7, cy + 7);
-            graphics.lineTo(cx + 7, cy - 7);
-            graphics.moveTo(cx - 7, cy - 7);
-            graphics.lineTo(cx + 7, cy + 7);
-        }
-        else if (slotType === "missile_silo") {
-            graphics.rect(cx - 7, cy - 7, 14, 14);
-            graphics.moveTo(cx, cy + 9);
-            graphics.lineTo(cx, cy - 9);
-            graphics.moveTo(cx - 5, cy + 4);
-            graphics.lineTo(cx, cy + 9);
-            graphics.lineTo(cx + 5, cy + 4);
-        }
-        else if (slotType === "coin") {
-            graphics.circle(cx, cy, 7);
-            graphics.moveTo(cx - 3, cy - 4);
-            graphics.lineTo(cx - 3, cy + 4);
-            graphics.moveTo(cx + 3, cy - 4);
-            graphics.lineTo(cx + 3, cy + 4);
-        }
-        graphics.stroke();
     }
 
     private countPlacedEnergyTowers(camp: TurnCamp): number {
@@ -3688,6 +3858,17 @@ export default class TurnBattleMap extends cc.Component {
             let cell = layout[i];
             let hp = Math.max(0, Math.floor(Number(obstacle.cellHp[i]) || 0));
             let level = Math.max(1, Math.floor(Number(obstacle.cellLevels && obstacle.cellLevels[i]) || Number(obstacle.resourceLevel) || 1));
+            let markText = getTurnObstacleShortLabel(obstacle.slotType);
+            if (markText) {
+                let mark = this.createLabel(markText, 18);
+                mark.verticalAlign = cc.Label.VerticalAlign.CENTER;
+                mark.node.name = "ObstacleTypeLabel";
+                mark.node.parent = obstacle.node;
+                mark.node.setAnchorPoint(0.5, 0.5);
+                mark.node.setPosition(cell.x * cellSize, cell.y * cellSize + 1);
+                mark.node.zIndex = 4;
+                mark.node.color = new cc.Color(255, 255, 255, 245);
+            }
             let label = this.createLabel(level > 1 ? hp + " L" + level : String(hp), fontSize);
             label.verticalAlign = cc.Label.VerticalAlign.BOTTOM;
             label.node.name = "ObstacleCellHpLabel";
@@ -4241,7 +4422,8 @@ export default class TurnBattleMap extends cc.Component {
             });
             let child = this._bullets[this._bullets.length - 1];
             if (child) {
-                child.lifeLeft = Math.min(child.lifeLeft, Math.max(0.6, sourceBullet.lifeLeft * 0.7));
+                // 与服务端权威模拟对齐：分裂子弹继承源子弹的完整剩余寿命（服务端 cloneTurnBulletState 原样复制 lifeLeft）
+                child.lifeLeft = sourceBullet.lifeLeft;
                 child.damage = sourceBullet.damage;
                 child.remainingDamage = sourceBullet.remainingDamage;
                 child.baseDamage = sourceBullet.baseDamage;
@@ -4249,6 +4431,7 @@ export default class TurnBattleMap extends cc.Component {
                 child.damageBoostLevel = sourceBullet.damageBoostLevel;
                 child.bounceLeft = sourceBullet.bounceLeft;
                 child.hasBounced = sourceBullet.hasBounced;
+                child.passedOwnBuildArea = sourceBullet.passedOwnBuildArea;
                 child.hasTriggeredSpread = sourceBullet.hasTriggeredSpread;
                 child.currentSpreadZoneIds = [];
                 child.currentDamageBoostZoneIds = [];
@@ -4410,16 +4593,54 @@ export default class TurnBattleMap extends cc.Component {
         return !!(position && this._assistArea && this._assistArea.contains(position));
     }
 
-    private isPointInOwnBuildArea(position: cc.Vec2): boolean {
+    private isPointInOwnBuildArea(position: cc.Vec2, camp?: TurnCamp): boolean {
         if (!position) {
             return false;
         }
-        let camp = this._actionCamp;
-        if (!camp) {
+        let targetCamp = camp || this._actionCamp;
+        if (!targetCamp) {
             return false;
         }
-        let area = this.getBuildArea(camp);
+        let area = this.getBuildArea(targetCamp);
         return !!(area && area.contains(position));
+    }
+
+    private doesSegmentCrossOwnBuildArea(from: cc.Vec2, to: cc.Vec2, camp: TurnCamp): boolean {
+        let area = this.getBuildArea(camp);
+        if (!area || !from || !to) {
+            return false;
+        }
+        if (area.contains(from) || area.contains(to)) {
+            return true;
+        }
+        let left = area.x;
+        let right = area.x + area.width;
+        let bottom = area.y;
+        let top = area.y + area.height;
+        return this.segmentsIntersect(from, to, cc.v2(left, bottom), cc.v2(right, bottom))
+            || this.segmentsIntersect(from, to, cc.v2(right, bottom), cc.v2(right, top))
+            || this.segmentsIntersect(from, to, cc.v2(right, top), cc.v2(left, top))
+            || this.segmentsIntersect(from, to, cc.v2(left, top), cc.v2(left, bottom));
+    }
+
+    private segmentsIntersect(a: cc.Vec2, b: cc.Vec2, c: cc.Vec2, d: cc.Vec2): boolean {
+        let abx = b.x - a.x;
+        let aby = b.y - a.y;
+        let acx = c.x - a.x;
+        let acy = c.y - a.y;
+        let adx = d.x - a.x;
+        let ady = d.y - a.y;
+        let cdx = d.x - c.x;
+        let cdy = d.y - c.y;
+        let cax = a.x - c.x;
+        let cay = a.y - c.y;
+        let cbx = b.x - c.x;
+        let cby = b.y - c.y;
+        let cross1 = abx * acy - aby * acx;
+        let cross2 = abx * ady - aby * adx;
+        let cross3 = cdx * cay - cdy * cax;
+        let cross4 = cdx * cby - cdy * cbx;
+        return cross1 * cross2 <= 0 && cross3 * cross4 <= 0;
     }
 
     private onKeyDown(event: cc.Event.EventKeyboard) {

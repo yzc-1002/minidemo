@@ -126,14 +126,24 @@ export interface TurnBondBulletRuleConfig {
 export interface TurnBondValueRuleConfig {
     amountPerBlock: number;
     tiers: TurnBondTierConfig[];
+    attributeMultipliers?: number[];
     bountyMultipliers?: number[];
     hitTankChanceBonuses?: number[];
     damageReductionRatios?: number[];
 }
 
+export interface TurnBondDisplayConfig {
+    name: string;
+    shortLabel: string;
+    description: string;
+    levelDescriptions: string[];
+}
+
 export interface TurnBondRulesConfig {
     maxLevel: number;
     valueThresholds: number[];
+    displayOrder: TurnBondResourceType[];
+    display: { [type: string]: TurnBondDisplayConfig };
     bullet: TurnBondBulletRuleConfig;
     missile_silo: TurnBondValueRuleConfig;
     mirror: TurnBondValueRuleConfig;
@@ -153,6 +163,19 @@ export interface TurnBondCountMap {
     coin: number;
     missile_silo: number;
     mirror: number;
+}
+
+export interface TurnBondHudItem {
+    type: TurnBondResourceType;
+    name: string;
+    shortLabel: string;
+    description: string;
+    levelDescriptions: string[];
+    effectDescriptions: string[];
+    value: number;
+    level: number;
+    nextValue: number;
+    maxLevel: number;
 }
 
 export interface TurnCoinEconomyConfig {
@@ -291,6 +314,7 @@ export interface TurnGameConfig {
     baseFireInterval: number;
     bulletBlockExtraShotInterval: number;
     bulletMaxLifeSeconds: number;
+    bulletSimStepSeconds: number;
     bulletSpeed: number;
     bulletRadius: number;
     obstacleRadius: number;
@@ -378,6 +402,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     baseFireInterval: 0,
     bulletBlockExtraShotInterval: 0.5,
     bulletMaxLifeSeconds: 30,
+    bulletSimStepSeconds: 1 / 20,
     bulletSpeed: 620,
     bulletRadius: 10,
     obstacleRadius: 26,
@@ -514,12 +539,58 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     bondRules: {
         maxLevel: 5,
         valueThresholds: [4, 10, 18, 28, 40],
+        displayOrder: ["mirror", "bullet", "attack", "coin", "energy", "bleed", "missile_silo"],
+        display: {
+            mirror: {
+                name: "反弹块羁绊",
+                shortLabel: "削",
+                description: "反弹块会削弱命中的弹体伤害。",
+                levelDescriptions: ["弹体伤害降低70%", "弹体伤害降低60%", "弹体伤害降低50%", "弹体伤害降低40%", "弹体伤害降低30%"],
+            },
+            bullet: {
+                name: "子弹块羁绊",
+                shortLabel: "连",
+                description: "子弹块会让攻击额外连射。",
+                levelDescriptions: ["额外发射1发", "额外发射2发", "额外发射3发", "额外发射4发", "额外发射5发"],
+            },
+            attack: {
+                name: "攻击块羁绊",
+                shortLabel: "火",
+                description: "攻击块会提升子弹伤害。",
+                levelDescriptions: ["攻击价值x1.2", "攻击价值x1.5", "攻击价值x1.8", "攻击价值x2", "攻击价值x3"],
+            },
+            coin: {
+                name: "金币块羁绊",
+                shortLabel: "财",
+                description: "金币块会提升摧毁敌方资源获得的金币。",
+                levelDescriptions: ["金币奖励x1.2", "金币奖励x1.5", "金币奖励x1.8", "金币奖励x2", "金币奖励x3"],
+            },
+            energy: {
+                name: "能量块羁绊",
+                shortLabel: "愈",
+                description: "能量块会在回合结算时回复基地生命。",
+                levelDescriptions: ["治疗价值x1.2", "治疗价值x1.5", "治疗价值x1.8", "治疗价值x2", "治疗价值x3"],
+            },
+            bleed: {
+                name: "滴血块羁绊",
+                shortLabel: "枯",
+                description: "滴血块会削减敌方回合结算治疗。",
+                levelDescriptions: ["禁疗价值x1.2", "禁疗价值x1.5", "禁疗价值x1.8", "禁疗价值x2", "禁疗价值x3"],
+            },
+            missile_silo: {
+                name: "导弹块羁绊",
+                shortLabel: "锁",
+                description: "导弹块会提高导弹锁定敌方坦克的概率。",
+                levelDescriptions: ["锁定坦克概率+10%", "锁定坦克概率+30%", "锁定坦克概率+50%", "锁定坦克概率+75%", "锁定坦克概率+100%"],
+            },
+        },
         bullet: {
             blocksPerExtraShot: 4,
         },
         missile_silo: {
             amountPerBlock: 0,
             tiers: [],
+            attributeMultipliers: [1.2, 1.5, 1.8, 2, 3],
             hitTankChanceBonuses: [0.1, 0.3, 0.5, 0.75, 1],
         },
         mirror: {
@@ -570,6 +641,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         coin: {
             amountPerBlock: 1,
             tiers: [],
+            attributeMultipliers: [1.2, 1.5, 1.8, 2, 3],
             bountyMultipliers: [1.2, 1.5, 1.8, 2, 3],
         },
     },
@@ -646,6 +718,31 @@ export function getRoundResourceTotal(roundIndex: number, extraBonus = 0, config
     return Math.max(cfg.slotCountPerRound, Math.min(cfg.maxRoundResourceTotal, total));
 }
 
+export function getTurnObstacleShortLabel(type: TurnObstacleResourceType): string {
+    if (type === "mirror") {
+        return "镜";
+    }
+    if (type === "bullet") {
+        return "弹";
+    }
+    if (type === "attack") {
+        return "攻";
+    }
+    if (type === "coin") {
+        return "金";
+    }
+    if (type === "energy") {
+        return "血";
+    }
+    if (type === "bleed") {
+        return "蚀";
+    }
+    if (type === "missile_silo") {
+        return "导";
+    }
+    return "";
+}
+
 export function createTurnBondCountMap(source?: Partial<TurnBondCountMap>): TurnBondCountMap {
     return {
         bullet: Math.max(0, Math.floor(Number(source && source.bullet) || 0)),
@@ -703,7 +800,7 @@ export function getTurnResourcePropertyValue(type: TurnObstacleResourceType, res
     return 0;
 }
 
-export function getTurnCoinSettlementGain(coinBlockCount: number, config?: TurnGameConfig): number {
+export function getTurnCoinSettlementGain(coinBlockCount: number, config?: TurnGameConfig, propertyValue?: number): number {
     let cfg = config || TURN_GAME_CONFIG;
     let safeCount = Math.max(0, Math.floor(Number(coinBlockCount) || 0));
     if (safeCount <= 0) {
@@ -711,7 +808,8 @@ export function getTurnCoinSettlementGain(coinBlockCount: number, config?: TurnG
     }
     let economy = cfg.coinEconomy;
     let perBlock = Math.max(0, Number(economy && economy.perCoinBlockSettlement) || 0);
-    return safeCount * perBlock;
+    let baseValue = Number.isFinite(propertyValue) && Number(propertyValue) > 0 ? Math.max(0, Number(propertyValue) || 0) : safeCount * perBlock;
+    return getTurnBondValue("coin", safeCount, cfg, baseValue);
 }
 
 export function getTurnBondCount(counts: Partial<TurnBondCountMap> | null | undefined, type: TurnBondResourceType): number {
@@ -738,6 +836,15 @@ export function getTurnBondLevel(count: number, config?: TurnGameConfig): number
     return tierIndex + 1;
 }
 
+export function getTurnBondNextValue(count: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let thresholds = cfg.bondRules && Array.isArray(cfg.bondRules.valueThresholds) ? cfg.bondRules.valueThresholds : [];
+    let maxLevel = Math.max(1, Math.floor(Number(cfg.bondRules && cfg.bondRules.maxLevel) || thresholds.length || 1));
+    let level = getTurnBondLevel(count, cfg);
+    let thresholdIndex = Math.min(Math.max(0, level), Math.max(0, maxLevel - 1), Math.max(0, thresholds.length - 1));
+    return Math.max(0, Math.floor(Number(thresholds[thresholdIndex]) || 0));
+}
+
 export function getTurnBondMultiplier(type: Exclude<TurnBondResourceType, "bullet">, count: number, config?: TurnGameConfig): number {
     let cfg = config || TURN_GAME_CONFIG;
     let level = getTurnBondLevel(count, cfg);
@@ -748,6 +855,23 @@ export function getTurnBondMultiplier(type: Exclude<TurnBondResourceType, "bulle
     let tiers = rule && Array.isArray(rule.tiers) ? rule.tiers : [];
     let tier = tiers[Math.min(level - 1, tiers.length - 1)];
     return Math.max(0, Number(tier && tier.multiplier) || 0);
+}
+
+export function getTurnBondAttributeMultiplier(type: Exclude<TurnBondResourceType, "bullet">, count: number, config?: TurnGameConfig): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let level = getTurnBondLevel(count, cfg);
+    if (level <= 0) {
+        return 1;
+    }
+    let rule = cfg.bondRules && cfg.bondRules[type];
+    let values = rule && Array.isArray(rule.attributeMultipliers) ? rule.attributeMultipliers : [];
+    if (values.length <= 0 && rule && Array.isArray(rule.tiers)) {
+        values = rule.tiers.map((tier) => Number(tier && tier.multiplier) || 0);
+    }
+    if (values.length <= 0 && rule && Array.isArray(rule.bountyMultipliers)) {
+        values = rule.bountyMultipliers;
+    }
+    return Math.max(1, Number(values[Math.min(level - 1, Math.max(0, values.length - 1))]) || 1);
 }
 
 export function getTurnBulletExtraShots(count: number, config?: TurnGameConfig): number {
@@ -798,9 +922,21 @@ export function getTurnBondValue(type: Exclude<TurnBondResourceType, "bullet">, 
     }
     let rule = cfg.bondRules && cfg.bondRules[type];
     let amountPerBlock = Math.max(0, Number(rule && rule.amountPerBlock) || 0);
-    let multiplier = getTurnBondMultiplier(type, safeCount, cfg);
-    let baseValue = Number.isFinite(propertyValue) ? Math.max(0, Number(propertyValue) || 0) : safeCount * amountPerBlock;
-    return baseValue * multiplier;
+    let effectiveMultiplier = getTurnBondAttributeMultiplier(type, safeCount, cfg);
+    let baseValue = Number.isFinite(propertyValue) && Number(propertyValue) > 0 ? Math.max(0, Number(propertyValue) || 0) : safeCount * amountPerBlock;
+    return Math.floor(baseValue * effectiveMultiplier);
+}
+
+export function getTurnAttackBondBulletDamage(baseDamage: number, upgradeDamage: number, attackCount: number, config?: TurnGameConfig, propertyValue?: number): number {
+    let cfg = config || TURN_GAME_CONFIG;
+    let safeCount = Math.max(0, Math.floor(Number(attackCount) || 0));
+    let base = Math.max(1, Math.floor(Number(baseDamage) || 1)) + Math.max(0, Math.floor(Number(upgradeDamage) || 0));
+    let attackProperty = Number.isFinite(propertyValue) && Number(propertyValue) > 0 ? Math.max(0, Number(propertyValue) || 0) : safeCount * Math.max(0, Number(cfg.bondRules && cfg.bondRules.attack && cfg.bondRules.attack.amountPerBlock) || 0);
+    if (attackProperty <= 0) {
+        return base;
+    }
+    let effectiveMultiplier = getTurnBondAttributeMultiplier("attack", safeCount, cfg);
+    return Math.max(base + attackProperty, Math.floor((base + attackProperty) * effectiveMultiplier));
 }
 
 export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, upgrades?: Partial<TurnBondUpgradeSnapshot>, config?: TurnGameConfig, roundIndex?: number, propertyValues?: Partial<TurnBondCountMap>): TurnAttackBondSnapshot {
@@ -816,7 +952,9 @@ export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, u
     let blackHoleStrengthMultiplier = Math.max(1, Number(upgrades && upgrades.blackHoleStrengthMultiplier) || 1);
     let extraShotsFromBulletBlock = getTurnBulletExtraShots(safeCounts.bullet, cfg);
     let attackMultiplier = getTurnBondMultiplier("attack", safeCounts.attack, cfg);
-    let bonusDamageFromAttackBlock = getTurnBondValue("attack", safeCounts.attack, cfg, safeProperties.attack);
+    let baseBulletDamage = Math.max(1, Number(cfg.bulletDamage) || 1);
+    let bulletDamage = getTurnAttackBondBulletDamage(baseBulletDamage, bonusDamageFromUpgrade, safeCounts.attack, cfg, safeProperties.attack);
+    let bonusDamageFromAttackBlock = Math.max(0, bulletDamage - baseBulletDamage - bonusDamageFromUpgrade);
     let baseBulletCount = Math.max(1, Math.floor(Number(cfg.baseBulletCount) || 1));
     let totalShots = Math.max(1, baseBulletCount + extraShotsFromUpgrade + extraShotsFromBulletBlock);
     return {
@@ -828,7 +966,7 @@ export function buildTurnAttackBondSnapshot(counts: Partial<TurnBondCountMap>, u
         extraShotsFromBulletBlock: extraShotsFromBulletBlock,
         bonusDamageFromUpgrade: bonusDamageFromUpgrade,
         bonusDamageFromAttackBlock: bonusDamageFromAttackBlock,
-        bulletDamage: Math.max(1, Number(cfg.bulletDamage) || 1) + bonusDamageFromUpgrade + bonusDamageFromAttackBlock,
+        bulletDamage: bulletDamage,
         bulletBounce: getTurnRoundBulletBounce(roundIndex, cfg) + bulletBounce,
         firstBounceDamageMultiplier: firstBounceDamageMultiplier,
         spreadExtraSplit: spreadExtraSplit,
