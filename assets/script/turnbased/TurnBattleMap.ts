@@ -1,6 +1,11 @@
 import {
     buildTurnAttackBondSnapshot,
     buildTurnSettlementBondSnapshot,
+    getTurnResourceLevelValue,
+    getTurnResourceLevelHp,
+    getTurnResourcePropertyValue,
+    getTurnBondBountyMultiplier,
+    getTurnMirrorDamageReductionRatio,
     getTurnAssistZoneSpawnCount,
     getTurnAssistZoneTypeConfig,
     TurnAssistZoneType,
@@ -104,8 +109,11 @@ interface TurnObstacleState {
     hp: number;
     maxHp: number;
     resourceCount: number;
+    resourceLevel: number;
+    level: number;
     layout: cc.Vec2[];
     cellHp: number[];
+    cellLevels: number[];
     shapeKey: string;
     mirrorDir: "";
     placedByCamp: TurnCamp;
@@ -896,8 +904,20 @@ export default class TurnBattleMap extends cc.Component {
                 if (obstacle.id === ignoreObstacleId) {
                     continue;
                 }
-                if (this.rectsOverlapAny(this.getDynamicObstacleRects(obstacle), obstacleRect)) {
-                    return false;
+                let existingRects = this.getDynamicObstacleRects(obstacle);
+                for (let cellIndex = 0; cellIndex < existingRects.length; cellIndex++) {
+                    if (!this.rectOverlaps(existingRects[cellIndex], obstacleRect)) {
+                        continue;
+                    }
+                    if (obstacle.camp !== camp || obstacle.slotType !== slotType) {
+                        return false;
+                    }
+                    let maxLevel = Math.max(1, Math.floor(Number(this._config.resourceMerge && this._config.resourceMerge.maxLevel) || 1));
+                    let levels = Array.isArray(obstacle.cellLevels) ? obstacle.cellLevels : [];
+                    let level = Math.max(1, Math.floor(Number(levels[cellIndex] || obstacle.resourceLevel || obstacle.level || 1) || 1));
+                    if (level >= maxLevel) {
+                        return false;
+                    }
                 }
             }
         }
@@ -1324,6 +1344,7 @@ export default class TurnBattleMap extends cc.Component {
                 this.playBulletHitSound(true);
                 this.reflectBulletOffRect(bullet, hitInfo.rect);
                 bullet.hasBounced = true;
+                this.applyMirrorDamageReduction(bullet, obstacle.camp);
                 this.applyFirstBounceDamageBoostIfNeeded(bullet);
                 this.recordPendingObstacleHitIfNeeded(bullet, obstacle, cellIndex, appliedDamage);
                 this.resolveObstacleCellAfterHit(bullet, obstacle, i, cellIndex);
@@ -1346,11 +1367,20 @@ export default class TurnBattleMap extends cc.Component {
             if (obstacle.cellHp[cellIndex] <= 0) {
                 obstacle.layout.splice(cellIndex, 1);
                 obstacle.cellHp.splice(cellIndex, 1);
+                if (Array.isArray(obstacle.cellLevels)) {
+                    obstacle.cellLevels.splice(cellIndex, 1);
+                }
+                obstacle.resourceLevel = obstacle.cellLevels && obstacle.cellLevels.length > 0 ? Math.max(1, ...obstacle.cellLevels) : 1;
+                obstacle.level = obstacle.resourceLevel;
+                obstacle.resourceCount = Math.max(0, obstacle.layout.length);
                 obstacle.shapeKey = this.getLayoutKey(obstacle.layout);
                 obstacle.width = this.getDynamicObstacleRect(obstacle).width;
                 obstacle.height = this.getDynamicObstacleRect(obstacle).height;
                 if (this._serverMode && bullet.camp === "A") {
                     this._pendingBulletResult.destroyedCells.push({ obstacleId: obstacle.id, cellIndex: cellIndex });
+                }
+                if (!this._serverMode && obstacle.camp !== bullet.camp) {
+                    this.addCoins(bullet.camp, this.getEnemyResourceDestroyCoinGain(bullet.camp, 1), this.getNodePosition(bullet.node));
                 }
             }
             this.redrawObstacle(obstacle);
@@ -1383,6 +1413,24 @@ export default class TurnBattleMap extends cc.Component {
         bullet.remainingDamage = Math.max(0, bullet.remainingDamage - Math.max(0, Math.floor(Number(appliedDamage) || 0)));
     }
 
+    private getEnemyResourceDestroyCoinGain(camp: TurnCamp, destroyedCellCount: number): number {
+        let economy = this._config.coinEconomy || {} as any;
+        let baseCoin = Math.max(0, Number(economy.destroyedEnemyResourceCoinReward != null ? economy.destroyedEnemyResourceCoinReward : economy.perDestroyedEnemyCell) || 0);
+        let bountyMultiplier = getTurnBondBountyMultiplier("coin", this.buildBondCountMap(camp).coin, this._config);
+        return Math.floor(Math.max(0, destroyedCellCount) * baseCoin * bountyMultiplier);
+    }
+
+    private applyMirrorDamageReduction(bullet: TurnBulletState, mirrorCamp: TurnCamp) {
+        if (!bullet || Math.max(0, Number(bullet.remainingDamage) || 0) < 1) {
+            return;
+        }
+        let reductionRatio = getTurnMirrorDamageReductionRatio(this.buildBondCountMap(mirrorCamp).mirror, this._config);
+        if (reductionRatio <= 0) {
+            return;
+        }
+        bullet.remainingDamage = Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0) * (1 - reductionRatio));
+    }
+
     private shouldIgnoreOwnResourceHit(bullet: TurnBulletState, obstacleCamp: TurnCamp): boolean {
         return obstacleCamp === bullet.camp && !bullet.hasBounced;
     }
@@ -1402,11 +1450,20 @@ export default class TurnBattleMap extends cc.Component {
         if (obstacle.cellHp[cellIndex] <= 0) {
             obstacle.layout.splice(cellIndex, 1);
             obstacle.cellHp.splice(cellIndex, 1);
+            if (Array.isArray(obstacle.cellLevels)) {
+                obstacle.cellLevels.splice(cellIndex, 1);
+            }
+            obstacle.resourceLevel = obstacle.cellLevels && obstacle.cellLevels.length > 0 ? Math.max(1, ...obstacle.cellLevels) : 1;
+            obstacle.level = obstacle.resourceLevel;
+            obstacle.resourceCount = Math.max(0, obstacle.layout.length);
             obstacle.shapeKey = this.getLayoutKey(obstacle.layout);
             obstacle.width = this.getDynamicObstacleRect(obstacle).width;
             obstacle.height = this.getDynamicObstacleRect(obstacle).height;
             if (this._serverMode && bullet.camp === "A") {
                 this._pendingBulletResult.destroyedCells.push({ obstacleId: obstacle.id, cellIndex: cellIndex });
+            }
+            if (!this._serverMode && obstacle.camp !== bullet.camp) {
+                this.addCoins(bullet.camp, this.getEnemyResourceDestroyCoinGain(bullet.camp, 1), this.getNodePosition(obstacle.node));
             }
         }
         this.redrawObstacle(obstacle);
@@ -1591,8 +1648,9 @@ export default class TurnBattleMap extends cc.Component {
         let graphics = node.addComponent(cc.Graphics);
         this.drawObstacleGraphics(graphics, camp, true, slotType, layout, mirrorDir);
 
-        let maxHp = this.resolveObstacleMaxHp(slotType, resourceCount, Number(snapshot && snapshot.maxHp), camp);
-        let cellHp = this.buildObstacleCellHp(slotType, resourceCount, layout.length, snapshot && snapshot.cellHp, camp);
+        let cellLevels = this.buildObstacleCellLevels(layout.length, snapshot);
+        let maxHp = this.resolveObstacleMaxHp(slotType, resourceCount, Number(snapshot && snapshot.maxHp), camp, cellLevels);
+        let cellHp = this.buildObstacleCellHp(slotType, resourceCount, layout.length, snapshot && (snapshot.cellHp || snapshot.cellHpList), camp, cellLevels);
         let hp = this.resolveObstacleHp(slotType, layout.length, Number(snapshot && snapshot.hp), cellHp, maxHp);
 
         let id = forcedId || String(this._nextObstacleId++);
@@ -1613,8 +1671,11 @@ export default class TurnBattleMap extends cc.Component {
             hp: hp,
             maxHp: maxHp,
             resourceCount: resourceCount,
+            resourceLevel: Math.max(1, ...cellLevels),
+            level: Math.max(1, ...cellLevels),
             layout: layout,
             cellHp: cellHp,
+            cellLevels: cellLevels,
             shapeKey: this.getLayoutKey(layout),
             mirrorDir: mirrorDir,
             placedByCamp: camp,
@@ -2274,9 +2335,28 @@ export default class TurnBattleMap extends cc.Component {
         return result;
     }
 
-    private buildObstacleCellHp(slotType: TurnObstacleResourceType, resourceCount: number, count: number, source: any, camp?: TurnCamp): number[] {
+    private buildObstacleCellLevels(count: number, source: any): number[] {
+        let maxLevel = Math.max(1, Math.floor(Number(this._config.resourceMerge && this._config.resourceMerge.maxLevel) || 1));
+        let raw = source && (Array.isArray(source.cellLevels) ? source.cellLevels : Array.isArray(source.levels) ? source.levels : null);
+        let fallback = Math.max(1, Math.min(maxLevel, Math.floor(Number(source && (source.resourceLevel || source.level)) || 1)));
+        let result: number[] = [];
+        for (let i = 0; i < Math.max(1, count); i++) {
+            result.push(Math.max(1, Math.min(maxLevel, Math.floor(Number(raw && raw[i]) || fallback))));
+        }
+        return result;
+    }
+
+    private buildObstacleCellHp(slotType: TurnObstacleResourceType, resourceCount: number, count: number, source: any, camp?: TurnCamp, cellLevels?: number[]): number[] {
         if (slotType !== "exp") {
-            return this.buildCellHpFromSnapshot(source, count, this.getObstacleCellMaxHp(slotType, camp));
+            let defaultHp = this.getObstacleCellMaxHp(slotType, camp);
+            let levels = Array.isArray(cellLevels) ? cellLevels : [];
+            let result: number[] = [];
+            for (let i = 0; i < Math.max(1, count); i++) {
+                let fallbackHp = getTurnResourceLevelHp(slotType, levels[i] || 1, this._config);
+                let hp = Array.isArray(source) ? Math.max(0, Number(source[i]) || 0) : fallbackHp;
+                result.push(hp > 0 ? hp : fallbackHp);
+            }
+            return result;
         }
         let defaultHpList = this.buildExpCellHpList(resourceCount, count, camp);
         let result: number[] = [];
@@ -2293,7 +2373,10 @@ export default class TurnBattleMap extends cc.Component {
         for (let i = 0; i < this._obstacles.length; i++) {
             let obstacle = this._obstacles[i];
             if (obstacle.camp === camp && obstacle.slotType === slotType) {
-                total += Math.max(1, obstacle.resourceCount);
+                let levels = Array.isArray(obstacle.cellLevels) && obstacle.cellLevels.length > 0 ? obstacle.cellLevels : [obstacle.resourceLevel || 1];
+                for (let j = 0; j < levels.length; j++) {
+                    total += getTurnResourceLevelValue(levels[j], this._config);
+                }
             }
         }
         return total;
@@ -2307,6 +2390,36 @@ export default class TurnBattleMap extends cc.Component {
             energy: this.countLivingResource(camp, "energy"),
             bleed: this.countLivingResource(camp, "bleed"),
             coin: this.countLivingResource(camp, "coin"),
+            missile_silo: this.countLivingResource(camp, "missile_silo"),
+            mirror: this.countLivingResource(camp, "mirror"),
+        };
+    }
+
+    private sumLivingResourceProperty(camp: TurnCamp, slotType: TurnObstacleResourceType): number {
+        let total = 0;
+        for (let i = 0; i < this._obstacles.length; i++) {
+            let obstacle = this._obstacles[i];
+            if (obstacle.camp !== camp || obstacle.slotType !== slotType) {
+                continue;
+            }
+            let levels = Array.isArray(obstacle.cellLevels) && obstacle.cellLevels.length > 0 ? obstacle.cellLevels : [obstacle.resourceLevel || 1];
+            for (let j = 0; j < levels.length; j++) {
+                total += getTurnResourcePropertyValue(slotType, levels[j], this._config);
+            }
+        }
+        return total;
+    }
+
+    private buildBondPropertyMap(camp: TurnCamp): TurnBondCountMap {
+        return {
+            bullet: 0,
+            attack: this.sumLivingResourceProperty(camp, "attack"),
+            exp: 0,
+            energy: this.sumLivingResourceProperty(camp, "energy"),
+            bleed: this.sumLivingResourceProperty(camp, "bleed"),
+            coin: this.sumLivingResourceProperty(camp, "coin"),
+            missile_silo: this.sumLivingResourceProperty(camp, "missile_silo"),
+            mirror: 0,
         };
     }
 
@@ -2320,12 +2433,12 @@ export default class TurnBattleMap extends cc.Component {
             spreadExtraSplit: stats.derivedUpgrades.spreadExtraSplit,
             damageBoostTempAttack: stats.derivedUpgrades.damageBoostTempAttack,
             blackHoleStrengthMultiplier: stats.derivedUpgrades.blackHoleStrengthMultiplier,
-        }, this._config, this._roundIndex);
+        }, this._config, this._roundIndex, this.buildBondPropertyMap(camp));
     }
 
     private buildSettlementSnapshotForCamp(camp: TurnCamp): TurnSettlementBondSnapshot {
         let enemyCamp: TurnCamp = camp === "A" ? "B" : "A";
-        return buildTurnSettlementBondSnapshot(this.buildBondCountMap(camp), this.buildBondCountMap(enemyCamp), this._config);
+        return buildTurnSettlementBondSnapshot(this.buildBondCountMap(camp), this.buildBondCountMap(enemyCamp), this._config, this.buildBondPropertyMap(camp), this.buildBondPropertyMap(enemyCamp));
     }
 
     private buildAttackSnapshotFromServer(source: any): TurnAttackSnapshotState {
@@ -2395,14 +2508,14 @@ export default class TurnBattleMap extends cc.Component {
                 continue;
             }
             stats.derivedUpgrades = previousDerived;
-            let previousCellHp = this.buildObstacleCellHp(obstacle.slotType, obstacle.resourceCount, obstacle.layout.length, null, camp);
+            let previousCellHp = this.buildObstacleCellHp(obstacle.slotType, obstacle.resourceCount, obstacle.layout.length, null, camp, obstacle.cellLevels);
             stats.derivedUpgrades = currentDerived;
-            let nextCellHp = this.buildObstacleCellHp(obstacle.slotType, obstacle.resourceCount, obstacle.layout.length, null, camp);
+            let nextCellHp = this.buildObstacleCellHp(obstacle.slotType, obstacle.resourceCount, obstacle.layout.length, null, camp, obstacle.cellLevels);
             for (let j = 0; j < obstacle.cellHp.length && j < nextCellHp.length; j++) {
                 let delta = Math.max(0, nextCellHp[j] - (previousCellHp[j] || 0));
                 obstacle.cellHp[j] = Math.min(nextCellHp[j], Math.max(0, obstacle.cellHp[j]) + delta);
             }
-            obstacle.maxHp = this.getObstacleMaxHp(obstacle.slotType, obstacle.resourceCount, camp);
+            obstacle.maxHp = this.getObstacleMaxHpForLevels(obstacle.slotType, obstacle.cellLevels, camp);
             obstacle.hp = this.sumObstacleCellHp(obstacle);
             this.refreshObstacleHpLabel(obstacle);
         }
@@ -2789,14 +2902,6 @@ export default class TurnBattleMap extends cc.Component {
 
     private syncObstacleState(obstacles: any[]) {
         this.clearAllDynamicObstacles();
-        let camps: TurnCamp[] = ["A", "B"];
-        for (let campIndex = 0; campIndex < camps.length; campIndex++) {
-            let campSlots = this._obstacleInventory[camps[campIndex]] || [];
-            for (let slotIndex = 0; slotIndex < campSlots.length; slotIndex++) {
-                campSlots[slotIndex].placed = false;
-                campSlots[slotIndex].placedObstacleId = "";
-            }
-        }
         let maxId = this._nextObstacleId;
         for (let j = 0; j < obstacles.length; j++) {
             let obstacle = obstacles[j];
@@ -3405,7 +3510,7 @@ export default class TurnBattleMap extends cc.Component {
         let after = Math.max(0, before - damage);
         obstacle.cellHp[cellIndex] = after;
         obstacle.hp = this.sumObstacleCellHp(obstacle);
-        obstacle.maxHp = this.resolveObstacleMaxHp(obstacle.slotType, obstacle.resourceCount, obstacle.maxHp, obstacle.camp);
+        obstacle.maxHp = this.getObstacleMaxHpForLevels(obstacle.slotType, obstacle.cellLevels, obstacle.camp);
         return before - after;
     }
 
@@ -3510,12 +3615,21 @@ export default class TurnBattleMap extends cc.Component {
         return this.getObstacleMaxHp(slotType, 1, camp);
     }
 
-    private resolveObstacleMaxHp(slotType: TurnObstacleResourceType, resourceCount: number, snapshotMaxHp?: number, camp?: TurnCamp): number {
-        let configMax = this.getObstacleMaxHp(slotType, resourceCount, camp);
+    private getObstacleMaxHpForLevels(slotType: TurnObstacleResourceType, cellLevels: number[], camp?: TurnCamp): number {
+        let levels = Array.isArray(cellLevels) && cellLevels.length > 0 ? cellLevels : [1];
+        let total = 0;
+        for (let i = 0; i < levels.length; i++) {
+            total += getTurnResourceLevelHp(slotType, levels[i], this._config);
+        }
+        return Math.max(1, total);
+    }
+
+    private resolveObstacleMaxHp(slotType: TurnObstacleResourceType, resourceCount: number, snapshotMaxHp?: number, camp?: TurnCamp, cellLevels?: number[]): number {
+        let configMax = this.getObstacleMaxHpForLevels(slotType, cellLevels, camp);
         if (!Number.isFinite(snapshotMaxHp)) {
             return configMax;
         }
-        return Math.max(1, Math.min(configMax, Math.floor(snapshotMaxHp)));
+        return Math.max(1, Math.floor(snapshotMaxHp));
     }
 
     private resolveObstacleHp(slotType: TurnObstacleResourceType, cellCount: number, snapshotHp: number, cellHp: number[], maxHp: number): number {
@@ -3573,7 +3687,8 @@ export default class TurnBattleMap extends cc.Component {
         for (let i = 0; i < layout.length && i < obstacle.cellHp.length; i++) {
             let cell = layout[i];
             let hp = Math.max(0, Math.floor(Number(obstacle.cellHp[i]) || 0));
-            let label = this.createLabel(String(hp), fontSize);
+            let level = Math.max(1, Math.floor(Number(obstacle.cellLevels && obstacle.cellLevels[i]) || Number(obstacle.resourceLevel) || 1));
+            let label = this.createLabel(level > 1 ? hp + " L" + level : String(hp), fontSize);
             label.verticalAlign = cc.Label.VerticalAlign.BOTTOM;
             label.node.name = "ObstacleCellHpLabel";
             label.node.parent = obstacle.node;
