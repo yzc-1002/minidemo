@@ -740,6 +740,9 @@ export function getTurnObstacleShortLabel(type: TurnObstacleResourceType): strin
     if (type === "missile_silo") {
         return "导";
     }
+    if (type === "normal") {
+        return "墙";
+    }
     return "";
 }
 

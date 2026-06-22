@@ -65,7 +65,7 @@ export default class TurnHud extends cc.Component {
     private _buildPaletteCount = 0;
     private _buildPaletteEnabled = false;
     private _buildPaletteAttackMode = false;
-    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[] }[] = [];
+    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[]; cellLevels?: number[] }[] = [];
     private _refreshButton: cc.Node = null;
     private _refreshButtonLabel: cc.Label = null;
     private _refreshCoinLabel: cc.Label = null;
@@ -192,7 +192,7 @@ export default class TurnHud extends cc.Component {
         this.inventoryLabel.string = "掩体 A: " + aCount + "  |  B: " + bCount;
     }
 
-    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[] }[], enabled: boolean) {
+    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[]; cellLevels?: number[] }[], enabled: boolean) {
         this.ensureBuildPalette();
         this._buildPaletteCamp = camp || "A";
         this._buildPaletteSlots = Array.isArray(slots) ? slots.slice() : [];
@@ -1157,7 +1157,7 @@ export default class TurnHud extends cc.Component {
     private drawSlotShape(
         target: cc.Node,
         graphics: cc.Graphics,
-        slot: { type: TurnObstacleResourceType; placed: boolean; count: number; layout?: { x: number; y: number }[]; shapeKey?: string },
+        slot: { type: TurnObstacleResourceType; placed: boolean; count: number; layout?: { x: number; y: number }[]; shapeKey?: string; cellLevels?: number[] },
         centerX: number,
         centerY: number,
         innerSize: number,
@@ -1189,13 +1189,13 @@ export default class TurnHud extends cc.Component {
         let totalH = dimY * cellSize + (dimY - 1) * cellGap;
         let originX = centerX - totalW / 2 - minX * (cellSize + cellGap);
         let originY = centerY - totalH / 2 - minY * (cellSize + cellGap);
-        let fillColor = this.getSlotColor(slot.type, slot.placed);
         let strokeAlpha = slot.placed ? 140 : 220;
         for (let i = 0; i < cells.length; i++) {
             let cell = cells[i];
             let cx = originX + cell.x * (cellSize + cellGap);
             let cy = originY + cell.y * (cellSize + cellGap);
-            graphics.fillColor = fillColor;
+            let level = Math.max(1, Math.floor(Number(slot.cellLevels && slot.cellLevels[i]) || 1));
+            graphics.fillColor = this.getSlotColor(slot.type, slot.placed, level);
             graphics.roundRect(cx, cy, cellSize, cellSize, Math.max(2, Math.floor(cellSize * 0.18)));
             graphics.fill();
             graphics.strokeColor = new cc.Color(245, 248, 252, strokeAlpha);
@@ -1349,32 +1349,17 @@ export default class TurnHud extends cc.Component {
         return fallback || "普通方块";
     }
 
-    private getSlotColor(type: TurnObstacleResourceType, placed: boolean): cc.Color {
-        if (type === "mirror") {
-            return placed ? new cc.Color(126, 140, 170, 200) : new cc.Color(180, 196, 236, 255);
-        }
-        if (type === "exp") {
-            return placed ? new cc.Color(144, 126, 78, 200) : new cc.Color(223, 173, 62, 255);
-        }
-        if (type === "energy") {
-            return placed ? new cc.Color(76, 120, 155, 200) : new cc.Color(72, 168, 228, 255);
-        }
-        if (type === "bleed") {
-            return placed ? new cc.Color(140, 78, 78, 200) : new cc.Color(224, 98, 98, 255);
-        }
-        if (type === "bullet") {
-            return placed ? new cc.Color(104, 92, 154, 200) : new cc.Color(166, 140, 255, 255);
-        }
-        if (type === "attack") {
-            return placed ? new cc.Color(158, 98, 76, 200) : new cc.Color(255, 146, 86, 255);
-        }
-        if (type === "missile_silo") {
-            return placed ? new cc.Color(76, 94, 112, 200) : new cc.Color(104, 132, 154, 255);
-        }
-        if (type === "coin") {
-            return placed ? new cc.Color(168, 138, 56, 200) : new cc.Color(247, 205, 66, 255);
-        }
-        return placed ? new cc.Color(90, 104, 92, 200) : new cc.Color(99, 156, 106, 255);
+    private getSlotColor(_type: TurnObstacleResourceType, placed: boolean, level: number = 1): cc.Color {
+        let alpha = placed ? 200 : 255;
+        let palette = [
+            new cc.Color(20, 20, 20, alpha),
+            new cc.Color(58, 174, 84, alpha),
+            new cc.Color(72, 136, 232, alpha),
+            new cc.Color(154, 89, 220, alpha),
+            new cc.Color(245, 150, 48, alpha),
+        ];
+        let index = Math.max(0, Math.min(palette.length - 1, Math.floor(Number(level) || 1) - 1));
+        return palette[index];
     }
 
     private isBuildPaletteAvailable(): boolean {

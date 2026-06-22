@@ -1876,13 +1876,13 @@ export default class TurnBattleMap extends cc.Component {
         node.parent = this._obstacleLayer || this.contentRoot;
         node.setPosition(position.x, position.y);
 
-        let graphics = node.addComponent(cc.Graphics);
-        this.drawObstacleGraphics(graphics, camp, true, slotType, layout, mirrorDir);
-
         let cellLevels = this.buildObstacleCellLevels(layout.length, snapshot);
         let maxHp = this.resolveObstacleMaxHp(slotType, resourceCount, Number(snapshot && snapshot.maxHp), camp, cellLevels);
         let cellHp = this.buildObstacleCellHp(slotType, resourceCount, layout.length, snapshot && (snapshot.cellHp || snapshot.cellHpList), camp, cellLevels);
         let hp = this.resolveObstacleHp(slotType, layout.length, Number(snapshot && snapshot.hp), cellHp, maxHp);
+
+        let graphics = node.addComponent(cc.Graphics);
+        this.drawObstacleGraphics(graphics, camp, true, slotType, layout, mirrorDir, cellLevels);
 
         let id = forcedId || String(this._nextObstacleId++);
         if (slot) {
@@ -2004,7 +2004,7 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         graphics.clear();
-        this.drawObstacleGraphics(graphics, obstacle.camp, valid, obstacle.slotType, obstacle.layout, obstacle.mirrorDir);
+        this.drawObstacleGraphics(graphics, obstacle.camp, valid, obstacle.slotType, obstacle.layout, obstacle.mirrorDir, obstacle.cellLevels);
     }
 
     private drawObstacleGraphics(
@@ -2014,6 +2014,7 @@ export default class TurnBattleMap extends cc.Component {
         slotType: TurnObstacleResourceType,
         layout?: cc.Vec2[],
         mirrorDir?: "",
+        cellLevels?: number[],
     ) {
         let cells = this.normalizeObstacleLayout(slotType, layout);
         let cellSize = this._dynamicObstacleSize.width;
@@ -2021,7 +2022,8 @@ export default class TurnBattleMap extends cc.Component {
             let cell = cells[i];
             let x = cell.x * cellSize - cellSize / 2;
             let y = cell.y * cellSize - cellSize / 2;
-            graphics.fillColor = this.getObstacleFillColor(camp, valid, slotType);
+            let level = Math.max(1, Math.floor(Number(cellLevels && cellLevels[i]) || 1));
+            graphics.fillColor = this.getObstacleFillColor(camp, valid, slotType, level);
             graphics.roundRect(x, y, cellSize, cellSize, 8);
             graphics.fill();
             graphics.strokeColor = new cc.Color(240, 240, 240, 180);
@@ -2750,32 +2752,19 @@ export default class TurnBattleMap extends cc.Component {
         stats.derivedUpgrades = currentDerived;
     }
 
-    private getObstacleFillColor(camp: TurnCamp, valid: boolean, slotType: TurnObstacleResourceType): cc.Color {
+    private getObstacleFillColor(_camp: TurnCamp, valid: boolean, _slotType: TurnObstacleResourceType, level: number = 1): cc.Color {
         if (!valid) {
             return new cc.Color(210, 60, 60, 255);
         }
-        if (slotType === "exp") {
-            return new cc.Color(223, 173, 62, 255);
-        }
-        if (slotType === "energy") {
-            return new cc.Color(72, 168, 228, 255);
-        }
-        if (slotType === "bleed") {
-            return new cc.Color(224, 98, 98, 255);
-        }
-        if (slotType === "bullet") {
-            return new cc.Color(166, 140, 255, 255);
-        }
-        if (slotType === "attack") {
-            return new cc.Color(255, 146, 86, 255);
-        }
-        if (slotType === "missile_silo") {
-            return new cc.Color(104, 132, 154, 255);
-        }
-        if (slotType === "coin") {
-            return new cc.Color(247, 205, 66, 255);
-        }
-        return camp === "A" ? new cc.Color(99, 156, 106, 255) : new cc.Color(161, 96, 108, 255);
+        let palette = [
+            new cc.Color(20, 20, 20, 255),
+            new cc.Color(58, 174, 84, 255),
+            new cc.Color(72, 136, 232, 255),
+            new cc.Color(154, 89, 220, 255),
+            new cc.Color(245, 150, 48, 255),
+        ];
+        let index = Math.max(0, Math.min(palette.length - 1, Math.floor(Number(level) || 1) - 1));
+        return palette[index];
     }
 
     private countPlacedEnergyTowers(camp: TurnCamp): number {
@@ -3292,6 +3281,13 @@ export default class TurnBattleMap extends cc.Component {
             graphics.lineWidth = 2;
             graphics.rect(-obstacle.rect.width / 2, -obstacle.rect.height / 2, obstacle.rect.width, obstacle.rect.height);
             graphics.stroke();
+
+            let label = this.createLabel("障", 18);
+            label.verticalAlign = cc.Label.VerticalAlign.CENTER;
+            label.node.parent = node;
+            label.node.setPosition(0, 0);
+            label.node.color = cc.Color.WHITE;
+            label.node.zIndex = 2;
         }
     }
 
@@ -3691,7 +3687,7 @@ export default class TurnBattleMap extends cc.Component {
         let graphics = obstacle.node.getComponent(cc.Graphics);
         if (graphics) {
             graphics.clear();
-            this.drawObstacleGraphics(graphics, obstacle.camp, true, obstacle.slotType, obstacle.layout, obstacle.mirrorDir);
+            this.drawObstacleGraphics(graphics, obstacle.camp, true, obstacle.slotType, obstacle.layout, obstacle.mirrorDir, obstacle.cellLevels);
         }
     }
 
@@ -3860,7 +3856,6 @@ export default class TurnBattleMap extends cc.Component {
         for (let i = 0; i < layout.length && i < obstacle.cellHp.length; i++) {
             let cell = layout[i];
             let hp = Math.max(0, Math.floor(Number(obstacle.cellHp[i]) || 0));
-            let level = Math.max(1, Math.floor(Number(obstacle.cellLevels && obstacle.cellLevels[i]) || Number(obstacle.resourceLevel) || 1));
             let markText = getTurnObstacleShortLabel(obstacle.slotType);
             if (markText) {
                 let mark = this.createLabel(markText, 18);
@@ -3870,16 +3865,16 @@ export default class TurnBattleMap extends cc.Component {
                 mark.node.setAnchorPoint(0.5, 0.5);
                 mark.node.setPosition(cell.x * cellSize, cell.y * cellSize + 1);
                 mark.node.zIndex = 4;
-                mark.node.color = new cc.Color(255, 255, 255, 245);
+                mark.node.color = cc.Color.WHITE;
             }
-            let label = this.createLabel(level > 1 ? hp + " L" + level : String(hp), fontSize);
+            let label = this.createLabel(String(hp), fontSize);
             label.verticalAlign = cc.Label.VerticalAlign.BOTTOM;
             label.node.name = "ObstacleCellHpLabel";
             label.node.parent = obstacle.node;
             label.node.setAnchorPoint(0.5, 0);
             label.node.setPosition(cell.x * cellSize, cell.y * cellSize - cellSize / 2 + bottomPadding);
             label.node.zIndex = 5;
-            label.node.color = new cc.Color(255, 248, 220, 255);
+            label.node.color = cc.Color.WHITE;
         }
     }
 
@@ -4800,7 +4795,7 @@ export default class TurnBattleMap extends cc.Component {
         }
 
         let seconds = Math.ceil(Math.max(0, this._phaseTimeLeft));
-        if (seconds > 0 && seconds <= 5) {
+        if (seconds > 0) {
             let label = this.createLabel(seconds + "s", 42);
             label.node.name = "AttackCountdown";
             label.node.parent = this._buildHighlightLayer;
