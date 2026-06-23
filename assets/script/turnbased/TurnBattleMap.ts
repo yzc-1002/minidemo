@@ -2505,9 +2505,27 @@ export default class TurnBattleMap extends cc.Component {
 
     private randomSlotType(): TurnObstacleResourceType {
         let slots = this._config.obstacleSlots || [];
-        let index = Math.floor(Math.random() * Math.max(1, slots.length));
-        let picked = slots[index];
-        return picked ? picked.type : "normal";
+        let totalWeight = 0;
+        for (let i = 0; i < slots.length; i++) {
+            totalWeight += Math.max(0, Number(slots[i] && slots[i].weight) || 0);
+        }
+        if (totalWeight <= 0) {
+            let index = Math.floor(Math.random() * Math.max(1, slots.length));
+            let picked = slots[index];
+            return picked ? picked.type : "normal";
+        }
+        let roll = Math.random() * totalWeight;
+        for (let i = 0; i < slots.length; i++) {
+            let weight = Math.max(0, Number(slots[i] && slots[i].weight) || 0);
+            if (weight <= 0) {
+                continue;
+            }
+            roll -= weight;
+            if (roll < 0) {
+                return slots[i].type;
+            }
+        }
+        return slots.length > 0 ? slots[slots.length - 1].type : "normal";
     }
 
     private findLatestObstacleBySlot(camp: TurnCamp, slotType: TurnObstacleResourceType): TurnObstacleState {

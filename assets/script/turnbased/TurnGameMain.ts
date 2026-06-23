@@ -351,7 +351,7 @@ export default class TurnGameMain extends cc.Component {
                 localCamp,
                 this._battleMap.getCampCanRefresh(localCamp),
                 this._battleMap.getCampRefreshCost(localCamp),
-                this._battleMap.getCampPlacedThisRound(localCamp),
+                false,
             );
         }
         else {

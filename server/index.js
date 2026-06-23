@@ -573,6 +573,7 @@ const TURN_CONFIG = {
     baseRoundReward: 10,
     slotCost: 10,
     refreshCost: 5,
+    refreshCostMultiplier: 2,
     destroyedEnemyResourceCoinReward: 1,
     enemyTankHitCoinReward: 1,
     perDestroyedEnemyCell: 1,
@@ -715,6 +716,16 @@ const TURN_CONFIG = {
     },
   },
   obstacleSlotMaxResources: 4,
+  obstacleSlots: [
+    { type: 'normal', name: '普通方块', weight: 15 },
+    { type: 'mirror', name: '反弹块', weight: 15 },
+    { type: 'coin', name: '金币块', weight: 15 },
+    { type: 'energy', name: '能量墙', weight: 15 },
+    { type: 'bleed', name: '滴血块', weight: 15 },
+    { type: 'bullet', name: '子弹块', weight: 10 },
+    { type: 'attack', name: '攻击块', weight: 10 },
+    { type: 'missile_silo', name: '导弹井', weight: 5 },
+  ],
 };
 const TURN_PHASE = {
   WAITING: 'waiting',
@@ -1173,6 +1184,7 @@ function createTurnPlayer(ws, camp, index) {
     expNeed: TURN_CONFIG.expNeed,
     coins: Math.max(0, Math.floor(Number(coinEconomy.initialCoins) || 0)),
     placedThisRound: false,
+    refreshCountThisRound: 0,
     inventory: {
       roundResourceTotal: TURN_CONFIG.initialRoundResourceTotal,
       roundSlots: [],
@@ -1516,7 +1528,28 @@ function getTurnRoundResourceTotal(player, displayRound) {
 }
 
 function randomTurnObstacleType() {
-  return TURN_OBSTACLE_SLOT_TYPES[Math.floor(Math.random() * TURN_OBSTACLE_SLOT_TYPES.length)] || 'normal';
+  const slots = Array.isArray(TURN_CONFIG.obstacleSlots) ? TURN_CONFIG.obstacleSlots : [];
+  let totalWeight = 0;
+  for (let i = 0; i < slots.length; i++) {
+    totalWeight += Math.max(0, Number(slots[i] && slots[i].weight) || 0);
+  }
+  if (totalWeight <= 0) {
+    return TURN_OBSTACLE_SLOT_TYPES[Math.floor(Math.random() * TURN_OBSTACLE_SLOT_TYPES.length)] || 'normal';
+  }
+  let roll = Math.random() * totalWeight;
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const type = slot && TURN_OBSTACLE_SLOT_TYPES.indexOf(slot.type) >= 0 ? slot.type : '';
+    const weight = Math.max(0, Number(slot && slot.weight) || 0);
+    if (!type || weight <= 0) {
+      continue;
+    }
+    roll -= weight;
+    if (roll < 0) {
+      return type;
+    }
+  }
+  return 'normal';
 }
 
 function splitTurnRoundResources(totalResources) {
@@ -1539,22 +1572,24 @@ function createTurnRoundSlots(player, roomState, displayRound) {
   const counts = splitTurnRoundResources(totalResources);
   player.inventory = player.inventory || {};
   player.inventory.roundResourceTotal = totalResources;
-  player.inventory.roundSlots = counts.map((count, index) => {
-    const type = randomTurnObstacleType();
-    const layout = buildObstacleLayout(type, count);
-    const shapeKey = getObstacleLayoutKey(layout);
-    return {
-      slotId: `${player.camp}_r${displayRound}_s${index}`,
-      type,
-      count,
-      layout,
-      shapeKey,
-      mirrorDir: '',
-      placed: false,
-      placedObstacleId: '',
-    };
-  });
+  player.inventory.roundSlots = counts.map((count, index) => createTurnRoundSlot(player, displayRound, index, count));
   return player.inventory.roundSlots;
+}
+
+function createTurnRoundSlot(player, displayRound, index, count) {
+  const type = randomTurnObstacleType();
+  const layout = buildObstacleLayout(type, count);
+  const shapeKey = getObstacleLayoutKey(layout);
+  return {
+    slotId: `${player.camp}_r${displayRound}_s${index}`,
+    type,
+    count,
+    layout,
+    shapeKey,
+    mirrorDir: '',
+    placed: false,
+    placedObstacleId: '',
+  };
 }
 
 function findTurnRoundSlot(player, slotId) {
@@ -1638,14 +1673,35 @@ function getTurnCoinSettlementGain(roomState, camp) {
 
 function getTurnPlayerEconomy(player) {
   const economy = TURN_CONFIG.coinEconomy || {};
+  const refreshCost = getTurnRefreshCost(player);
   return {
     coins: Math.max(0, Math.floor(Number(player && player.coins) || 0)),
     placedThisRound: !!(player && player.placedThisRound),
-    slotCost: Math.max(0, Math.floor(Number(economy.slotCost) || 0)),
-    refreshCost: Math.max(0, Math.floor(Number(economy.refreshCost) || 0)),
-    canRefresh: !!(player && !player.placedThisRound)
-      && Math.max(0, Math.floor(Number(player && player.coins) || 0)) >= Math.max(0, Math.floor(Number(economy.refreshCost) || 0)),
+    slotCost: getTurnSlotCost(),
+    refreshCost,
+    canRefresh: canTurnPlayerRefreshAndStillBuy(player),
   };
+}
+
+function getTurnSlotCost() {
+  const economy = TURN_CONFIG.coinEconomy || {};
+  return Math.max(0, Math.floor(Number(economy.slotCost) || 0));
+}
+
+function getTurnRefreshCost(player) {
+  const economy = TURN_CONFIG.coinEconomy || {};
+  const baseCost = Math.max(0, Math.floor(Number(economy.refreshCost) || 0));
+  const multiplier = Math.max(1, Number(economy.refreshCostMultiplier) || 1);
+  const refreshCount = Math.max(0, Math.floor(Number(player && player.refreshCountThisRound) || 0));
+  return Math.floor(baseCost * Math.pow(multiplier, refreshCount));
+}
+
+function canTurnPlayerRefreshAndStillBuy(player) {
+  if (!player) {
+    return false;
+  }
+  const coins = Math.max(0, Math.floor(Number(player.coins) || 0));
+  return coins >= getTurnRefreshCost(player) + getTurnSlotCost();
 }
 
 function getTurnBondMultiplier(type, count) {
@@ -2347,6 +2403,7 @@ function startTurnBuildPhase(roomState) {
   const coinReward = Math.max(0, Math.floor(Number(TURN_CONFIG.coinEconomy && TURN_CONFIG.coinEconomy.baseRoundReward) || 0));
   roomState.players.forEach((player) => {
     player.placedThisRound = false;
+    player.refreshCountThisRound = 0;
     player.coins = Math.max(0, Math.floor(Number(player.coins) || 0)) + coinReward;
     createTurnRoundSlots(player, roomState, roomState.roundIndex);
   });
@@ -2366,13 +2423,17 @@ function isTurnBuildPlayerDone(player) {
   const slots = player.inventory && Array.isArray(player.inventory.roundSlots)
     ? player.inventory.roundSlots
     : [];
-  const hasUnplacedSlot = slots.some((slot) => slot && !slot.placed && !slot.placedObstacleId && Math.max(0, Number(slot.count) || 0) > 0);
-  if (!hasUnplacedSlot) {
-    return true;
-  }
-  const slotCost = Math.max(0, Math.floor(Number(TURN_CONFIG.coinEconomy && TURN_CONFIG.coinEconomy.slotCost) || 0));
+  const slotCost = getTurnSlotCost();
   const coins = Math.max(0, Math.floor(Number(player.coins) || 0));
-  return slotCost > 0 && coins < slotCost;
+  const hasAffordableUnplacedSlot = slots.some((slot) => (
+    slot
+    && !slot.placed
+    && !slot.placedObstacleId
+    && Math.max(0, Number(slot.count) || 0) > 0
+    && (slotCost <= 0 || coins >= slotCost)
+  ));
+  const canRefresh = canTurnPlayerRefreshAndStillBuy(player);
+  return !hasAffordableUnplacedSlot && !canRefresh;
 }
 
 function tryCompleteTurnBuildPhaseEarly(roomState) {
@@ -3037,20 +3098,28 @@ function handleTurnRefreshSlots(ws, msg) {
     sendTurnError(ws, '当前不能刷新', 'invalidPhase');
     return;
   }
-  if (player.placedThisRound) {
-    sendTurnError(ws, '已放置过资源，本轮无法刷新', 'refreshLocked');
-    return;
-  }
-  const economy = TURN_CONFIG.coinEconomy || {};
-  const refreshCost = Math.max(0, Math.floor(Number(economy.refreshCost) || 0));
+  const refreshCost = getTurnRefreshCost(player);
   const coins = Math.max(0, Math.floor(Number(player.coins) || 0));
-  if (refreshCost > 0 && coins < refreshCost) {
-    sendTurnError(ws, '金币不足，无法刷新', 'notEnoughCoins');
+  if (!canTurnPlayerRefreshAndStillBuy(player)) {
+    sendTurnError(ws, '金币不足，刷新后无法购买资源', 'notEnoughCoins');
     return;
   }
   player.coins = coins - refreshCost;
-  createTurnRoundSlots(player, roomState, roomState.roundIndex);
-  logTurn(roomState, `refreshSlots ok: camp=${player.camp} cost=${refreshCost} coins=${player.coins}`);
+  player.refreshCountThisRound = Math.max(0, Math.floor(Number(player.refreshCountThisRound) || 0)) + 1;
+
+  const totalResources = getTurnRoundResourceTotal(player, roomState.roundIndex);
+  const counts = splitTurnRoundResources(totalResources);
+  const previousSlots = player.inventory && Array.isArray(player.inventory.roundSlots) ? player.inventory.roundSlots : [];
+  player.inventory = player.inventory || {};
+  player.inventory.roundResourceTotal = totalResources;
+  player.inventory.roundSlots = counts.map((count, index) => {
+    const previousSlot = previousSlots[index];
+    if (previousSlot && (previousSlot.placed || previousSlot.placedObstacleId)) {
+      return previousSlot;
+    }
+    return createTurnRoundSlot(player, roomState.roundIndex, index, count);
+  });
+  logTurn(roomState, `refreshSlots ok: camp=${player.camp} cost=${refreshCost} refreshCount=${player.refreshCountThisRound} coins=${player.coins}`);
   broadcastTurnSnapshot(roomState);
   tryCompleteTurnBuildPhaseEarly(roomState);
 }

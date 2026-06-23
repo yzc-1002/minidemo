@@ -85,6 +85,7 @@ export interface TurnUpgradeConfig {
 export interface TurnObstacleSlotConfig {
     type: TurnObstacleResourceType;
     name: string;
+    weight?: number;
 }
 
 export interface TurnObstacleHpRuleConfig {
@@ -183,6 +184,7 @@ export interface TurnCoinEconomyConfig {
     baseRoundReward: number;
     slotCost: number;
     refreshCost: number;
+    refreshCostMultiplier: number;
     destroyedEnemyResourceCoinReward: number;
     enemyTankHitCoinReward: number;
     perDestroyedEnemyCell: number;
@@ -506,6 +508,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         baseRoundReward: 10,
         slotCost: 10,
         refreshCost: 5,
+        refreshCostMultiplier: 2,
         destroyedEnemyResourceCoinReward: 1,
         enemyTankHitCoinReward: 1,
         perDestroyedEnemyCell: 1,
@@ -652,14 +655,14 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     energyWallRoundHeal: 10,
     bloodBlockHealPerStack: 1,
     obstacleSlots: [
-        { type: "normal", name: "普通方块" },
-        { type: "mirror", name: "反弹块" },
-        { type: "energy", name: "能量墙" },
-        { type: "bleed", name: "滴血块" },
-        { type: "bullet", name: "子弹块" },
-        { type: "attack", name: "攻击块" },
-        { type: "missile_silo", name: "导弹井" },
-        { type: "coin", name: "金币块" },
+        { type: "normal", name: "普通方块", weight: 15 },
+        { type: "mirror", name: "反弹块", weight: 15 },
+        { type: "coin", name: "金币块", weight: 15 },
+        { type: "energy", name: "能量墙", weight: 15 },
+        { type: "bleed", name: "滴血块", weight: 15 },
+        { type: "bullet", name: "子弹块", weight: 10 },
+        { type: "attack", name: "攻击块", weight: 10 },
+        { type: "missile_silo", name: "导弹井", weight: 5 },
     ],
     tankMoveSpeed: 360,
     mapWidth: 640,

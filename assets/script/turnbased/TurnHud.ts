@@ -196,9 +196,12 @@ export default class TurnHud extends cc.Component {
         this.ensureBuildPalette();
         this._buildPaletteCamp = camp || "A";
         this._buildPaletteSlots = Array.isArray(slots) ? slots.slice() : [];
-        this._buildPaletteCount = this._buildPaletteSlots.reduce((total, item) => total + Math.max(0, item.count || 0), 0);
+        this._buildPaletteCount = this._buildPaletteSlots.reduce((total, item) => {
+            return total + (!item.placed ? Math.max(0, item.count || 0) : 0);
+        }, 0);
         this._buildPaletteEnabled = !!enabled;
-        if (!this.getSelectedBuildSlot()) {
+        let selected = this.getSelectedBuildSlot();
+        if (!selected || selected.placed || selected.count <= 0) {
             let firstUsable = this._buildPaletteSlots.find((item) => item.count > 0 && !item.placed);
             this._selectedBuildSlotId = firstUsable ? firstUsable.slotId : "";
         }
@@ -1049,7 +1052,7 @@ export default class TurnHud extends cc.Component {
         }
         let cost = Math.max(0, Math.floor(Number(this._refreshCost) || 0));
         this._refreshButtonLabel.string = "刷新 -" + cost;
-        let usable = this._refreshAvailable && !this._refreshLockedByPlacement;
+        let usable = this._refreshAvailable;
         this._refreshButtonLabel.node.color = usable
             ? new cc.Color(255, 218, 96, 255)
             : new cc.Color(255, 120, 120, 255);
@@ -1095,7 +1098,7 @@ export default class TurnHud extends cc.Component {
         if (event) {
             event.stopPropagation();
         }
-        if (!this._buildPaletteEnabled || !this._refreshAvailable || this._refreshLockedByPlacement) {
+        if (!this._buildPaletteEnabled || !this._refreshAvailable) {
             return;
         }
         if (this.onBuildRefresh) {
