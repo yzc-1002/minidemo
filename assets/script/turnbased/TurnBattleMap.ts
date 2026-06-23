@@ -4802,6 +4802,15 @@ export default class TurnBattleMap extends cc.Component {
             label.node.setPosition(buildArea.x + buildArea.width / 2, buildArea.y + buildArea.height / 2);
             label.node.color = new cc.Color(255, 245, 245, 255);
             label.node.zIndex = 10;
+
+            let attackSnapshot = this._attackSnapshot || (this._actionCamp ? this.buildAttackSnapshotForCamp(this._actionCamp) : null);
+            let bounceCount = Math.max(0, Math.floor(Number(attackSnapshot && attackSnapshot.bulletBounce) || 0));
+            let bounceLabel = this.createLabel("反弹 " + bounceCount + "次", 22);
+            bounceLabel.node.name = "AttackBounceCount";
+            bounceLabel.node.parent = this._buildHighlightLayer;
+            bounceLabel.node.setPosition(buildArea.x + buildArea.width / 2, buildArea.y + buildArea.height / 2 - 48);
+            bounceLabel.node.color = new cc.Color(255, 245, 245, 255);
+            bounceLabel.node.zIndex = 10;
         }
     }
 

@@ -598,7 +598,9 @@ export default class TurnHud extends cc.Component {
         let shortLabel = this.createChildLabel(node, item.shortLabel || getTurnObstacleShortLabel(item.type), 24, 0, 4);
         shortLabel.node.color = new cc.Color(245, 248, 255, 255);
         shortLabel.node.zIndex = 3;
-        let valueLabel = this.createChildLabel(node, item.value + "/" + Math.max(0, item.nextValue), 12, 20, -24);
+        let valueLabel = this.createChildLabel(node, item.value + "/" + Math.max(0, item.nextValue), 12, 0, -26);
+        valueLabel.verticalAlign = cc.Label.VerticalAlign.BOTTOM;
+        valueLabel.node.setAnchorPoint(0.5, 0);
         valueLabel.node.color = new cc.Color(245, 248, 255, 245);
         valueLabel.node.zIndex = 3;
 

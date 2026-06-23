@@ -310,6 +310,7 @@ export interface TurnGameConfig {
     bulletDamage: number;
     baseBulletBounce: number;
     roundBulletBounceGrowth: number;
+    roundBulletBounceMilestones: number[];
     maxRoundBulletBounce: number;
     baseFireInterval: number;
     bulletBlockExtraShotInterval: number;
@@ -378,7 +379,7 @@ export interface TurnGameConfig {
 
 export const TURN_GAME_CONFIG: TurnGameConfig = {
     crystalHp: 100,
-    buildSeconds: 15,
+    buildSeconds: 30,
     attackSeconds: 25,
     waitBulletSeconds: 0,
     settleSeconds: 1,
@@ -398,6 +399,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     bulletDamage: 10,
     baseBulletBounce: 0,
     roundBulletBounceGrowth: 1,
+    roundBulletBounceMilestones:  [2, 5, 10, 17],
     maxRoundBulletBounce: 4,
     baseFireInterval: 0,
     bulletBlockExtraShotInterval: 0.5,
@@ -912,8 +914,23 @@ export function getTurnRoundBulletBounce(roundIndex: number, config?: TurnGameCo
     let cfg = config || TURN_GAME_CONFIG;
     let round = Math.max(1, Math.floor(Number(roundIndex) || 1));
     let baseBounce = Math.max(0, Math.floor(Number(cfg.baseBulletBounce) || 0));
-    let growth = Math.max(0, Math.floor(Number(cfg.roundBulletBounceGrowth) || 0));
     let maxBounce = Math.max(baseBounce, Math.floor(Number(cfg.maxRoundBulletBounce) || baseBounce));
+    let milestones = Array.isArray(cfg.roundBulletBounceMilestones)
+        ? cfg.roundBulletBounceMilestones
+            .map((value) => Math.max(1, Math.floor(Number(value) || 0)))
+            .filter((value) => value > 0)
+            .sort((a, b) => a - b)
+        : [];
+    if (milestones.length > 0) {
+        let milestoneBounce = 0;
+        for (let i = 0; i < milestones.length; i++) {
+            if (round >= milestones[i]) {
+                milestoneBounce++;
+            }
+        }
+        return Math.min(maxBounce, baseBounce + milestoneBounce);
+    }
+    let growth = Math.max(0, Math.floor(Number(cfg.roundBulletBounceGrowth) || 0));
     return Math.min(maxBounce, baseBounce + Math.max(0, round - 1) * growth);
 }
 

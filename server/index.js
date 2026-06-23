@@ -443,7 +443,7 @@ function turnSegmentsIntersect(a, b, c, d) {
 }
 
 const TURN_CONFIG = {
-  buildSeconds: 15,
+  buildSeconds: 30,
   attackSeconds: 25,
   waitBulletSeconds: 5,
   settleSeconds: 1,
@@ -467,6 +467,7 @@ const TURN_CONFIG = {
   bulletDamage: 10,
   baseBulletBounce: 0,
   roundBulletBounceGrowth: 1,
+  roundBulletBounceMilestones: [2, 5, 10, 17],
   maxRoundBulletBounce: 4,
   baseFireInterval: 0,
   bulletBlockExtraShotInterval: 0.5,
@@ -1751,8 +1752,23 @@ function getTurnAttackBondBulletDamage(baseDamage, upgradeDamage, attackCount, p
 function getTurnRoundBulletBounce(roundIndex) {
   const round = Math.max(1, Math.floor(Number(roundIndex) || 1));
   const baseBounce = Math.max(0, Math.floor(Number(TURN_CONFIG.baseBulletBounce) || 0));
-  const growth = Math.max(0, Math.floor(Number(TURN_CONFIG.roundBulletBounceGrowth) || 0));
   const maxBounce = Math.max(baseBounce, Math.floor(Number(TURN_CONFIG.maxRoundBulletBounce) || baseBounce));
+  const milestones = Array.isArray(TURN_CONFIG.roundBulletBounceMilestones)
+    ? TURN_CONFIG.roundBulletBounceMilestones
+      .map((value) => Math.max(1, Math.floor(Number(value) || 0)))
+      .filter((value) => value > 0)
+      .sort((a, b) => a - b)
+    : [];
+  if (milestones.length > 0) {
+    let milestoneBounce = 0;
+    for (let i = 0; i < milestones.length; i++) {
+      if (round >= milestones[i]) {
+        milestoneBounce += 1;
+      }
+    }
+    return Math.min(maxBounce, baseBounce + milestoneBounce);
+  }
+  const growth = Math.max(0, Math.floor(Number(TURN_CONFIG.roundBulletBounceGrowth) || 0));
   return Math.min(maxBounce, baseBounce + Math.max(0, round - 1) * growth);
 }
 
