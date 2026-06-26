@@ -301,6 +301,8 @@ export default class TurnBattleMap extends cc.Component {
     private _buildOverlayLayer: cc.Node = null;
     private _buildHighlightLayer: cc.Node = null;
     private _buildPreviewLayer: cc.Node = null;
+    private _resourceTooltipRoot: cc.Node = null;
+    private _resourceTooltipObstacleId = "";
 
     private _roads: { [camp: string]: cc.Rect } = { A: null, B: null };
     private _buildAreas: { [camp: string]: cc.Rect } = { A: null, B: null };
@@ -331,6 +333,7 @@ export default class TurnBattleMap extends cc.Component {
         cc.systemEvent.off(cc.SystemEvent.EventType.KEY_UP, this.onKeyUp, this);
         this._moveLeftPressed = false;
         this._moveRightPressed = false;
+        this.hideResourceTooltip();
     }
 
     initMap(config?: TurnGameConfig) {
@@ -401,6 +404,7 @@ export default class TurnBattleMap extends cc.Component {
         this._buildOverlayLayer = null;
         this._buildHighlightLayer = null;
         this._buildPreviewLayer = null;
+        this.hideResourceTooltip();
         this._moveLeftPressed = false;
         this._moveRightPressed = false;
         this._pointerAim = null;
@@ -489,6 +493,9 @@ export default class TurnBattleMap extends cc.Component {
         this.setActionCamp(snapshot.actionCamp);
         this.handlePhaseChanged(previousPhase, snapshot.phase);
         this.refreshBuildInteractionView();
+        if (this.shouldSuppressResourceTooltip()) {
+            this.hideResourceTooltip();
+        }
 
         if (snapshot.phase === "attack") {
             this._hasFiredInAction = false;
@@ -1941,6 +1948,13 @@ export default class TurnBattleMap extends cc.Component {
         let node = new cc.Node("BuildObstacle" + this._nextObstacleId);
         node.parent = this._obstacleLayer || this.contentRoot;
         node.setPosition(position.x, position.y);
+        let obstacleHitWidth = (bounds.maxX - bounds.minX + 1) * this._dynamicObstacleSize.width;
+        let obstacleHitHeight = (bounds.maxY - bounds.minY + 1) * this._dynamicObstacleSize.height;
+        node.setContentSize(obstacleHitWidth, obstacleHitHeight);
+        node.setAnchorPoint(
+            -(bounds.minX * this._dynamicObstacleSize.width - this._dynamicObstacleSize.width / 2) / obstacleHitWidth,
+            -(bounds.minY * this._dynamicObstacleSize.height - this._dynamicObstacleSize.height / 2) / obstacleHitHeight,
+        );
 
         let cellLevels = this.buildObstacleCellLevels(layout.length, snapshot);
         let maxHp = this.resolveObstacleMaxHp(slotType, resourceCount, Number(snapshot && snapshot.maxHp), camp, cellLevels);
@@ -1986,9 +2000,279 @@ export default class TurnBattleMap extends cc.Component {
             heroGroupHp: Math.max(0, Math.floor(Number(snapshot && snapshot.heroGroupHp) || 0)),
             heroGroupMaxHp: Math.max(0, Math.floor(Number(snapshot && snapshot.heroGroupMaxHp) || 0)),
         });
-        this.refreshObstacleHpLabel(this._obstacles[this._obstacles.length - 1]);
+        let obstacle = this._obstacles[this._obstacles.length - 1];
+        this.bindObstacleTooltipEvents(obstacle);
+        this.refreshObstacleHpLabel(obstacle);
         this.getCampStats(camp).energyTowers = this.countPlacedEnergyTowers(camp);
         this.refreshBuildInteractionView();
+    }
+
+    private bindObstacleTooltipEvents(obstacle: TurnObstacleState) {
+        if (!obstacle || !obstacle.node) {
+            return;
+        }
+        obstacle.node.off(cc.Node.EventType.MOUSE_ENTER);
+        obstacle.node.off(cc.Node.EventType.MOUSE_LEAVE);
+        obstacle.node.on(cc.Node.EventType.MOUSE_ENTER, (event: cc.Event.EventMouse) => {
+            event.stopPropagation();
+            this.showResourceTooltip(obstacle);
+        }, this);
+        obstacle.node.on(cc.Node.EventType.MOUSE_LEAVE, (event: cc.Event.EventMouse) => {
+            event.stopPropagation();
+            this.hideResourceTooltip();
+        }, this);
+    }
+
+    private shouldSuppressResourceTooltip(): boolean {
+        return this._serverMode && this.isLocalAttackTurn(this._actionCamp);
+    }
+
+    private showResourceTooltip(obstacle: TurnObstacleState) {
+        this.hideResourceTooltip();
+        if (!obstacle || !obstacle.node || this.shouldSuppressResourceTooltip()) {
+            return;
+        }
+
+        let parent = this._effectLayer || this.contentRoot || this.node;
+        if (!parent) {
+            return;
+        }
+
+        let panelWidth = 312;
+        let bodyText = this.wrapResourceTooltipText(this.buildResourceTooltipBodyText(obstacle), 25);
+        let bodyLineHeight = 20;
+        let bodyLineCount = Math.max(1, bodyText.split("\n").length);
+        let panelHeight = Math.max(172, 72 + bodyLineCount * bodyLineHeight);
+        this._resourceTooltipObstacleId = obstacle.id;
+        this._resourceTooltipRoot = new cc.Node("TurnResourceTooltip");
+        this._resourceTooltipRoot.parent = parent;
+        this._resourceTooltipRoot.zIndex = 120;
+        this._resourceTooltipRoot.setContentSize(panelWidth, panelHeight);
+
+        let worldPos = obstacle.node.convertToWorldSpaceAR(cc.v2(0, 0));
+        let localPos = parent.convertToNodeSpaceAR(worldPos);
+        let sideOffset = localPos.x > 0 ? -190 : 190;
+        let maxY = (this._config.mapHeight || 960) / 2 - panelHeight / 2 - 12;
+        let minY = -(this._config.mapHeight || 960) / 2 + panelHeight / 2 + 12;
+        this._resourceTooltipRoot.setPosition(localPos.x + sideOffset, Math.max(minY, Math.min(maxY, localPos.y)));
+
+        let bg = this._resourceTooltipRoot.addComponent(cc.Graphics);
+        bg.fillColor = new cc.Color(18, 24, 36, 238);
+        bg.roundRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 12);
+        bg.fill();
+        bg.strokeColor = this.getResourceTooltipColor(obstacle.slotType);
+        bg.lineWidth = 2;
+        bg.roundRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 12);
+        bg.stroke();
+
+        let title = this.createLabel(this.getResourceTooltipTitle(obstacle), 18);
+        title.node.parent = this._resourceTooltipRoot;
+        title.node.setPosition(0, panelHeight / 2 - 26);
+        title.node.color = this.getResourceTooltipColor(obstacle.slotType);
+        title.horizontalAlign = cc.Label.HorizontalAlign.CENTER;
+
+        this.createResourceTooltipBody(
+            this._resourceTooltipRoot,
+            bodyText,
+            14,
+            0,
+            panelHeight / 2 - 54,
+            panelWidth - 32,
+            panelHeight - 72,
+        );
+    }
+
+    private hideResourceTooltip() {
+        if (this._resourceTooltipRoot) {
+            this._resourceTooltipRoot.destroy();
+            this._resourceTooltipRoot = null;
+        }
+        this._resourceTooltipObstacleId = "";
+    }
+
+    private getResourceTooltipTitle(obstacle: TurnObstacleState): string {
+        let shortLabel = getTurnObstacleShortLabel(obstacle.slotType);
+        let suffix = shortLabel ? "（" + shortLabel + "）" : "";
+        return this.getSlotDisplayName(obstacle.slotType) + suffix;
+    }
+
+    private buildResourceTooltipBodyText(obstacle: TurnObstacleState): string {
+        let lines: string[] = [];
+        let campName = obstacle.camp === this._localCamp ? "我方" : "敌方";
+        lines.push(campName + "资源：" + this.getResourceSimpleDescription(obstacle.slotType));
+        lines.push("当前血量：" + Math.max(0, Math.floor(Number(obstacle.hp) || 0)) + "/" + Math.max(1, Math.floor(Number(obstacle.maxHp) || 1)));
+        lines.push("资源格：" + Math.max(0, obstacle.layout ? obstacle.layout.length : 0) + "格，价值：" + this.getObstacleResourceValue(obstacle));
+        let cellText = this.buildResourceCellHpText(obstacle);
+        if (cellText) {
+            lines.push(cellText);
+        }
+        let attrs = this.buildResourceAttributeLines(obstacle);
+        for (let i = 0; i < attrs.length; i++) {
+            lines.push(attrs[i]);
+        }
+        return lines.join("\n");
+    }
+
+    private wrapResourceTooltipText(text: string, maxCharsPerLine: number): string {
+        let maxChars = Math.max(8, Math.floor(Number(maxCharsPerLine) || 25));
+        let result: string[] = [];
+        let sourceLines = String(text || "").split("\n");
+        for (let i = 0; i < sourceLines.length; i++) {
+            let line = sourceLines[i] || "";
+            while (line.length > maxChars) {
+                let splitIndex = this.findResourceTooltipWrapIndex(line, maxChars);
+                result.push(line.slice(0, splitIndex));
+                line = line.slice(splitIndex);
+            }
+            result.push(line);
+        }
+        return result.join("\n");
+    }
+
+    private findResourceTooltipWrapIndex(line: string, maxChars: number): number {
+        let boundaryChars = ["，", "、", "；", "：", " "];
+        for (let i = Math.min(maxChars, line.length - 1); i >= Math.max(8, maxChars - 10); i--) {
+            if (boundaryChars.indexOf(line.charAt(i)) >= 0) {
+                return i + 1;
+            }
+        }
+        return Math.min(maxChars, line.length);
+    }
+
+    private buildResourceCellHpText(obstacle: TurnObstacleState): string {
+        let parts: string[] = [];
+        let levels = Array.isArray(obstacle.cellLevels) ? obstacle.cellLevels : [];
+        for (let i = 0; i < obstacle.cellHp.length; i++) {
+            let level = Math.max(1, Math.floor(Number(levels[i] || obstacle.resourceLevel || 1) || 1));
+            let maxHp = getTurnResourceLevelHp(obstacle.slotType, level, this._config);
+            parts.push("Lv." + level + " " + Math.max(0, Math.floor(Number(obstacle.cellHp[i]) || 0)) + "/" + maxHp);
+        }
+        return parts.length > 0 ? "分格血量：" + parts.join("，") : "";
+    }
+
+    private buildResourceAttributeLines(obstacle: TurnObstacleState): string[] {
+        let lines: string[] = [];
+        let value = this.getObstacleResourceValue(obstacle);
+        let property = this.getObstaclePropertyValue(obstacle);
+        let campCounts = this.buildBondCountMap(obstacle.camp);
+        let campProperties = this.buildBondPropertyMap(obstacle.camp);
+        lines.push("阵营同类价值：" + Math.max(0, Number((campCounts as any)[obstacle.slotType]) || 0));
+        if (obstacle.slotType === "bullet") {
+            let attack = buildTurnAttackBondSnapshot(campCounts, null, this._config, this._roundIndex, campProperties);
+            lines.push("当前属性：额外发射 +" + attack.extraShotsFromBulletBlock + " 发");
+        }
+        else if (obstacle.slotType === "attack") {
+            let attack = buildTurnAttackBondSnapshot(campCounts, null, this._config, this._roundIndex, campProperties);
+            lines.push("当前属性：攻击属性 +" + property + "，子弹伤害 " + attack.bulletDamage);
+        }
+        else if (obstacle.slotType === "energy") {
+            lines.push("当前属性：回合治疗 +" + property);
+        }
+        else if (obstacle.slotType === "bleed") {
+            lines.push("当前属性：敌方治疗削减 " + property);
+        }
+        else if (obstacle.slotType === "coin") {
+            lines.push("当前属性：结算金币 +" + property);
+        }
+        else if (obstacle.slotType === "missile_silo") {
+            let missileConfig = this._config.missileSilo || {} as any;
+            let radiusCells = Math.max(0, Math.floor(Number(missileConfig.explosionRadiusCells) || 1));
+            lines.push("当前属性：被击碎后发射导弹，伤害 " + Math.max(1, property || Number(missileConfig.directDamage) || 10) + "，范围 " + radiusCells + "格");
+        }
+        else if (obstacle.slotType === "mirror") {
+            let ratio = getTurnMirrorDamageReductionRatio(campCounts.mirror, this._config);
+            lines.push("当前属性：命中反弹，弹体伤害降低 " + Math.round(ratio * 100) + "%");
+        }
+        else {
+            lines.push("当前属性：阻挡子弹，承担伤害");
+        }
+        return lines;
+    }
+
+    private getObstacleResourceValue(obstacle: TurnObstacleState): number {
+        let total = 0;
+        let levels = Array.isArray(obstacle.cellLevels) && obstacle.cellLevels.length > 0 ? obstacle.cellLevels : [obstacle.resourceLevel || 1];
+        for (let i = 0; i < levels.length; i++) {
+            total += getTurnResourceLevelValue(levels[i], this._config);
+        }
+        return Math.max(0, total);
+    }
+
+    private getObstaclePropertyValue(obstacle: TurnObstacleState): number {
+        let total = 0;
+        let levels = Array.isArray(obstacle.cellLevels) && obstacle.cellLevels.length > 0 ? obstacle.cellLevels : [obstacle.resourceLevel || 1];
+        for (let i = 0; i < levels.length; i++) {
+            total += getTurnResourcePropertyValue(obstacle.slotType, levels[i], this._config);
+        }
+        return Math.max(0, total);
+    }
+
+    private getResourceSimpleDescription(slotType: TurnObstacleResourceType): string {
+        if (slotType === "bullet") {
+            return "提升攻击时的额外发射数量。";
+        }
+        if (slotType === "attack") {
+            return "提升子弹伤害。";
+        }
+        if (slotType === "energy") {
+            return "回合结算时治疗己方主基地。";
+        }
+        if (slotType === "bleed") {
+            return "削减敌方回合治疗。";
+        }
+        if (slotType === "coin") {
+            return "回合结算时提供金币。";
+        }
+        if (slotType === "missile_silo") {
+            return "被敌方击碎后向敌方发射导弹。";
+        }
+        if (slotType === "mirror") {
+            return "被子弹命中时反弹子弹。";
+        }
+        if (slotType === "summon_wall") {
+            return "召唤英雄用的资源墙。";
+        }
+        return "基础防护资源，阻挡并吸收子弹伤害。";
+    }
+
+    private createResourceTooltipBody(parent: cc.Node, text: string, size: number, x: number, y: number, width: number, height: number): cc.Label {
+        let node = new cc.Node("TurnResourceTooltipBody");
+        node.parent = parent;
+        node.setAnchorPoint(0.5, 1);
+        node.setPosition(x, y);
+        node.color = new cc.Color(232, 236, 245, 255);
+        let label = node.addComponent(cc.Label);
+        label.string = text;
+        label.fontSize = size;
+        label.lineHeight = size + 6;
+        label.horizontalAlign = cc.Label.HorizontalAlign.LEFT;
+        label.verticalAlign = cc.Label.VerticalAlign.TOP;
+        label.enableWrapText = false;
+        label.overflow = cc.Label.Overflow.CLAMP;
+        node.setContentSize(width, height);
+        return label;
+    }
+
+    private getResourceTooltipColor(type: TurnObstacleResourceType): cc.Color {
+        if (type === "mirror") {
+            return new cc.Color(180, 196, 236, 220);
+        }
+        if (type === "bullet") {
+            return new cc.Color(255, 226, 120, 230);
+        }
+        if (type === "attack" || type === "missile_silo") {
+            return new cc.Color(255, 150, 110, 230);
+        }
+        if (type === "energy") {
+            return new cc.Color(120, 235, 180, 230);
+        }
+        if (type === "bleed") {
+            return new cc.Color(210, 120, 235, 230);
+        }
+        if (type === "coin") {
+            return new cc.Color(255, 215, 90, 230);
+        }
+        return new cc.Color(230, 236, 248, 180);
     }
 
     private createAssistZone(_camp: TurnCamp, type: TurnAssistZoneType, position: cc.Vec2, forcedId?: string, forcedRadius?: number, extra?: any) {
@@ -2528,6 +2812,9 @@ export default class TurnBattleMap extends cc.Component {
         }
         if (type === "missile_silo") {
             return "导弹井";
+        }
+        if (type === "coin") {
+            return "金币块";
         }
         return "普通方块";
     }
@@ -3247,6 +3534,7 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private clearAllDynamicObstacles() {
+        this.hideResourceTooltip();
         for (let i = 0; i < this._obstacles.length; i++) {
             this._obstacles[i].node.destroy();
         }
@@ -4692,6 +4980,9 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private applyDamageBoostPassThrough(bullet: TurnBulletState, zoneId: string) {
+        if (!bullet || bullet.damageBoostAppliedZoneIds.indexOf(zoneId) >= 0) {
+            return;
+        }
         let zoneConfig = getTurnAssistZoneTypeConfig("damage_boost", this._config);
         let maxMultiplier = Math.max(1, Math.floor(Number(zoneConfig.damageBoostMaxMultiplier) || 1));
         let previousMultiplier = Math.max(1, Number(bullet.damageMultiplier) || 1);
@@ -4701,9 +4992,7 @@ export default class TurnBattleMap extends cc.Component {
         bullet.baseDamage += Math.max(0, Math.floor(Number(bullet.damageBoostTempAttack) || 0));
         bullet.damage = Math.max(0, Math.round(bullet.baseDamage * bullet.damageMultiplier));
         bullet.remainingDamage = Math.max(0, Math.round(bullet.remainingDamage * (bullet.damageMultiplier / previousMultiplier)));
-        if (bullet.damageBoostAppliedZoneIds.indexOf(zoneId) < 0) {
-            bullet.damageBoostAppliedZoneIds.push(zoneId);
-        }
+        bullet.damageBoostAppliedZoneIds.push(zoneId);
     }
 
     private angleToVector(angle: number): cc.Vec2 {

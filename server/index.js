@@ -3906,6 +3906,9 @@ function spawnTurnSpreadBullets(sourceBullet, zone, bulletQueue) {
 }
 
 function applyTurnDamageBoostPassThrough(bullet, zoneId) {
+  if (!bullet || bullet.damageBoostAppliedZoneIds.indexOf(zoneId) >= 0) {
+    return;
+  }
   const config = getTurnAssistZoneTypeConfig('damageBoost');
   const maxMultiplier = Math.max(1, Math.floor(Number(config.damageBoostMaxMultiplier) || 1));
   const previousMultiplier = Math.max(1, Number(bullet.damageMultiplier) || 1);
@@ -3914,9 +3917,7 @@ function applyTurnDamageBoostPassThrough(bullet, zoneId) {
   bullet.damageMultiplier = nextLevel;
   bullet.baseDamage += Math.max(0, Math.floor(Number(bullet.damageBoostTempAttack) || 0));
   bullet.remainingDamage = Math.max(0, Math.round((Number(bullet.remainingDamage) || 0) * (bullet.damageMultiplier / previousMultiplier)));
-  if (bullet.damageBoostAppliedZoneIds.indexOf(zoneId) < 0) {
-    bullet.damageBoostAppliedZoneIds.push(zoneId);
-  }
+  bullet.damageBoostAppliedZoneIds.push(zoneId);
 }
 
 function applyTurnFirstBounceDamageBoostIfNeeded(bullet) {
