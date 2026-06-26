@@ -352,6 +352,87 @@ function circleRectIntersects(circle, radius, rect) {
   return dx * dx + dy * dy <= radius * radius;
 }
 
+function pointInsideRect(point, rect) {
+  return !!(point && rect
+    && point.x >= rect.x
+    && point.x <= rect.x + rect.width
+    && point.y >= rect.y
+    && point.y <= rect.y + rect.height);
+}
+
+function pointSegmentDistanceSquared(point, from, to) {
+  const dx = (Number(to && to.x) || 0) - (Number(from && from.x) || 0);
+  const dy = (Number(to && to.y) || 0) - (Number(from && from.y) || 0);
+  const lenSqr = dx * dx + dy * dy;
+  const fromX = Number(from && from.x) || 0;
+  const fromY = Number(from && from.y) || 0;
+  if (lenSqr <= 0) {
+    const px = (Number(point && point.x) || 0) - fromX;
+    const py = (Number(point && point.y) || 0) - fromY;
+    return px * px + py * py;
+  }
+  const t = clamp((((Number(point && point.x) || 0) - fromX) * dx + ((Number(point && point.y) || 0) - fromY) * dy) / lenSqr, 0, 1);
+  const nearestX = fromX + dx * t;
+  const nearestY = fromY + dy * t;
+  const px = (Number(point && point.x) || 0) - nearestX;
+  const py = (Number(point && point.y) || 0) - nearestY;
+  return px * px + py * py;
+}
+
+function segmentsIntersect(a, b, c, d) {
+  const abx = (Number(b && b.x) || 0) - (Number(a && a.x) || 0);
+  const aby = (Number(b && b.y) || 0) - (Number(a && a.y) || 0);
+  const acx = (Number(c && c.x) || 0) - (Number(a && a.x) || 0);
+  const acy = (Number(c && c.y) || 0) - (Number(a && a.y) || 0);
+  const adx = (Number(d && d.x) || 0) - (Number(a && a.x) || 0);
+  const ady = (Number(d && d.y) || 0) - (Number(a && a.y) || 0);
+  const cdx = (Number(d && d.x) || 0) - (Number(c && c.x) || 0);
+  const cdy = (Number(d && d.y) || 0) - (Number(c && c.y) || 0);
+  const cax = (Number(a && a.x) || 0) - (Number(c && c.x) || 0);
+  const cay = (Number(a && a.y) || 0) - (Number(c && c.y) || 0);
+  const cbx = (Number(b && b.x) || 0) - (Number(c && c.x) || 0);
+  const cby = (Number(b && b.y) || 0) - (Number(c && c.y) || 0);
+  const cross1 = abx * acy - aby * acx;
+  const cross2 = abx * ady - aby * adx;
+  const cross3 = cdx * cay - cdy * cax;
+  const cross4 = cdx * cby - cdy * cbx;
+  return cross1 * cross2 <= 0 && cross3 * cross4 <= 0;
+}
+
+function segmentIntersectsRect(from, to, rect) {
+  if (pointInsideRect(from, rect) || pointInsideRect(to, rect)) {
+    return true;
+  }
+  const leftBottom = { x: rect.x, y: rect.y };
+  const rightBottom = { x: rect.x + rect.width, y: rect.y };
+  const rightTop = { x: rect.x + rect.width, y: rect.y + rect.height };
+  const leftTop = { x: rect.x, y: rect.y + rect.height };
+  return segmentsIntersect(from, to, leftBottom, rightBottom)
+    || segmentsIntersect(from, to, rightBottom, rightTop)
+    || segmentsIntersect(from, to, rightTop, leftTop)
+    || segmentsIntersect(from, to, leftTop, leftBottom);
+}
+
+function segmentCircleRectIntersects(from, to, radius, rect) {
+  if (!from || !to || !rect) {
+    return false;
+  }
+  if (circleRectIntersects(from, radius, rect) || circleRectIntersects(to, radius, rect)) {
+    return true;
+  }
+  if (segmentIntersectsRect(from, to, rect)) {
+    return true;
+  }
+  const radiusSqr = Math.max(0, Number(radius) || 0) ** 2;
+  const corners = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y + rect.height },
+    { x: rect.x, y: rect.y + rect.height },
+  ];
+  return corners.some((corner) => pointSegmentDistanceSquared(corner, from, to) <= radiusSqr);
+}
+
 function distanceBetweenPoints(a, b) {
   if (!a || !b) {
     return 0;
@@ -373,7 +454,7 @@ function isPointInTurnBuildArea(camp, point) {
   );
 }
 
-function getTurnTankHitCamp(roomState, bullet) {
+function getTurnTankHitCamp(roomState, bullet, previousPosition = null) {
   if (!roomState || !bullet || !roomState.tankPoses) {
     return '';
   }
@@ -385,7 +466,8 @@ function getTurnTankHitCamp(roomState, bullet) {
       continue;
     }
     const pose = roomState.tankPoses[camp];
-    if (pose && distanceBetweenPoints(bullet.position, pose) <= tankRadius + bulletRadius) {
+    const hitRadius = tankRadius + bulletRadius;
+    if (pose && pointSegmentDistanceSquared(pose, previousPosition || bullet.position, bullet.position) <= hitRadius * hitRadius) {
       return camp;
     }
   }
@@ -473,13 +555,14 @@ const TURN_CONFIG = {
   bulletBlockExtraShotInterval: 0.5,
   bulletMaxLifeSeconds: 30,
   bulletSimStepSeconds: 1 / 60,
+  bulletSpeed: 620 * 2 / 3,
   maxBulletResultDamage: 80,
   resourceMerge: {
     maxLevel: 5,
     levelValues: [1, 3, 6, 10, 15],
     typeLevels: {
       normal: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
-      summon_wall: [{ hp: 30 }, { hp: 40 }, { hp: 50 }, { hp: 60 }, { hp: 70 }],
+      summon_wall: [{ hp: 10 }, { hp: 10 }, { hp: 10 }, { hp: 10 }, { hp: 10 }],
       mirror: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
       missile_silo: [{ hp: 10, missileDamage: 10 }, { hp: 20, missileDamage: 15 }, { hp: 30, missileDamage: 20 }, { hp: 40, missileDamage: 25 }, { hp: 50, missileDamage: 30 }],
       bullet: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
@@ -532,8 +615,8 @@ const TURN_CONFIG = {
       maxHp: 50,
     },
     summon_wall: {
-      baseHp: 30,
-      maxHp: 70,
+      baseHp: 10,
+      maxHp: 10,
     },
     mirror: {
       baseHp: 10,
@@ -572,6 +655,8 @@ const TURN_CONFIG = {
     directDamage: 10,
     explosionRadiusCells: 1,
     mainCannonChance: 0,
+    visualTrailSeconds: 0.06,
+    visualExplosionSeconds: 0.16,
   },
   summonHeroes: {
     charPool: ['刘', '备', '关', '羽', '张', '飞', '赵', '云', '诸', '葛', '亮', '周', '瑜', '黄', '盖', '吕', '布', '孙', '权', '曹', '操'],
@@ -2939,6 +3024,10 @@ function startTurnWaitBulletPhase(roomState, camp) {
   roomState.waitingForBulletCamp = camp;
   logTurn(roomState, `phase waitBullet camp=${camp}`);
   setTurnPhase(roomState, TURN_PHASE.WAIT_BULLET, TURN_CONFIG.waitBulletSeconds, () => {
+    const player = getTurnPlayerByCamp(roomState, camp);
+    if (player && finalizeTurnBulletResult(roomState, player)) {
+      return;
+    }
     advanceTurnAttack(roomState);
   });
 }
@@ -3728,28 +3817,30 @@ function applyTurnRoundSettlement(roomState) {
   });
 }
 
-function isPointInsideTurnAssistZone(point, zone) {
-  if (!point || !zone) {
+function doesTurnSegmentCrossAssistZone(from, to, zone) {
+  if (!from || !to || !zone) {
     return false;
   }
   const radius = Math.max(0, Number(zone.radius) || 0);
   if (radius <= 0) {
     return false;
   }
-  return distanceBetweenPoints(point, getTurnZoneCenter(zone)) <= radius;
+  return pointSegmentDistanceSquared(getTurnZoneCenter(zone), from, to) <= radius * radius;
 }
 
-function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue) {
+function applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue, from = null, to = null) {
   let nextSpreadZoneIds = [];
   let nextDamageBoostZoneIds = [];
   const zones = Array.isArray(roomState && roomState.zones) ? roomState.zones : [];
+  const fromPoint = from || bullet.position;
+  const toPoint = to || bullet.position;
   for (let i = 0; i < zones.length; i++) {
     const zone = zones[i];
     if (!zone) {
       continue;
     }
     const radius = Math.max(0, Number(zone.radius) || 0);
-    if (radius <= 0 || !isPointInsideTurnAssistZone(bullet.position, zone)) {
+    if (radius <= 0 || !doesTurnSegmentCrossAssistZone(fromPoint, toPoint, zone)) {
       continue;
     }
     if (zone.zoneType === 'blackHole') {
@@ -3853,13 +3944,16 @@ function applyTurnMirrorDamageReduction(roomState, bullet, mirrorCamp) {
   bullet.remainingDamage = Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0) * (1 - reductionRatio));
 }
 
-function getTurnDynamicObstacleHit(roomState, point, radius) {
+function getTurnDynamicObstacleHit(roomState, point, radius, previousPoint = null, bullet = null) {
   const obstacleIds = Object.keys(roomState && roomState.obstacles ? roomState.obstacles : {});
   for (let i = 0; i < obstacleIds.length; i++) {
     const obstacle = roomState.obstacles[obstacleIds[i]];
+    if (bullet && shouldTurnBulletIgnoreOwnResource(bullet, obstacle)) {
+      continue;
+    }
     const rects = getTurnObstacleRectsAt(obstacle.x, obstacle.y, obstacle.layout);
     for (let j = 0; j < rects.length; j++) {
-      if (circleRectIntersects(point, radius, rects[j])) {
+      if (segmentCircleRectIntersects(previousPoint || point, point, radius, rects[j])) {
         return {
           obstacle,
           cellIndex: j,
@@ -4051,12 +4145,9 @@ function shouldTurnBulletIgnoreOwnResource(bullet, obstacle) {
   return !!(bullet && obstacle && obstacle.camp === bullet.camp && !canTurnBulletDamageOwnCamp(bullet));
 }
 
-function resolveTurnBulletHit(roomState, bullet, result) {
-  const dynamicHit = getTurnDynamicObstacleHit(roomState, bullet.position, Number(TURN_CONFIG.bulletRadius) || 10);
+function resolveTurnBulletHit(roomState, bullet, result, previousPosition = null) {
+  const dynamicHit = getTurnDynamicObstacleHit(roomState, bullet.position, Number(TURN_CONFIG.bulletRadius) || 10, previousPosition, bullet);
   if (dynamicHit) {
-    if (shouldTurnBulletIgnoreOwnResource(bullet, dynamicHit.obstacle)) {
-      return false;
-    }
     const isMirror = dynamicHit.obstacle.slotType === 'mirror';
     if (tryTurnLuBuDestroy(roomState, bullet.camp)) {
       const applied = applyObstacleDamage(roomState, dynamicHit.obstacle.id, dynamicHit.cellIndex, Number.MAX_SAFE_INTEGER);
@@ -4125,7 +4216,7 @@ function resolveTurnBulletHit(roomState, bullet, result) {
   const staticObstacles = getTurnActiveStaticObstacles(roomState);
   for (let i = 0; i < staticObstacles.length; i++) {
     const obstacle = staticObstacles[i];
-    if (!circleRectIntersects(bullet.position, Number(TURN_CONFIG.bulletRadius) || 10, obstacle)) {
+    if (!segmentCircleRectIntersects(previousPosition || bullet.position, bullet.position, Number(TURN_CONFIG.bulletRadius) || 10, obstacle)) {
       continue;
     }
     if (bullet.remainingBounce <= 0) {
@@ -4138,7 +4229,7 @@ function resolveTurnBulletHit(roomState, bullet, result) {
     return false;
   }
 
-  const targetCamp = getTurnTankHitCamp(roomState, bullet);
+  const targetCamp = getTurnTankHitCamp(roomState, bullet, previousPosition);
   if (!targetCamp) {
     return false;
   }
@@ -4200,11 +4291,7 @@ function simulateTurnBulletResults(roomState, player) {
       enemyTankHitCount: 0,
     };
   }
-  const bulletQueue = [];
   const totalShots = Math.max(1, Number(attack.snapshot.totalShots) || 1);
-  for (let i = 0; i < totalShots; i++) {
-    bulletQueue.push(createTurnServerBullet(roomState, player.camp, attack.pose, attack.snapshot));
-  }
   const result = {
     hitType: '',
     targetCamp: '',
@@ -4219,35 +4306,47 @@ function simulateTurnBulletResults(roomState, player) {
   };
   const dt = Math.max(0.001, Number(TURN_CONFIG.bulletSimStepSeconds) || (1 / 60));
   const bulletSpeed = Math.max(1, Number(TURN_CONFIG.bulletSpeed) || 620);
-  const maxTicks = Math.ceil((Math.max(0.1, Number(TURN_CONFIG.bulletMaxLifeSeconds) || 30) + 1) / dt);
-  while (bulletQueue.length > 0) {
-    const bullet = bulletQueue.shift();
-    for (let tick = 0; tick < maxTicks; tick++) {
+  const shotInterval = Math.max(0, Number(attack.snapshot.extraShotsFromBulletBlock) || 0) > 0
+    ? Math.max(0, Number(TURN_CONFIG.bulletBlockExtraShotInterval) || 0.5)
+    : Math.max(0, Number(TURN_CONFIG.baseFireInterval) || 0);
+  const bulletMaxLife = Math.max(0.1, Number(TURN_CONFIG.bulletMaxLifeSeconds) || 30);
+  const maxTicks = Math.ceil((bulletMaxLife + shotInterval * Math.max(0, totalShots - 1) + 1) / dt);
+  const activeBullets = [];
+  let nextShotIndex = 0;
+  let elapsed = 0;
+  // Keep authoritative damage order aligned with the client frame simulation.
+  for (let tick = 0; tick < maxTicks && (nextShotIndex < totalShots || activeBullets.length > 0); tick++) {
+    while (nextShotIndex < totalShots && elapsed + dt * 0.5 >= nextShotIndex * shotInterval) {
+      activeBullets.push(createTurnServerBullet(roomState, player.camp, attack.pose, attack.snapshot));
+      nextShotIndex += 1;
+    }
+    const spawnedBullets = [];
+    for (let i = activeBullets.length - 1; i >= 0; i--) {
+      const bullet = activeBullets[i];
       bullet.lifeLeft -= dt;
-      if (bullet.lifeLeft <= 0 || bullet.remainingDamage <= 0) {
-        break;
-      }
-      applyTurnAssistZonesToBullet(roomState, bullet, dt, bulletQueue);
       const previousPosition = { x: bullet.position.x, y: bullet.position.y };
-      bullet.position = addVec(bullet.position, mulVec(bullet.dir, bulletSpeed * dt));
+      const nextPosition = addVec(bullet.position, mulVec(bullet.dir, bulletSpeed * dt));
+      applyTurnAssistZonesToBullet(roomState, bullet, dt, spawnedBullets, previousPosition, nextPosition);
+      bullet.position = nextPosition;
       updateTurnBulletOwnBuildAreaPass(bullet, previousPosition);
-      if (!keepTurnBulletInMap(bullet)) {
-        break;
-      }
-      if (resolveTurnBulletHit(roomState, bullet, result)) {
-        break;
+      if (bullet.remainingDamage <= 0
+        || !keepTurnBulletInMap(bullet)
+        || resolveTurnBulletHit(roomState, bullet, result, previousPosition)
+        || bullet.lifeLeft <= 0) {
+        activeBullets.splice(i, 1);
       }
     }
+    if (spawnedBullets.length > 0) {
+      activeBullets.push(...spawnedBullets);
+    }
+    elapsed += dt;
   }
   return result;
 }
 
-function handleTurnBulletResult(ws, msg) {
-  const roomState = getTurnRoom(ws);
-  const player = getTurnPlayer(roomState, ws);
+function finalizeTurnBulletResult(roomState, player) {
   if (!roomState || !player || roomState.phase !== TURN_PHASE.WAIT_BULLET || roomState.waitingForBulletCamp !== player.camp) {
-    sendTurnError(ws, '当前不能提交弹道结果', 'invalidPhase');
-    return;
+    return false;
   }
   const simulated = simulateTurnBulletResults(roomState, player);
   let awardedCoins = 0;
@@ -4299,6 +4398,15 @@ function handleTurnBulletResult(ws, msg) {
   broadcastTurnSnapshot(roomState);
   if (!evaluateTurnGameEnd(roomState)) {
     advanceTurnAttack(roomState);
+  }
+  return true;
+}
+
+function handleTurnBulletResult(ws, msg) {
+  const roomState = getTurnRoom(ws);
+  const player = getTurnPlayer(roomState, ws);
+  if (!finalizeTurnBulletResult(roomState, player)) {
+    sendTurnError(ws, '当前不能提交弹道结果', 'invalidPhase');
   }
 }
 

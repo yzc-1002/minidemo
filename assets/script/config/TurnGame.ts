@@ -378,6 +378,8 @@ export interface TurnGameConfig {
         directDamage: number;
         explosionRadiusCells: number;
         mainCannonChance: number;
+        visualTrailSeconds: number;
+        visualExplosionSeconds: number;
     };
     coinEconomy: TurnCoinEconomyConfig;
     settlementResourceRules: {
@@ -445,7 +447,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     bulletBlockExtraShotInterval: 0.5,
     bulletMaxLifeSeconds: 30,
     bulletSimStepSeconds: 1 / 60,
-    bulletSpeed: 620,
+    bulletSpeed: 620 * 2 / 3,
     bulletRadius: 10,
     obstacleRadius: 26,
     resourceMerge: {
@@ -453,7 +455,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         levelValues: [1, 3, 6, 10, 15],
         typeLevels: {
             normal: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
-            summon_wall: [{ hp: 30 }, { hp: 40 }, { hp: 50 }, { hp: 60 }, { hp: 70 }],
+            summon_wall: [{ hp: 10 }, { hp: 10 }, { hp: 10 }, { hp: 10 }, { hp: 10 }],
             mirror: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
             missile_silo: [{ hp: 10, missileDamage: 10 }, { hp: 20, missileDamage: 15 }, { hp: 30, missileDamage: 20 }, { hp: 40, missileDamage: 25 }, { hp: 50, missileDamage: 30 }],
             bullet: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
@@ -505,8 +507,8 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
             maxHp: 50,
         },
         summon_wall: {
-            baseHp: 30,
-            maxHp: 70,
+            baseHp: 10,
+            maxHp: 10,
         },
         mirror: {
             baseHp: 10,
@@ -545,6 +547,8 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         directDamage: 10,
         explosionRadiusCells: 1,
         mainCannonChance: 0,
+        visualTrailSeconds: 0.06,
+        visualExplosionSeconds: 0.16,
     },
     summonHeroes: {
         charPool: ["刘", "备", "关", "羽", "张", "飞", "赵", "云", "诸", "葛", "亮", "周", "瑜", "黄", "盖", "吕", "布", "孙", "权", "曹", "操"],

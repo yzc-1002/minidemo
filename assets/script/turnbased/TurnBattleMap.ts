@@ -275,6 +275,7 @@ export default class TurnBattleMap extends cc.Component {
     private _serverMode = false;
     private _bulletSimAccumulator = 0;
     private _waitingForServerBulletResult = false;
+    private _predictedMissileEventKeys: { [key: string]: boolean } = {};
     private _pendingBulletResult = {
         hitType: "",
         targetCamp: "",
@@ -376,6 +377,7 @@ export default class TurnBattleMap extends cc.Component {
         this._lastBulletHitSoundAt = 0;
         this._gameFinished = false;
         this._waitingForServerBulletResult = false;
+        this._predictedMissileEventKeys = {};
         this._pendingBulletResult = {
             hitType: "",
             targetCamp: "",
@@ -651,6 +653,11 @@ export default class TurnBattleMap extends cc.Component {
         let result = payload && payload.result;
         let missileEvents = result && Array.isArray(result.missileEvents) ? result.missileEvents : [];
         for (let i = 0; i < missileEvents.length; i++) {
+            let key = this.getMissileEventKey(missileEvents[i]);
+            if (key && this._predictedMissileEventKeys[key]) {
+                delete this._predictedMissileEventKeys[key];
+                continue;
+            }
             this.playMissileSiloEvent(missileEvents[i]);
         }
     }
@@ -1568,17 +1575,17 @@ export default class TurnBattleMap extends cc.Component {
         for (let i = this._bullets.length - 1; i >= 0; i--) {
             let bullet = this._bullets[i];
             bullet.lifeLeft -= dt;
-            this.applyAssistZones(bullet, dt);
             let previousPosition = this.getNodePosition(bullet.node);
             let nextPosition = previousPosition.add(bullet.dir.mul(bullet.speed * dt));
+            this.applyAssistZones(bullet, dt, previousPosition, nextPosition);
             bullet.node.setPosition(nextPosition.x, nextPosition.y);
             this.updateBulletOwnBuildAreaPass(bullet, previousPosition, nextPosition);
 
             if (bullet.remainingDamage <= 0
                 || !this.keepBulletInMap(bullet)
-                || this.tryHitDynamicObstacle(bullet)
-                || this.tryHitStaticObstacle(bullet)
-                || this.tryHitCrystal(bullet)
+                || this.tryHitDynamicObstacle(bullet, previousPosition)
+                || this.tryHitStaticObstacle(bullet, previousPosition)
+                || this.tryHitCrystal(bullet, previousPosition)
                 || bullet.lifeLeft <= 0) {
                 bullet.node.destroy();
                 this._bullets.splice(i, 1);
@@ -1597,13 +1604,13 @@ export default class TurnBattleMap extends cc.Component {
         return Math.max(0, Number(this._config.bulletBlockExtraShotInterval) || 0.5);
     }
 
-    private tryHitDynamicObstacle(bullet: TurnBulletState): boolean {
+    private tryHitDynamicObstacle(bullet: TurnBulletState, previousPosition?: cc.Vec2): boolean {
         for (let i = 0; i < this._obstacles.length; i++) {
             let obstacle = this._obstacles[i];
             if (this.shouldIgnoreOwnResourceHit(bullet, obstacle.camp)) {
                 continue;
             }
-            let hitInfo = this.getHitDynamicObstacleCell(obstacle, this.getNodePosition(bullet.node), bullet.radius);
+            let hitInfo = this.getHitDynamicObstacleCell(obstacle, this.getNodePosition(bullet.node), bullet.radius, previousPosition);
             if (!hitInfo) {
                 continue;
             }
@@ -1635,6 +1642,9 @@ export default class TurnBattleMap extends cc.Component {
                 });
             }
             if (obstacle.cellHp[cellIndex] <= 0) {
+                if (obstacle.slotType === "missile_silo") {
+                    this.playImmediateMissileSiloEvent(obstacle, cellIndex);
+                }
                 obstacle.layout.splice(cellIndex, 1);
                 obstacle.cellHp.splice(cellIndex, 1);
                 if (Array.isArray(obstacle.cellLevels)) {
@@ -1774,11 +1784,11 @@ export default class TurnBattleMap extends cc.Component {
         this.emitStatsChanged();
     }
 
-    private tryHitStaticObstacle(bullet: TurnBulletState): boolean {
+    private tryHitStaticObstacle(bullet: TurnBulletState, previousPosition?: cc.Vec2): boolean {
         let position = this.getNodePosition(bullet.node);
         for (let i = 0; i < this._staticObstacles.length; i++) {
             let obstacle = this._staticObstacles[i];
-            if (!this.circleRectIntersects(position, bullet.radius, obstacle.rect)) {
+            if (!this.segmentCircleRectIntersects(previousPosition || position, position, bullet.radius, obstacle.rect)) {
                 continue;
             }
             this.emitTurnEvent("turn-static-obstacle-hit", {
@@ -1833,9 +1843,9 @@ export default class TurnBattleMap extends cc.Component {
         bullet.node.angle = this.vectorToAngle(bullet.dir) - 90;
     }
 
-    private tryHitCrystal(bullet: TurnBulletState): boolean {
+    private tryHitCrystal(bullet: TurnBulletState, previousPosition?: cc.Vec2): boolean {
         let bulletPosition = this.getNodePosition(bullet.node);
-        let targetCamp = this.getTankHitCamp(bullet, bulletPosition);
+        let targetCamp = this.getTankHitCamp(bullet, bulletPosition, previousPosition);
         if (!targetCamp) {
             return false;
         }
@@ -1875,7 +1885,7 @@ export default class TurnBattleMap extends cc.Component {
         return bullet.remainingDamage <= 0;
     }
 
-    private getTankHitCamp(bullet: TurnBulletState, bulletPosition: cc.Vec2): TurnCamp {
+    private getTankHitCamp(bullet: TurnBulletState, bulletPosition: cc.Vec2, previousPosition?: cc.Vec2): TurnCamp {
         let camps: TurnCamp[] = ["A", "B"];
         for (let i = 0; i < camps.length; i++) {
             let camp = camps[i];
@@ -1883,7 +1893,8 @@ export default class TurnBattleMap extends cc.Component {
                 continue;
             }
             let target = this._crystals[camp];
-            if (target && this.getNodePosition(target.node).sub(bulletPosition).mag() <= target.radius + bullet.radius) {
+            let hitRadius = (target ? target.radius : 0) + bullet.radius;
+            if (target && this.distancePointToSegmentSqr(this.getNodePosition(target.node), previousPosition || bulletPosition, bulletPosition) <= hitRadius * hitRadius) {
                 return camp;
             }
         }
@@ -2933,17 +2944,18 @@ export default class TurnBattleMap extends cc.Component {
         this.refreshCrystalView(camp);
     }
 
-    private applyAssistZones(bullet: TurnBulletState, dt: number) {
+    private applyAssistZones(bullet: TurnBulletState, dt: number, from?: cc.Vec2, to?: cc.Vec2) {
         let bulletPosition = this.getNodePosition(bullet.node);
+        let fromPosition = from || bulletPosition;
+        let toPosition = to || bulletPosition;
         bullet.damage = bullet.baseDamage;
         let nextSpreadZoneIds: string[] = [];
         let nextDamageBoostZoneIds: string[] = [];
         for (let i = 0; i < this._assistZones.length; i++) {
             let zone = this._assistZones[i];
             let zonePosition = zone.position || this.getNodePosition(zone.node);
-            let offset = zonePosition.sub(bulletPosition);
-            let distance = offset.mag();
-            if (distance <= 1 || distance > zone.radius) {
+            let radius = Math.max(0, Number(zone.radius) || 0);
+            if (radius <= 0 || this.distancePointToSegmentSqr(zonePosition, fromPosition, toPosition) > radius * radius) {
                 continue;
             }
             if (zone.type === "black_hole") {
@@ -3091,6 +3103,38 @@ export default class TurnBattleMap extends cc.Component {
         ));
     }
 
+    private getMissileEventKey(event: any): string {
+        return event && event.triggerObstacleId ? String(event.triggerObstacleId) : "";
+    }
+
+    private playImmediateMissileSiloEvent(obstacle: TurnObstacleState, cellIndex: number) {
+        if (!obstacle || !obstacle.id || this._predictedMissileEventKeys[obstacle.id]) {
+            return;
+        }
+        this._predictedMissileEventKeys[obstacle.id] = true;
+        let enemyCamp: TurnCamp = obstacle.camp === "A" ? "B" : "A";
+        let targetCrystal = this._crystals[enemyCamp];
+        let target = targetCrystal ? this.getNodePosition(targetCrystal.node) : this.getNodePosition(obstacle.node);
+        let cell = obstacle.layout && obstacle.layout[cellIndex] ? obstacle.layout[cellIndex] : cc.v2(0, 0);
+        let cellSize = this._dynamicObstacleSize.width || this._config.obstacleRadius || 32;
+        let from = this.getNodePosition(obstacle.node).add(cc.v2(cell.x * cellSize, cell.y * cellSize));
+        let levels = Array.isArray(obstacle.cellLevels) ? obstacle.cellLevels : [];
+        let level = Math.max(1, Math.floor(Number(levels[cellIndex] || obstacle.resourceLevel || 1) || 1));
+        let missileConfig = (this._config.missileSilo || {}) as any;
+        let damage = Math.max(1, Math.floor(getTurnResourcePropertyValue("missile_silo", level, this._config) || Number((missileConfig as any).directDamage) || 10));
+        let radiusCells = Math.max(0, Math.floor(Number((missileConfig as any).explosionRadiusCells) || 1));
+        this.playMissileSiloEvent({
+            triggerObstacleId: obstacle.id,
+            triggerCamp: obstacle.camp,
+            targetCamp: enemyCamp,
+            from: { x: from.x, y: from.y },
+            target: { x: target.x, y: target.y },
+            damage: damage,
+            radiusCells: radiusCells,
+            predicted: true,
+        });
+    }
+
     private playMissileSiloEvent(event: any) {
         if (!event || !event.target) {
             return;
@@ -3111,7 +3155,10 @@ export default class TurnBattleMap extends cc.Component {
         trailGraphics.moveTo(0, 0);
         trailGraphics.lineTo(target.x - from.x, target.y - from.y);
         trailGraphics.stroke();
-        trail.runAction(cc.sequence(cc.delayTime(0.18), cc.fadeOut(0.18), cc.removeSelf()));
+        let missileConfig = (this._config.missileSilo || {}) as any;
+        let trailSeconds = Math.max(0.02, Number((missileConfig as any).visualTrailSeconds) || 0.06);
+        let explosionSeconds = Math.max(0.06, Number((missileConfig as any).visualExplosionSeconds) || 0.16);
+        trail.runAction(cc.sequence(cc.delayTime(trailSeconds), cc.fadeOut(trailSeconds), cc.removeSelf()));
 
         let explosion = new cc.Node("MissileExplosion");
         explosion.parent = layer;
@@ -3127,7 +3174,7 @@ export default class TurnBattleMap extends cc.Component {
         graphics.lineWidth = 3;
         graphics.circle(0, 0, radius);
         graphics.stroke();
-        explosion.runAction(cc.sequence(cc.spawn(cc.scaleTo(0.28, 1.35), cc.fadeOut(0.28)), cc.removeSelf()));
+        explosion.runAction(cc.sequence(cc.spawn(cc.scaleTo(explosionSeconds, 1.35), cc.fadeOut(explosionSeconds)), cc.removeSelf()));
         this.showFloatText("导弹爆炸 -" + (Number(event.damage) || 10), target.add(cc.v2(0, 28)), cc.Color.ORANGE);
     }
 
@@ -3750,10 +3797,75 @@ export default class TurnBattleMap extends cc.Component {
         return dx * dx + dy * dy <= radius * radius;
     }
 
-    private getHitDynamicObstacleCell(obstacle: TurnObstacleState, center: cc.Vec2, radius: number): { cellIndex: number; rect: cc.Rect } {
+    private segmentCircleRectIntersects(from: cc.Vec2, to: cc.Vec2, radius: number, rect: cc.Rect): boolean {
+        if (!from || !to || !rect) {
+            return false;
+        }
+        if (this.circleRectIntersects(from, radius, rect) || this.circleRectIntersects(to, radius, rect)) {
+            return true;
+        }
+        if (this.segmentIntersectsRect(from, to, rect)) {
+            return true;
+        }
+        let radiusSqr = Math.max(0, Number(radius) || 0);
+        radiusSqr *= radiusSqr;
+        let corners = [
+            cc.v2(rect.x, rect.y),
+            cc.v2(rect.x + rect.width, rect.y),
+            cc.v2(rect.x + rect.width, rect.y + rect.height),
+            cc.v2(rect.x, rect.y + rect.height),
+        ];
+        for (let i = 0; i < corners.length; i++) {
+            if (this.distancePointToSegmentSqr(corners[i], from, to) <= radiusSqr) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private segmentIntersectsRect(from: cc.Vec2, to: cc.Vec2, rect: cc.Rect): boolean {
+        if (this.pointInRect(from, rect) || this.pointInRect(to, rect)) {
+            return true;
+        }
+        let leftBottom = cc.v2(rect.x, rect.y);
+        let rightBottom = cc.v2(rect.x + rect.width, rect.y);
+        let rightTop = cc.v2(rect.x + rect.width, rect.y + rect.height);
+        let leftTop = cc.v2(rect.x, rect.y + rect.height);
+        return this.segmentsIntersect(from, to, leftBottom, rightBottom)
+            || this.segmentsIntersect(from, to, rightBottom, rightTop)
+            || this.segmentsIntersect(from, to, rightTop, leftTop)
+            || this.segmentsIntersect(from, to, leftTop, leftBottom);
+    }
+
+    private pointInRect(point: cc.Vec2, rect: cc.Rect): boolean {
+        return !!(point && rect
+            && point.x >= rect.x
+            && point.x <= rect.x + rect.width
+            && point.y >= rect.y
+            && point.y <= rect.y + rect.height);
+    }
+
+    private distancePointToSegmentSqr(point: cc.Vec2, from: cc.Vec2, to: cc.Vec2): number {
+        let dx = to.x - from.x;
+        let dy = to.y - from.y;
+        let lenSqr = dx * dx + dy * dy;
+        if (lenSqr <= 0) {
+            let px = point.x - from.x;
+            let py = point.y - from.y;
+            return px * px + py * py;
+        }
+        let t = Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.y - from.y) * dy) / lenSqr));
+        let nearestX = from.x + dx * t;
+        let nearestY = from.y + dy * t;
+        let px = point.x - nearestX;
+        let py = point.y - nearestY;
+        return px * px + py * py;
+    }
+
+    private getHitDynamicObstacleCell(obstacle: TurnObstacleState, center: cc.Vec2, radius: number, previousCenter?: cc.Vec2): { cellIndex: number; rect: cc.Rect } {
         let rects = this.getDynamicObstacleRects(obstacle);
         for (let i = 0; i < rects.length; i++) {
-            if (this.circleRectIntersects(center, radius, rects[i])) {
+            if (this.segmentCircleRectIntersects(previousCenter || center, center, radius, rects[i])) {
                 return { cellIndex: i, rect: rects[i] };
             }
         }
@@ -4777,11 +4889,17 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private onKeyUp(event: cc.Event.EventKeyboard) {
+        let changed = false;
         if (KEY_LEFT_SET.indexOf(event.keyCode) >= 0) {
             this._moveLeftPressed = false;
+            changed = true;
         }
         else if (KEY_RIGHT_SET.indexOf(event.keyCode) >= 0) {
             this._moveRightPressed = false;
+            changed = true;
+        }
+        if (changed && !this.isTankMovingInputActive()) {
+            this.sendTankPoseIfNeeded(true, false);
         }
     }
 
