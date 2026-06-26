@@ -655,8 +655,9 @@ const TURN_CONFIG = {
     directDamage: 10,
     explosionRadiusCells: 1,
     mainCannonChance: 0,
-    visualTrailSeconds: 0.06,
-    visualExplosionSeconds: 0.16,
+    visualTrailSeconds: 0.22,
+    visualExplosionDelaySeconds: 0.5,
+    visualExplosionSeconds: 0.36,
   },
   summonHeroes: {
     charPool: ['刘', '备', '关', '羽', '张', '飞', '赵', '云', '诸', '葛', '亮', '周', '瑜', '黄', '盖', '吕', '布', '孙', '权', '曹', '操'],

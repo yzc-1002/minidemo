@@ -3156,13 +3156,15 @@ export default class TurnBattleMap extends cc.Component {
         trailGraphics.lineTo(target.x - from.x, target.y - from.y);
         trailGraphics.stroke();
         let missileConfig = (this._config.missileSilo || {}) as any;
-        let trailSeconds = Math.max(0.02, Number((missileConfig as any).visualTrailSeconds) || 0.06);
-        let explosionSeconds = Math.max(0.06, Number((missileConfig as any).visualExplosionSeconds) || 0.16);
+        let trailSeconds = Math.max(0.02, Number((missileConfig as any).visualTrailSeconds) || 0.22);
+        let explosionDelaySeconds = Math.max(0, Number((missileConfig as any).visualExplosionDelaySeconds) || 0.18);
+        let explosionSeconds = Math.max(0.06, Number((missileConfig as any).visualExplosionSeconds) || 0.36);
         trail.runAction(cc.sequence(cc.delayTime(trailSeconds), cc.fadeOut(trailSeconds), cc.removeSelf()));
 
         let explosion = new cc.Node("MissileExplosion");
         explosion.parent = layer;
         explosion.setPosition(target.x, target.y);
+        explosion.opacity = 0;
         let graphics = explosion.addComponent(cc.Graphics);
         let cellSize = this._dynamicObstacleSize.width || this._config.obstacleRadius || 32;
         let radiusCells = Math.max(0, Math.floor(Number(event.radiusCells) || 1));
@@ -3174,8 +3176,15 @@ export default class TurnBattleMap extends cc.Component {
         graphics.lineWidth = 3;
         graphics.circle(0, 0, radius);
         graphics.stroke();
-        explosion.runAction(cc.sequence(cc.spawn(cc.scaleTo(explosionSeconds, 1.35), cc.fadeOut(explosionSeconds)), cc.removeSelf()));
-        this.showFloatText("导弹爆炸 -" + (Number(event.damage) || 10), target.add(cc.v2(0, 28)), cc.Color.ORANGE);
+        explosion.runAction(cc.sequence(
+            cc.delayTime(explosionDelaySeconds),
+            cc.callFunc(() => {
+                explosion.opacity = 255;
+                this.showFloatText("导弹爆炸 -" + (Number(event.damage) || 10), target.add(cc.v2(0, 28)), cc.Color.ORANGE);
+            }),
+            cc.spawn(cc.scaleTo(explosionSeconds, 1.35), cc.fadeOut(explosionSeconds)),
+            cc.removeSelf(),
+        ));
     }
 
     private createLabel(text: string, size: number): cc.Label {
