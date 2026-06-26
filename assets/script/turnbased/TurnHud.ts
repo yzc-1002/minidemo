@@ -65,7 +65,7 @@ export default class TurnHud extends cc.Component {
     private _buildPaletteCount = 0;
     private _buildPaletteEnabled = false;
     private _buildPaletteAttackMode = false;
-    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[]; cellLevels?: number[] }[] = [];
+    private _buildPaletteSlots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[]; cellLevels?: number[]; heroChar?: string }[] = [];
     private _refreshButton: cc.Node = null;
     private _refreshButtonLabel: cc.Label = null;
     private _refreshCoinLabel: cc.Label = null;
@@ -192,7 +192,7 @@ export default class TurnHud extends cc.Component {
         this.inventoryLabel.string = "掩体 A: " + aCount + "  |  B: " + bCount;
     }
 
-    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[]; cellLevels?: number[] }[], enabled: boolean) {
+    refreshBuildPalette(camp: TurnCamp, slots: { slotId: string; type: TurnObstacleResourceType; name: string; count: number; placed: boolean; shapeKey?: string; hpText?: string; coinCost?: number; affordable?: boolean; layout?: { x: number; y: number }[]; cellLevels?: number[]; heroChar?: string }[], enabled: boolean) {
         this.ensureBuildPalette();
         this._buildPaletteCamp = camp || "A";
         this._buildPaletteSlots = Array.isArray(slots) ? slots.slice() : [];
@@ -598,7 +598,8 @@ export default class TurnHud extends cc.Component {
         node.setContentSize(72, 64);
         let color = this.getBondItemColor(item.type);
         this.drawBondItemRing(node, item, color);
-        let shortLabel = this.createChildLabel(node, item.shortLabel || getTurnObstacleShortLabel(item.type), 24, 0, 4);
+        let fallbackShortLabel = item.shortLabel || getTurnObstacleShortLabel(item.type as TurnObstacleResourceType);
+        let shortLabel = this.createChildLabel(node, fallbackShortLabel, 24, 0, 4);
         shortLabel.node.color = new cc.Color(245, 248, 255, 255);
         shortLabel.node.zIndex = 3;
         let valueLabel = this.createChildLabel(node, item.value + "/" + Math.max(0, item.nextValue), 12, 0, -26);
@@ -729,7 +730,7 @@ export default class TurnHud extends cc.Component {
         return label;
     }
 
-    private getBondItemColor(type: TurnObstacleResourceType): cc.Color {
+    private getBondItemColor(type: TurnObstacleResourceType | string): cc.Color {
         if (type === "mirror") {
             return new cc.Color(180, 196, 236, 255);
         }
@@ -1162,7 +1163,7 @@ export default class TurnHud extends cc.Component {
     private drawSlotShape(
         target: cc.Node,
         graphics: cc.Graphics,
-        slot: { type: TurnObstacleResourceType; placed: boolean; count: number; layout?: { x: number; y: number }[]; shapeKey?: string; cellLevels?: number[] },
+        slot: { type: TurnObstacleResourceType; placed: boolean; count: number; layout?: { x: number; y: number }[]; shapeKey?: string; cellLevels?: number[]; heroChar?: string },
         centerX: number,
         centerY: number,
         innerSize: number,
@@ -1207,12 +1208,12 @@ export default class TurnHud extends cc.Component {
             graphics.lineWidth = 1.5;
             graphics.roundRect(cx, cy, cellSize, cellSize, Math.max(2, Math.floor(cellSize * 0.18)));
             graphics.stroke();
-            this.createSlotTextMark(target, slot.type, cx + cellSize / 2, cy + cellSize / 2, cellSize);
+            this.createSlotTextMark(target, slot, cx + cellSize / 2, cy + cellSize / 2, cellSize);
         }
     }
 
-    private createSlotTextMark(parent: cc.Node, type: TurnObstacleResourceType, x: number, y: number, cellSize: number) {
-        let text = getTurnObstacleShortLabel(type);
+    private createSlotTextMark(parent: cc.Node, slot: { type: TurnObstacleResourceType; heroChar?: string }, x: number, y: number, cellSize: number) {
+        let text = slot.type === "summon_wall" && slot.heroChar ? slot.heroChar : getTurnObstacleShortLabel(slot.type);
         if (!text) {
             return;
         }
@@ -1327,6 +1328,9 @@ export default class TurnHud extends cc.Component {
     }
 
     private getSlotDisplayName(type: TurnObstacleResourceType, fallback?: string): string {
+        if (type === "summon_wall") {
+            return "召唤墙";
+        }
         if (type === "coin") {
             return "金币块";
         }

@@ -18,7 +18,7 @@ export type TurnUpgradeId =
     | "coin_drop_pct"
     | "exp_drop_pct";
 export type TurnAssistZoneType = "black_hole" | "spread" | "damage_boost";
-export type TurnObstacleResourceType = "normal" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack" | "missile_silo" | "coin";
+export type TurnObstacleResourceType = "normal" | "summon_wall" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack" | "missile_silo" | "coin";
 export type TurnMirrorDirection = "bl" | "br" | "tl" | "tr";
 export type TurnUpgradeStackMode = "add" | "multiply";
 export type TurnUpgradeEffectType =
@@ -86,6 +86,42 @@ export interface TurnObstacleSlotConfig {
     type: TurnObstacleResourceType;
     name: string;
     weight?: number;
+}
+
+export interface TurnSummonHeroDefinition {
+    id: string;
+    name: string;
+    chars: string[];
+}
+
+export interface TurnSummonHeroLevelConfig {
+    level: number;
+    survivedRounds: number;
+    hp: number;
+}
+
+export interface TurnSummonHeroSkillConfig {
+    liuBeiHealPerLevel: number;
+    guanYuAttackPerLevel: number;
+    zhangFeiDisableMoveChancePerLevel: number;
+    zhaoYunImmuneChancePerLevel: number;
+    zhaoYunImmuneChanceMax: number;
+    zhugeLiangSpreadExtraSplitPerLevel: number;
+    zhouYuAreaDamagePerLevel: number;
+    zhouYuAreaRadiusCells: number;
+    huangGaiMissingHpStep: number;
+    huangGaiAttackPerStepPerLevel: number;
+    luBuDestroyChancePerLevel: number;
+    sunQuanShareRatioPerLevel: number;
+    sunQuanShareRatioMax: number;
+    caoCaoPermanentAttackPerLevel: number;
+}
+
+export interface TurnSummonHeroConfig {
+    charPool: string[];
+    heroes: TurnSummonHeroDefinition[];
+    levels: TurnSummonHeroLevelConfig[];
+    skills: TurnSummonHeroSkillConfig;
 }
 
 export interface TurnObstacleHpRuleConfig {
@@ -167,7 +203,7 @@ export interface TurnBondCountMap {
 }
 
 export interface TurnBondHudItem {
-    type: TurnBondResourceType;
+    type: TurnBondResourceType | string;
     name: string;
     shortLabel: string;
     description: string;
@@ -327,6 +363,7 @@ export interface TurnGameConfig {
     obstacleMaxHp: number;
     obstacleHpRules: {
         normal: TurnObstacleHpRuleConfig;
+        summon_wall: TurnObstacleHpRuleConfig;
         mirror: TurnObstacleHpRuleConfig;
         exp: TurnObstacleHpRuleConfig;
         energy: TurnObstacleHpRuleConfig;
@@ -336,6 +373,7 @@ export interface TurnGameConfig {
         missile_silo: TurnObstacleHpRuleConfig;
         coin: TurnObstacleHpRuleConfig;
     };
+    summonHeroes: TurnSummonHeroConfig;
     missileSilo: {
         directDamage: number;
         explosionRadiusCells: number;
@@ -415,6 +453,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         levelValues: [1, 3, 6, 10, 15],
         typeLevels: {
             normal: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
+            summon_wall: [{ hp: 30 }, { hp: 40 }, { hp: 50 }, { hp: 60 }, { hp: 70 }],
             mirror: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
             missile_silo: [{ hp: 10, missileDamage: 10 }, { hp: 20, missileDamage: 15 }, { hp: 30, missileDamage: 20 }, { hp: 40, missileDamage: 25 }, { hp: 50, missileDamage: 30 }],
             bullet: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
@@ -465,6 +504,10 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
             baseHp: 10,
             maxHp: 50,
         },
+        summon_wall: {
+            baseHp: 30,
+            maxHp: 70,
+        },
         mirror: {
             baseHp: 10,
             maxHp: 10,
@@ -502,6 +545,44 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
         directDamage: 10,
         explosionRadiusCells: 1,
         mainCannonChance: 0,
+    },
+    summonHeroes: {
+        charPool: ["刘", "备", "关", "羽", "张", "飞", "赵", "云", "诸", "葛", "亮", "周", "瑜", "黄", "盖", "吕", "布", "孙", "权", "曹", "操"],
+        heroes: [
+            { id: "liu_bei", name: "刘备", chars: ["刘", "备"] },
+            { id: "guan_yu", name: "关羽", chars: ["关", "羽"] },
+            { id: "zhang_fei", name: "张飞", chars: ["张", "飞"] },
+            { id: "zhao_yun", name: "赵云", chars: ["赵", "云"] },
+            { id: "zhuge_liang", name: "诸葛亮", chars: ["诸", "葛", "亮"] },
+            { id: "zhou_yu", name: "周瑜", chars: ["周", "瑜"] },
+            { id: "huang_gai", name: "黄盖", chars: ["黄", "盖"] },
+            { id: "lv_bu", name: "吕布", chars: ["吕", "布"] },
+            { id: "sun_quan", name: "孙权", chars: ["孙", "权"] },
+            { id: "cao_cao", name: "曹操", chars: ["曹", "操"] },
+        ],
+        levels: [
+            { level: 1, survivedRounds: 0, hp: 30 },
+            { level: 2, survivedRounds: 2, hp: 40 },
+            { level: 3, survivedRounds: 3, hp: 50 },
+            { level: 4, survivedRounds: 4, hp: 60 },
+            { level: 5, survivedRounds: 5, hp: 70 },
+        ],
+        skills: {
+            liuBeiHealPerLevel: 3,
+            guanYuAttackPerLevel: 5,
+            zhangFeiDisableMoveChancePerLevel: 0.1,
+            zhaoYunImmuneChancePerLevel: 0.1,
+            zhaoYunImmuneChanceMax: 0.5,
+            zhugeLiangSpreadExtraSplitPerLevel: 1,
+            zhouYuAreaDamagePerLevel: 2,
+            zhouYuAreaRadiusCells: 1,
+            huangGaiMissingHpStep: 10,
+            huangGaiAttackPerStepPerLevel: 1,
+            luBuDestroyChancePerLevel: 0.15,
+            sunQuanShareRatioPerLevel: 0.1,
+            sunQuanShareRatioMax: 0.8,
+            caoCaoPermanentAttackPerLevel: 1,
+        },
     },
     coinEconomy: {
         initialCoins: 0,
@@ -655,7 +736,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     energyWallRoundHeal: 10,
     bloodBlockHealPerStack: 1,
     obstacleSlots: [
-        { type: "normal", name: "普通方块", weight: 15 },
+        { type: "summon_wall", name: "召唤墙", weight: 15 },
         { type: "mirror", name: "反弹块", weight: 15 },
         { type: "coin", name: "金币块", weight: 15 },
         { type: "energy", name: "能量墙", weight: 15 },
@@ -744,6 +825,9 @@ export function getTurnObstacleShortLabel(type: TurnObstacleResourceType): strin
     }
     if (type === "missile_silo") {
         return "导";
+    }
+    if (type === "summon_wall") {
+        return "召";
     }
     if (type === "normal") {
         return "墙";

@@ -343,6 +343,7 @@ export default class TurnGameMain extends cc.Component {
                 layout: Array.isArray(slot.layout)
                     ? slot.layout.map((cell) => ({ x: Number(cell.x) || 0, y: Number(cell.y) || 0 }))
                     : null,
+                heroChar: slot.heroChar || "",
             })),
             this._battleMap.isBuildPhaseActiveForCamp(localCamp),
         );

@@ -479,6 +479,7 @@ const TURN_CONFIG = {
     levelValues: [1, 3, 6, 10, 15],
     typeLevels: {
       normal: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
+      summon_wall: [{ hp: 30 }, { hp: 40 }, { hp: 50 }, { hp: 60 }, { hp: 70 }],
       mirror: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
       missile_silo: [{ hp: 10, missileDamage: 10 }, { hp: 20, missileDamage: 15 }, { hp: 30, missileDamage: 20 }, { hp: 40, missileDamage: 25 }, { hp: 50, missileDamage: 30 }],
       bullet: [{ hp: 10 }, { hp: 20 }, { hp: 30 }, { hp: 40 }, { hp: 50 }],
@@ -530,6 +531,10 @@ const TURN_CONFIG = {
       baseHp: 10,
       maxHp: 50,
     },
+    summon_wall: {
+      baseHp: 30,
+      maxHp: 70,
+    },
     mirror: {
       baseHp: 10,
       maxHp: 10,
@@ -567,6 +572,44 @@ const TURN_CONFIG = {
     directDamage: 10,
     explosionRadiusCells: 1,
     mainCannonChance: 0,
+  },
+  summonHeroes: {
+    charPool: ['刘', '备', '关', '羽', '张', '飞', '赵', '云', '诸', '葛', '亮', '周', '瑜', '黄', '盖', '吕', '布', '孙', '权', '曹', '操'],
+    heroes: [
+      { id: 'liu_bei', name: '刘备', chars: ['刘', '备'] },
+      { id: 'guan_yu', name: '关羽', chars: ['关', '羽'] },
+      { id: 'zhang_fei', name: '张飞', chars: ['张', '飞'] },
+      { id: 'zhao_yun', name: '赵云', chars: ['赵', '云'] },
+      { id: 'zhuge_liang', name: '诸葛亮', chars: ['诸', '葛', '亮'] },
+      { id: 'zhou_yu', name: '周瑜', chars: ['周', '瑜'] },
+      { id: 'huang_gai', name: '黄盖', chars: ['黄', '盖'] },
+      { id: 'lv_bu', name: '吕布', chars: ['吕', '布'] },
+      { id: 'sun_quan', name: '孙权', chars: ['孙', '权'] },
+      { id: 'cao_cao', name: '曹操', chars: ['曹', '操'] },
+    ],
+    levels: [
+      { level: 1, survivedRounds: 0, hp: 30 },
+      { level: 2, survivedRounds: 2, hp: 40 },
+      { level: 3, survivedRounds: 3, hp: 50 },
+      { level: 4, survivedRounds: 4, hp: 60 },
+      { level: 5, survivedRounds: 5, hp: 70 },
+    ],
+    skills: {
+      liuBeiHealPerLevel: 3,
+      guanYuAttackPerLevel: 5,
+      zhangFeiDisableMoveChancePerLevel: 0.1,
+      zhaoYunImmuneChancePerLevel: 0.1,
+      zhaoYunImmuneChanceMax: 0.5,
+      zhugeLiangSpreadExtraSplitPerLevel: 1,
+      zhouYuAreaDamagePerLevel: 2,
+      zhouYuAreaRadiusCells: 1,
+      huangGaiMissingHpStep: 10,
+      huangGaiAttackPerStepPerLevel: 1,
+      luBuDestroyChancePerLevel: 0.15,
+      sunQuanShareRatioPerLevel: 0.1,
+      sunQuanShareRatioMax: 0.8,
+      caoCaoPermanentAttackPerLevel: 1,
+    },
   },
   coinEconomy: {
     initialCoins: 0,
@@ -717,7 +760,7 @@ const TURN_CONFIG = {
   },
   obstacleSlotMaxResources: 4,
   obstacleSlots: [
-    { type: 'normal', name: '普通方块', weight: 15 },
+    { type: 'summon_wall', name: '召唤墙', weight: 15 },
     { type: 'mirror', name: '反弹块', weight: 15 },
     { type: 'coin', name: '金币块', weight: 15 },
     { type: 'energy', name: '能量墙', weight: 15 },
@@ -738,7 +781,7 @@ const TURN_PHASE = {
 };
 const TURN_CAMPS = ['A', 'B'];
 const TURN_UPGRADE_POOL = [];
-const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'mirror', 'energy', 'bleed', 'bullet', 'attack', 'missile_silo', 'coin'];
+const TURN_OBSTACLE_SLOT_TYPES = ['normal', 'summon_wall', 'mirror', 'energy', 'bleed', 'bullet', 'attack', 'missile_silo', 'coin'];
 const TURN_OBSTACLE_LAYOUT_LIBRARY = {
   1: [
     [{ x: 0, y: 0 }],
@@ -1050,6 +1093,12 @@ function buildTurnViewPayload(player, payload) {
       };
     });
   }
+  if (Array.isArray(next.heroGroups)) {
+    next.heroGroups = next.heroGroups.map((group) => ({
+      ...group,
+      camp: getTurnViewCamp(player, group.camp),
+    }));
+  }
   if (Array.isArray(next.zones)) {
     next.zones = next.zones.map((zone) => {
       const point = toPlayerViewPoint(player, zone);
@@ -1185,6 +1234,7 @@ function createTurnPlayer(ws, camp, index) {
     coins: Math.max(0, Math.floor(Number(coinEconomy.initialCoins) || 0)),
     placedThisRound: false,
     refreshCountThisRound: 0,
+    heroPermanentAttack: 0,
     inventory: {
       roundResourceTotal: TURN_CONFIG.initialRoundResourceTotal,
       roundSlots: [],
@@ -1230,6 +1280,7 @@ function cloneTurnObstacleSlots(source) {
       mirrorDir: '',
       placed: !!(slot && slot.placed),
       placedObstacleId: slot && slot.placedObstacleId ? String(slot.placedObstacleId) : '',
+      heroChar: slot && slot.heroChar ? String(slot.heroChar) : '',
     };
   });
 }
@@ -1473,6 +1524,10 @@ function applyObstacleDamage(roomState, obstacleId, cellIndex, damage) {
   if (cellIndex < 0 || cellIndex >= obstacle.cellHp.length || cellIndex >= obstacle.layout.length) {
     return null;
   }
+  const heroApplied = tryApplyTurnHeroGroupDamage(roomState, obstacle, damage);
+  if (heroApplied) {
+    return heroApplied;
+  }
   const safeDamage = Math.max(0, Math.floor(Number(damage) || 0));
   const before = Math.max(0, Number(obstacle.cellHp[cellIndex]) || 0);
   const after = Math.max(0, before - safeDamage);
@@ -1515,6 +1570,346 @@ function applyObstacleDamage(roomState, obstacleId, cellIndex, damage) {
   return { obstacle, appliedDamage, destroyedCell: true, destroyedObstacle: true };
 }
 
+function syncTurnHeroGroupMembers(roomState, group) {
+  if (!roomState || !group || !Array.isArray(group.memberIds)) {
+    return;
+  }
+  group.memberIds = group.memberIds.filter((id) => !!roomState.obstacles[id]);
+  for (let i = 0; i < group.memberIds.length; i++) {
+    const obstacle = roomState.obstacles[group.memberIds[i]];
+    if (!obstacle) {
+      continue;
+    }
+    obstacle.heroGroupId = group.id;
+    obstacle.heroId = group.heroId;
+    obstacle.heroName = group.heroName;
+    obstacle.heroChar = group.chars[i] || obstacle.heroChar || '';
+    obstacle.heroIndex = i;
+    obstacle.heroCompleted = true;
+    obstacle.heroLevel = group.level;
+    obstacle.heroGroupHp = group.hp;
+    obstacle.heroGroupMaxHp = group.maxHp;
+    obstacle.cellHp = [Math.max(0, Math.floor(Number(group.hp) || 0))];
+    obstacle.cellHpList = obstacle.cellHp.slice();
+    obstacle.hp = obstacle.cellHp[0];
+    obstacle.maxHp = group.maxHp;
+  }
+}
+
+function destroyTurnHeroGroup(roomState, groupId) {
+  const group = roomState && roomState.heroGroups ? roomState.heroGroups[groupId] : null;
+  if (!group) {
+    return [];
+  }
+  const destroyed = [];
+  const memberIds = Array.isArray(group.memberIds) ? group.memberIds.slice() : [];
+  for (let i = 0; i < memberIds.length; i++) {
+    const id = memberIds[i];
+    if (roomState.obstacles[id]) {
+      destroyed.push(roomState.obstacles[id]);
+      delete roomState.obstacles[id];
+    }
+  }
+  delete roomState.heroGroups[groupId];
+  return destroyed;
+}
+
+function applyTurnHeroGroupDamage(roomState, obstacle, damage) {
+  const group = obstacle && obstacle.heroGroupId && roomState.heroGroups ? roomState.heroGroups[obstacle.heroGroupId] : null;
+  if (!group) {
+    return null;
+  }
+  const safeDamage = Math.max(0, Math.floor(Number(damage) || 0));
+  const before = Math.max(0, Math.floor(Number(group.hp) || 0));
+  const after = Math.max(0, before - safeDamage);
+  const appliedDamage = before - after;
+  group.hp = after;
+  if (group.hp <= 0) {
+    const destroyed = destroyTurnHeroGroup(roomState, group.id);
+    return { obstacle, appliedDamage, destroyedCell: true, destroyedObstacle: true, destroyedHeroGroup: true, destroyedHeroMembers: destroyed };
+  }
+  syncTurnHeroGroupMembers(roomState, group);
+  return { obstacle, appliedDamage, destroyedCell: false, destroyedObstacle: false, heroGroup: group };
+}
+
+function tryApplyTurnHeroGroupDamage(roomState, obstacle, damage) {
+  if (!obstacle || obstacle.slotType !== 'summon_wall' || !obstacle.heroCompleted || !obstacle.heroGroupId) {
+    return null;
+  }
+  return applyTurnHeroGroupDamage(roomState, obstacle, damage);
+}
+
+function appendTurnDestroyedObstacleIds(result, applied, fallbackId) {
+  if (!result || !applied) {
+    return;
+  }
+  const ids = Array.isArray(applied.destroyedHeroMembers)
+    ? applied.destroyedHeroMembers.map((item) => item && item.id).filter(Boolean)
+    : (applied.destroyedObstacle && fallbackId ? [fallbackId] : []);
+  for (let i = 0; i < ids.length; i++) {
+    if (result.destroyedIds.indexOf(ids[i]) < 0) {
+      result.destroyedIds.push(ids[i]);
+    }
+  }
+}
+
+function refreshTurnSummonHeroGroups(roomState, camp) {
+  if (!roomState || !roomState.obstacles) {
+    return;
+  }
+  roomState.heroGroups = roomState.heroGroups || {};
+  const grid = TURN_CONFIG.obstacleGrid || 32;
+  const rows = {};
+  Object.keys(roomState.obstacles).forEach((id) => {
+    const obstacle = roomState.obstacles[id];
+    if (!obstacle || obstacle.camp !== camp || obstacle.slotType !== 'summon_wall' || obstacle.heroCompleted || !obstacle.heroChar) {
+      return;
+    }
+    const y = Math.round((Number(obstacle.y) || 0) / grid) * grid;
+    rows[y] = rows[y] || [];
+    rows[y].push(obstacle);
+  });
+  const heroes = getTurnSummonHeroDefinitions().slice().sort((a, b) => (b.chars || []).length - (a.chars || []).length);
+  const used = {};
+  Object.keys(rows).forEach((rowKey) => {
+    const row = rows[rowKey].sort((a, b) => (Number(a.x) || 0) - (Number(b.x) || 0));
+    const byX = {};
+    row.forEach((obstacle) => {
+      byX[Math.round((Number(obstacle.x) || 0) / grid)] = obstacle;
+    });
+    for (let r = 0; r < row.length; r++) {
+      const start = row[r];
+      if (used[start.id]) {
+        continue;
+      }
+      const startX = Math.round((Number(start.x) || 0) / grid);
+      for (let h = 0; h < heroes.length; h++) {
+        const hero = heroes[h];
+        const chars = Array.isArray(hero.chars) ? hero.chars : [];
+        if (chars.length <= 0 || start.heroChar !== chars[0]) {
+          continue;
+        }
+        const members = [];
+        let matched = true;
+        for (let i = 0; i < chars.length; i++) {
+          const candidate = byX[startX + i];
+          if (!candidate || used[candidate.id] || candidate.heroChar !== chars[i]) {
+            matched = false;
+            break;
+          }
+          members.push(candidate);
+        }
+        if (!matched) {
+          continue;
+        }
+        const levelConfig = getTurnSummonHeroLevelConfig(0);
+        const groupId = `${camp}_hero_${roomState.nextHeroGroupId++}`;
+        const group = {
+          id: groupId,
+          camp,
+          heroId: hero.id,
+          heroName: hero.name,
+          chars: chars.slice(),
+          memberIds: members.map((item) => item.id),
+          survivedRounds: 0,
+          level: levelConfig.level,
+          hp: levelConfig.hp,
+          maxHp: levelConfig.hp,
+        };
+        roomState.heroGroups[groupId] = group;
+        for (let i = 0; i < members.length; i++) {
+          used[members[i].id] = true;
+        }
+        syncTurnHeroGroupMembers(roomState, group);
+        break;
+      }
+    }
+  });
+}
+
+function advanceTurnSummonHeroGroups(roomState) {
+  const groups = roomState && roomState.heroGroups ? roomState.heroGroups : {};
+  Object.keys(groups).forEach((id) => {
+    const group = groups[id];
+    if (!group || group.hp <= 0) {
+      return;
+    }
+    group.survivedRounds = Math.max(0, Math.floor(Number(group.survivedRounds) || 0)) + 1;
+    const nextLevel = getTurnSummonHeroLevelConfig(group.survivedRounds);
+    if (nextLevel.level > Math.max(1, Math.floor(Number(group.level) || 1))) {
+      group.level = nextLevel.level;
+      group.maxHp = nextLevel.hp;
+      group.hp = nextLevel.hp;
+    }
+    syncTurnHeroGroupMembers(roomState, group);
+  });
+}
+
+function getTurnHeroAttackBonus(roomState, camp) {
+  const skills = getTurnHeroSkillConfig();
+  const guanYu = sumTurnHeroLevels(roomState, camp, 'guan_yu') * Math.max(0, Number(skills.guanYuAttackPerLevel) || 0);
+  const player = getTurnPlayerByCamp(roomState, camp);
+  const permanent = Math.max(0, Math.floor(Number(player && player.heroPermanentAttack) || 0));
+  return guanYu + permanent;
+}
+
+function getTurnHuangGaiAttackBonus(roomState, camp) {
+  const skills = getTurnHeroSkillConfig();
+  const crystal = roomState && roomState.crystals ? roomState.crystals[camp] : null;
+  const missingHp = Math.max(0, Math.floor(Number(crystal && crystal.maxHp) || 0) - Math.max(0, Math.floor(Number(crystal && crystal.hp) || 0)));
+  const step = Math.max(1, Math.floor(Number(skills.huangGaiMissingHpStep) || 10));
+  const perStep = Math.max(0, Number(skills.huangGaiAttackPerStepPerLevel) || 0);
+  return Math.floor(missingHp / step) * perStep * sumTurnHeroLevels(roomState, camp, 'huang_gai');
+}
+
+function getTurnZhugeSpreadExtra(roomState, camp) {
+  const skills = getTurnHeroSkillConfig();
+  return Math.max(0, Math.floor(Number(skills.zhugeLiangSpreadExtraSplitPerLevel) || 0)) * sumTurnHeroLevels(roomState, camp, 'zhuge_liang');
+}
+
+function tryTurnHeroChance(roomState, camp, heroId, chancePerLevel, maxChance = 1) {
+  return forEachTurnHeroAttempt(roomState, camp, heroId, (group) => {
+    const chance = clamp((Number(chancePerLevel) || 0) * Math.max(1, Math.floor(Number(group.level) || 1)), 0, Math.max(0, Number(maxChance) || 1));
+    return Math.random() < chance;
+  });
+}
+
+function rollTurnAttackMoveDisabled(roomState, attackCamp) {
+  const skills = getTurnHeroSkillConfig();
+  const enemyCamp = getEnemyCamp(attackCamp);
+  return tryTurnHeroChance(roomState, enemyCamp, 'zhang_fei', skills.zhangFeiDisableMoveChancePerLevel, 1);
+}
+
+function tryTurnZhaoYunImmune(roomState, targetCamp) {
+  const skills = getTurnHeroSkillConfig();
+  return tryTurnHeroChance(roomState, targetCamp, 'zhao_yun', skills.zhaoYunImmuneChancePerLevel, skills.zhaoYunImmuneChanceMax);
+}
+
+function getTurnSunQuanShareRatio(roomState, targetCamp) {
+  const skills = getTurnHeroSkillConfig();
+  const ratio = sumTurnHeroLevels(roomState, targetCamp, 'sun_quan') * Math.max(0, Number(skills.sunQuanShareRatioPerLevel) || 0);
+  return clamp(ratio, 0, Math.max(0, Number(skills.sunQuanShareRatioMax) || 0));
+}
+
+function applyTurnSunQuanSharedDamage(roomState, targetCamp, damage) {
+  let remaining = Math.max(0, Math.floor(Number(damage) || 0));
+  if (remaining <= 0) {
+    return 0;
+  }
+  const obstacleIds = Object.keys(roomState && roomState.obstacles ? roomState.obstacles : {});
+  for (let i = 0; i < obstacleIds.length && remaining > 0; i++) {
+    const obstacle = roomState.obstacles[obstacleIds[i]];
+    if (!obstacle || obstacle.camp !== targetCamp) {
+      continue;
+    }
+    if (obstacle.heroCompleted && obstacle.heroGroupId && roomState.heroGroups[obstacle.heroGroupId]) {
+      const group = roomState.heroGroups[obstacle.heroGroupId];
+      const reducible = Math.max(0, Math.floor(Number(group.hp) || 0) - 1);
+      const applied = Math.min(reducible, remaining);
+      if (applied > 0) {
+        group.hp -= applied;
+        remaining -= applied;
+        syncTurnHeroGroupMembers(roomState, group);
+      }
+      continue;
+    }
+    if (!Array.isArray(obstacle.cellHp)) {
+      continue;
+    }
+    for (let c = 0; c < obstacle.cellHp.length && remaining > 0; c++) {
+      const reducible = Math.max(0, Math.floor(Number(obstacle.cellHp[c]) || 0) - 1);
+      const applied = Math.min(reducible, remaining);
+      if (applied > 0) {
+        obstacle.cellHp[c] -= applied;
+        remaining -= applied;
+      }
+    }
+    obstacle.cellHpList = obstacle.cellHp.slice();
+    obstacle.hp = sumObstacleCellHp(obstacle);
+  }
+  return Math.max(0, Math.floor(Number(damage) || 0)) - remaining;
+}
+
+function applyTurnCrystalDamage(roomState, targetCamp, sourceCamp, damage, result = null) {
+  const crystal = roomState && roomState.crystals ? roomState.crystals[targetCamp] : null;
+  if (!crystal) {
+    return 0;
+  }
+  let incoming = Math.max(0, Math.floor(Number(damage) || 0));
+  if (incoming <= 0) {
+    return 0;
+  }
+  if (tryTurnZhaoYunImmune(roomState, targetCamp)) {
+    return 0;
+  }
+  const shareRatio = getTurnSunQuanShareRatio(roomState, targetCamp);
+  if (shareRatio > 0) {
+    const shareDamage = Math.floor(incoming * shareRatio);
+    incoming = Math.max(0, incoming - applyTurnSunQuanSharedDamage(roomState, targetCamp, shareDamage));
+  }
+  const appliedDamage = Math.min(Math.max(0, Number(crystal.hp) || 0), incoming);
+  if (appliedDamage <= 0) {
+    return 0;
+  }
+  if (result) {
+    result.hitType = 'crystal';
+    result.targetCamp = targetCamp;
+    result.damage += appliedDamage;
+    if (targetCamp !== sourceCamp) {
+      result.enemyTankHitCount = Math.max(0, Math.floor(Number(result.enemyTankHitCount) || 0)) + 1;
+    }
+  }
+  crystal.hp = Math.max(0, crystal.hp - appliedDamage);
+  if (targetCamp !== sourceCamp) {
+    const skills = getTurnHeroSkillConfig();
+    const player = getTurnPlayerByCamp(roomState, sourceCamp);
+    const bonus = sumTurnHeroLevels(roomState, sourceCamp, 'cao_cao') * Math.max(0, Math.floor(Number(skills.caoCaoPermanentAttackPerLevel) || 0));
+    if (player && bonus > 0) {
+      player.heroPermanentAttack = Math.max(0, Math.floor(Number(player.heroPermanentAttack) || 0)) + bonus;
+    }
+  }
+  return appliedDamage;
+}
+
+function tryTurnLuBuDestroy(roomState, camp) {
+  const skills = getTurnHeroSkillConfig();
+  return tryTurnHeroChance(roomState, camp, 'lv_bu', skills.luBuDestroyChancePerLevel, 1);
+}
+
+function applyTurnZhouYuAreaDamage(roomState, sourceCamp, targetObstacle, targetCellIndex, result) {
+  const skills = getTurnHeroSkillConfig();
+  const damage = sumTurnHeroLevels(roomState, sourceCamp, 'zhou_yu') * Math.max(0, Math.floor(Number(skills.zhouYuAreaDamagePerLevel) || 0));
+  if (!targetObstacle || damage <= 0) {
+    return;
+  }
+  const radiusCells = Math.max(0, Math.floor(Number(skills.zhouYuAreaRadiusCells) || 1));
+  const grid = TURN_CONFIG.obstacleGrid || 32;
+  const center = getTurnObstacleCellCenter(targetObstacle, targetCellIndex);
+  const maxDistance = radiusCells * grid + grid * 0.5;
+  const ids = Object.keys(roomState && roomState.obstacles ? roomState.obstacles : {});
+  for (let i = 0; i < ids.length; i++) {
+    const obstacle = roomState.obstacles[ids[i]];
+    if (!obstacle || obstacle.camp !== targetObstacle.camp || !Array.isArray(obstacle.layout)) {
+      continue;
+    }
+    for (let c = obstacle.layout.length - 1; c >= 0; c--) {
+      const cellCenter = getTurnObstacleCellCenter(obstacle, c);
+      if (distanceBetweenPoints(center, cellCenter) > maxDistance) {
+        continue;
+      }
+      const applied = applyObstacleDamage(roomState, obstacle.id, c, damage);
+      if (applied && applied.appliedDamage > 0 && result) {
+        result.hitType = result.hitType || 'obstacle';
+        result.obstacleHits.push({ obstacleId: obstacle.id, cellIndex: c, damage: applied.appliedDamage, source: 'zhou_yu' });
+        if (applied.destroyedCell) {
+          result.destroyedCells.push({ obstacleId: obstacle.id, cellIndex: c, camp: obstacle.camp, slotType: obstacle.slotType, source: 'zhou_yu' });
+        }
+        appendTurnDestroyedObstacleIds(result, applied, obstacle.id);
+      }
+    }
+  }
+}
+
 function getTurnUpgradeStack(player, upgradeId) {
   return Math.max(0, Number(player && player.upgrades && player.upgrades.stacks && player.upgrades.stacks[upgradeId]) || 0);
 }
@@ -1552,6 +1947,65 @@ function randomTurnObstacleType() {
   return 'normal';
 }
 
+function randomTurnSummonHeroChar() {
+  const pool = TURN_CONFIG.summonHeroes && Array.isArray(TURN_CONFIG.summonHeroes.charPool)
+    ? TURN_CONFIG.summonHeroes.charPool
+    : [];
+  if (pool.length <= 0) {
+    return '墙';
+  }
+  return String(pool[Math.floor(Math.random() * pool.length)] || '墙');
+}
+
+function getTurnSummonHeroDefinitions() {
+  return TURN_CONFIG.summonHeroes && Array.isArray(TURN_CONFIG.summonHeroes.heroes)
+    ? TURN_CONFIG.summonHeroes.heroes
+    : [];
+}
+
+function getTurnSummonHeroLevelConfig(survivedRounds) {
+  const levels = TURN_CONFIG.summonHeroes && Array.isArray(TURN_CONFIG.summonHeroes.levels)
+    ? TURN_CONFIG.summonHeroes.levels.slice()
+    : [{ level: 1, survivedRounds: 0, hp: 30 }];
+  levels.sort((a, b) => (Number(a.survivedRounds) || 0) - (Number(b.survivedRounds) || 0));
+  let picked = levels[0];
+  const rounds = Math.max(0, Math.floor(Number(survivedRounds) || 0));
+  for (let i = 0; i < levels.length; i++) {
+    if (rounds >= Math.max(0, Math.floor(Number(levels[i].survivedRounds) || 0))) {
+      picked = levels[i];
+    }
+  }
+  return {
+    level: Math.max(1, Math.floor(Number(picked.level) || 1)),
+    hp: Math.max(1, Math.floor(Number(picked.hp) || 30)),
+  };
+}
+
+function getTurnHeroSkillConfig() {
+  return (TURN_CONFIG.summonHeroes && TURN_CONFIG.summonHeroes.skills) || {};
+}
+
+function getTurnHeroGroups(roomState, camp, heroId = '') {
+  const groups = roomState && roomState.heroGroups ? roomState.heroGroups : {};
+  return Object.keys(groups)
+    .map((id) => groups[id])
+    .filter((group) => group && group.camp === camp && group.hp > 0 && (!heroId || group.heroId === heroId));
+}
+
+function sumTurnHeroLevels(roomState, camp, heroId) {
+  return getTurnHeroGroups(roomState, camp, heroId).reduce((total, group) => total + Math.max(1, Math.floor(Number(group.level) || 1)), 0);
+}
+
+function forEachTurnHeroAttempt(roomState, camp, heroId, callback) {
+  const groups = getTurnHeroGroups(roomState, camp, heroId);
+  for (let i = 0; i < groups.length; i++) {
+    if (callback(groups[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function splitTurnRoundResources(totalResources) {
   const remainingStart = clamp(Math.floor(Number(totalResources) || 0), TURN_CONFIG.slotCountPerRound, TURN_CONFIG.maxRoundResourceTotal);
   let remaining = remainingStart;
@@ -1578,18 +2032,23 @@ function createTurnRoundSlots(player, roomState, displayRound) {
 
 function createTurnRoundSlot(player, displayRound, index, count) {
   const type = randomTurnObstacleType();
-  const layout = buildObstacleLayout(type, count);
+  const safeCount = type === 'summon_wall' ? 1 : count;
+  const layout = buildObstacleLayout(type, safeCount);
   const shapeKey = getObstacleLayoutKey(layout);
-  return {
+  const slot = {
     slotId: `${player.camp}_r${displayRound}_s${index}`,
     type,
-    count,
+    count: safeCount,
     layout,
     shapeKey,
     mirrorDir: '',
     placed: false,
     placedObstacleId: '',
   };
+  if (type === 'summon_wall') {
+    slot.heroChar = randomTurnSummonHeroChar();
+  }
+  return slot;
 }
 
 function findTurnRoundSlot(player, slotId) {
@@ -1830,11 +2289,13 @@ function getTurnRoundBulletBounce(roundIndex) {
 
 function buildTurnAttackSnapshotFromCounts(counts, player, roundIndex, properties = null) {
   const baseBulletDamage = Math.max(1, Number(TURN_CONFIG.bulletDamage) || 20);
+  const roomState = player ? getTurnRoom(player.socket) : null;
   const safeCounts = createTurnBondCountMap(counts);
   const derived = refreshTurnDerivedUpgradeState(player);
   const extraShotsFromUpgrade = Math.max(0, Number(player.upgrades.multiShot) || 0);
   const extraShotsFromBulletBlock = getTurnBulletBondExtraShots(safeCounts.bullet);
-  const bonusDamageFromUpgrade = Math.max(0, Number(player.upgrades.damageAdd) || 0);
+  const heroAttackBonus = roomState ? getTurnHeroAttackBonus(roomState, player.camp) + getTurnHuangGaiAttackBonus(roomState, player.camp) : 0;
+  const bonusDamageFromUpgrade = Math.max(0, Number(player.upgrades.damageAdd) || 0) + heroAttackBonus;
   const attackMultiplier = getTurnBondMultiplier('attack', safeCounts.attack);
   const bulletDamage = getTurnAttackBondBulletDamage(baseBulletDamage, bonusDamageFromUpgrade, safeCounts.attack, properties && properties.attack);
   const bonusDamageFromAttackBlock = Math.max(0, bulletDamage - baseBulletDamage - bonusDamageFromUpgrade);
@@ -1853,7 +2314,7 @@ function buildTurnAttackSnapshotFromCounts(counts, player, roundIndex, propertie
     bulletDamage,
     bulletBounce: getTurnRoundBulletBounce(roundIndex) + bulletBounce,
     firstBounceDamageMultiplier: Math.max(1, Number(derived.firstBounceDamageMultiplier) || 1),
-    spreadExtraSplit: Math.max(0, Number(derived.spreadExtraSplit) || 0),
+    spreadExtraSplit: Math.max(0, Number(derived.spreadExtraSplit) || 0) + (roomState ? getTurnZhugeSpreadExtra(roomState, player.camp) : 0),
     damageBoostTempAttack: Math.max(0, Number(derived.damageBoostTempAttack) || 0),
     blackHoleStrengthMultiplier: Math.max(1, Number(derived.blackHoleStrengthMultiplier) || 1),
     shotsLeft: totalShots,
@@ -1964,6 +2425,7 @@ function createTurnRoom() {
     waitingForBulletCamp: '',
     actionSubmitted: false,
     currentAttack: null,
+    attackMoveDisabled: false,
     roundAttackSnapshots: {
       A: null,
       B: null,
@@ -1977,6 +2439,7 @@ function createTurnRoom() {
       B: { camp: 'B', hp: TURN_CONFIG.crystalHp, maxHp: TURN_CONFIG.crystalHp },
     },
     obstacles: {},
+    heroGroups: {},
     zones: [],
     activeStaticObstacles: [],
     tankPoses: {
@@ -1994,6 +2457,7 @@ function createTurnRoom() {
       },
     },
     nextObstacleId: 1,
+    nextHeroGroupId: 1,
     nextZoneId: 1,
     finished: false,
   };
@@ -2071,6 +2535,7 @@ function getTurnStateSnapshot(roomState) {
     attackRoundIndex: roomState.attackRoundIndex,
     attackTurnIndex: roomState.attackTurnIndex || 0,
     actionCamp: roomState.actionCamp,
+    attackMoveDisabled: !!roomState.attackMoveDisabled,
     endAt: roomState.phaseEndAt,
     crystals: {
       A: { ...roomState.crystals.A },
@@ -2078,6 +2543,7 @@ function getTurnStateSnapshot(roomState) {
     },
     staticObstacles: getTurnActiveStaticObstacles(roomState).map((item) => ({ ...item })),
     obstacles: Object.keys(roomState.obstacles).map((id) => ({ ...roomState.obstacles[id] })),
+    heroGroups: Object.keys(roomState.heroGroups || {}).map((id) => ({ ...roomState.heroGroups[id] })),
     zones: roomState.zones.map((zone) => ({ ...zone })),
     tankPoses: {
       A: { ...roomState.tankPoses.A },
@@ -2389,6 +2855,7 @@ function startTurnBuildPhase(roomState) {
   roomState.waitingForBulletCamp = '';
   roomState.actionSubmitted = false;
   roomState.currentAttack = null;
+  roomState.attackMoveDisabled = false;
   roomState.roundAttackSnapshots = {
     A: null,
     B: null,
@@ -2398,6 +2865,7 @@ function startTurnBuildPhase(roomState) {
     B: null,
   };
   roomState.zones = [];
+  advanceTurnSummonHeroGroups(roomState);
   randomizeTurnAssistStaticObstacles(roomState);
   spawnTurnAssistZones(roomState);
   const coinReward = Math.max(0, Math.floor(Number(TURN_CONFIG.coinEconomy && TURN_CONFIG.coinEconomy.baseRoundReward) || 0));
@@ -2459,6 +2927,7 @@ function startTurnAttackPhase(roomState, camp) {
   roomState.waitingForBulletCamp = '';
   roomState.actionSubmitted = false;
   roomState.currentAttack = null;
+  roomState.attackMoveDisabled = rollTurnAttackMoveDisabled(roomState, camp);
   logTurn(roomState, `phase attack camp=${camp} turn=${roomState.attackTurnIndex}`);
   setTurnPhase(roomState, TURN_PHASE.ATTACK, TURN_CONFIG.attackSeconds, () => {
     advanceTurnAttack(roomState);
@@ -2931,6 +3400,9 @@ function analyzeTurnBuildPlacement(roomState, camp, x, y, layout, slotType, igno
       result.blankCells.push(sourceLayout[i] || { x: 0, y: 0 });
       continue;
     }
+    if (slotType === 'summon_wall') {
+      return result;
+    }
     if (overlaps.length > 1) {
       return result;
     }
@@ -3043,12 +3515,15 @@ function handleTurnBuildAction(ws, msg) {
         shapeKey: getObstacleLayoutKey(layout),
         mirrorDir: '',
         placedByCamp: player.camp,
+        heroChar: slot.heroChar || '',
+        heroCompleted: false,
       };
     }
     slot.placed = true;
     slot.placedObstacleId = placement.blankCells.length > 0 ? id : `merge_${roomState.nextObstacleId++}`;
     player.coins = Math.max(0, Math.floor(Number(player.coins) || 0) - slotCost);
     player.placedThisRound = true;
+    refreshTurnSummonHeroGroups(roomState, player.camp);
     logTurn(roomState, `buildAction place ok: camp=${player.camp} slotId="${slot.slotId}" obstacleId=${placement.blankCells.length > 0 ? id : ''} mergeCells=${placement.mergeTargets.length} type=${slotType} at ${Math.round(point.x)},${Math.round(point.y)} coins=${player.coins}`);
   } else if (op === 'move') {
     sendTurnError(ws, '已放置资源不能移动', 'moveDisabled');
@@ -3133,10 +3608,11 @@ function handleTurnTankPose(ws, msg) {
   const payload = getTurnActionPayload(msg);
   const posePoint = sanitizeTurnPointForPlayer(player, { x: payload.x, y: payload.y });
   const aimPoint = sanitizeTurnPointForPlayer(player, { x: payload.aimX, y: payload.aimY });
+  const currentPose = roomState.tankPoses[player.camp];
   const pose = updateTurnTankPose(
     roomState,
     player.camp,
-    posePoint ? posePoint.x : roomState.tankPoses[player.camp].x,
+    roomState.attackMoveDisabled ? currentPose.x : (posePoint ? posePoint.x : currentPose.x),
     aimPoint ? aimPoint.x : roomState.tankPoses[player.camp].aimX,
     aimPoint ? aimPoint.y : roomState.tankPoses[player.camp].aimY,
   );
@@ -3171,7 +3647,8 @@ function handleTurnAttackAction(ws, msg) {
     sendTurnError(ws, '不能点击自己建造区发射', 'attackInOwnBuildArea');
     return;
   }
-  const pose = updateTurnTankPose(roomState, player.camp, fromPoint.x, aimPoint.x, aimPoint.y);
+  const currentPose = roomState.tankPoses[player.camp];
+  const pose = updateTurnTankPose(roomState, player.camp, roomState.attackMoveDisabled ? currentPose.x : fromPoint.x, aimPoint.x, aimPoint.y);
   const snapshot = roomState.roundAttackSnapshots && roomState.roundAttackSnapshots[player.camp]
     ? { ...roomState.roundAttackSnapshots[player.camp] }
     : buildTurnAttackSnapshot(roomState, player);
@@ -3233,6 +3710,9 @@ function applyTurnRoundSettlement(roomState) {
   roomState.settlementSnapshots = roomState.settlementSnapshots || { A: null, B: null };
   roomState.players.forEach((player) => {
     const settlement = buildTurnSettlementSnapshot(roomState, player.camp);
+    const liuBeiHeal = sumTurnHeroLevels(roomState, player.camp, 'liu_bei') * Math.max(0, Math.floor(Number(getTurnHeroSkillConfig().liuBeiHealPerLevel) || 0));
+    settlement.totalHeal += liuBeiHeal;
+    settlement.finalHeal += liuBeiHeal;
     const coinGain = getTurnCoinSettlementGain(roomState, player.camp);
     settlement.coinGain = coinGain;
     settlement.expGain = 0;
@@ -3495,9 +3975,7 @@ function applyTurnMissileExplosion(roomState, triggerObstacle, triggerCellIndex,
       if (applied.destroyedCell) {
         result.destroyedCells.push({ obstacleId: id, cellIndex: i, camp: obstacle.camp, slotType: obstacle.slotType });
       }
-      if (applied.destroyedObstacle && result.destroyedIds.indexOf(id) < 0) {
-        result.destroyedIds.push(id);
-      }
+      appendTurnDestroyedObstacleIds(result, applied, id);
       event.damagedObstacles.push({
         obstacleId: id,
         camp: obstacle.camp,
@@ -3510,9 +3988,8 @@ function applyTurnMissileExplosion(roomState, triggerObstacle, triggerCellIndex,
   const targetPose = roomState && roomState.tankPoses ? roomState.tankPoses[targetCamp] : null;
   const targetCrystal = roomState && roomState.crystals ? roomState.crystals[targetCamp] : null;
   if (targetPose && targetCrystal && distanceBetweenPoints(targetPose, target) <= maxCellDistance + 38) {
-    const appliedDamage = Math.min(Math.max(0, Number(targetCrystal.hp) || 0), damage);
+    const appliedDamage = applyTurnCrystalDamage(roomState, targetCamp, triggerObstacle.camp, damage);
     if (appliedDamage > 0) {
-      targetCrystal.hp = Math.max(0, targetCrystal.hp - appliedDamage);
       event.damagedCrystals.push({ camp: targetCamp, damage: appliedDamage });
     }
   }
@@ -3581,6 +4058,30 @@ function resolveTurnBulletHit(roomState, bullet, result) {
       return false;
     }
     const isMirror = dynamicHit.obstacle.slotType === 'mirror';
+    if (tryTurnLuBuDestroy(roomState, bullet.camp)) {
+      const applied = applyObstacleDamage(roomState, dynamicHit.obstacle.id, dynamicHit.cellIndex, Number.MAX_SAFE_INTEGER);
+      if (applied) {
+        result.hitType = result.hitType || 'obstacle';
+        result.obstacleHits.push({
+          obstacleId: dynamicHit.obstacle.id,
+          cellIndex: dynamicHit.cellIndex,
+          damage: applied.appliedDamage,
+          source: 'lv_bu',
+        });
+        if (applied.destroyedCell) {
+          result.destroyedCells.push({
+            obstacleId: dynamicHit.obstacle.id,
+            cellIndex: dynamicHit.cellIndex,
+            camp: dynamicHit.obstacle.camp,
+            slotType: dynamicHit.obstacle.slotType,
+            source: 'lv_bu',
+          });
+        }
+        appendTurnDestroyedObstacleIds(result, applied, dynamicHit.obstacle.id);
+      }
+      consumeTurnBulletDamage(bullet, bullet.remainingDamage);
+      return true;
+    }
     const rawDamageForCell = isMirror
       ? Math.max(0, Number(dynamicHit.obstacle.cellHp && dynamicHit.obstacle.cellHp[dynamicHit.cellIndex]) || 0)
       : bullet.remainingDamage;
@@ -3603,11 +4104,12 @@ function resolveTurnBulletHit(roomState, bullet, result) {
           slotType: dynamicHit.obstacle.slotType,
         });
       }
-      if (applied.destroyedObstacle && result.destroyedIds.indexOf(dynamicHit.obstacle.id) < 0) {
-        result.destroyedIds.push(dynamicHit.obstacle.id);
-      }
+      appendTurnDestroyedObstacleIds(result, applied, dynamicHit.obstacle.id);
       if (dynamicHit.obstacle.slotType === 'missile_silo' && applied.appliedDamage > 0 && dynamicHit.obstacle.camp !== bullet.camp) {
         applyTurnMissileExplosion(roomState, dynamicHit.obstacle, dynamicHit.cellIndex, result);
+      }
+      if (!isMirror && applied.appliedDamage > 0) {
+        applyTurnZhouYuAreaDamage(roomState, bullet.camp, dynamicHit.obstacle, dynamicHit.cellIndex, result);
       }
     }
     if (isMirror) {
@@ -3642,13 +4144,7 @@ function resolveTurnBulletHit(roomState, bullet, result) {
   }
   const crystal = roomState && roomState.crystals ? roomState.crystals[targetCamp] : null;
   if (crystal) {
-    const appliedDamage = Math.min(Math.max(0, Number(crystal.hp) || 0), Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0)));
-    result.hitType = 'crystal';
-    result.targetCamp = targetCamp;
-    result.damage += appliedDamage;
-    if (targetCamp !== bullet.camp && appliedDamage > 0) {
-      result.enemyTankHitCount = Math.max(0, Math.floor(Number(result.enemyTankHitCount) || 0)) + 1;
-    }
+    const appliedDamage = applyTurnCrystalDamage(roomState, targetCamp, bullet.camp, Math.max(0, Math.floor(Number(bullet.remainingDamage) || 0)), result);
     consumeTurnBulletDamage(bullet, appliedDamage);
     return bullet.remainingDamage <= 0;
   }
@@ -3756,9 +4252,8 @@ function handleTurnBulletResult(ws, msg) {
   const simulated = simulateTurnBulletResults(roomState, player);
   let awardedCoins = 0;
   let destroyedEnemyCellCount = 0;
-  if (simulated.hitType === 'crystal' && simulated.targetCamp && roomState.crystals[simulated.targetCamp]) {
-    roomState.crystals[simulated.targetCamp].hp = Math.max(0, roomState.crystals[simulated.targetCamp].hp - simulated.damage);
-  }
+  // Crystal damage is applied during authoritative bullet simulation so hero
+  // effects such as Zhao Yun, Sun Quan, and Cao Cao can mutate the same state.
   if (simulated.obstacleHits.length > 0) {
     if (Array.isArray(simulated.destroyedCells)) {
       for (let i = 0; i < simulated.destroyedCells.length; i++) {

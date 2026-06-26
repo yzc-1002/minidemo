@@ -123,6 +123,15 @@ interface TurnObstacleState {
     shapeKey: string;
     mirrorDir: "";
     placedByCamp: TurnCamp;
+    heroGroupId?: string;
+    heroId?: string;
+    heroName?: string;
+    heroChar?: string;
+    heroIndex?: number;
+    heroCompleted?: boolean;
+    heroLevel?: number;
+    heroGroupHp?: number;
+    heroGroupMaxHp?: number;
 }
 
 interface TurnBuildPreviewState {
@@ -145,6 +154,7 @@ interface TurnObstacleSlotState {
     mirrorDir: "";
     placed: boolean;
     placedObstacleId: string;
+    heroChar?: string;
 }
 
 interface TurnStaticObstacleState {
@@ -852,7 +862,7 @@ export default class TurnBattleMap extends cc.Component {
         let order = rules && Array.isArray(rules.displayOrder) && rules.displayOrder.length > 0 ? rules.displayOrder : fallbackOrder;
         let displayMap = rules && rules.display ? rules.display : {};
         let maxLevel = Math.max(1, Math.floor(Number(rules && rules.maxLevel) || 5));
-        let result: TurnBondHudItem[] = [];
+        let result: TurnBondHudItem[] = this.buildHeroBondHudItems(camp);
         for (let i = 0; i < order.length; i++) {
             let type = order[i];
             let value = Math.max(0, Math.floor(Number(counts[type]) || 0));
@@ -874,6 +884,48 @@ export default class TurnBattleMap extends cc.Component {
             });
         }
         return result;
+    }
+
+    private buildHeroBondHudItems(camp: TurnCamp): TurnBondHudItem[] {
+        let groups: { [id: string]: TurnObstacleState } = {};
+        for (let i = 0; i < this._obstacles.length; i++) {
+            let obstacle = this._obstacles[i];
+            if (!obstacle || obstacle.camp !== camp || !obstacle.heroCompleted || !obstacle.heroGroupId) {
+                continue;
+            }
+            groups[obstacle.heroGroupId] = obstacle;
+        }
+        let counts: { [heroId: string]: { name: string; shortLabel: string; count: number; levelTotal: number; maxLevel: number } } = {};
+        Object.keys(groups).forEach((id) => {
+            let obstacle = groups[id];
+            let heroId = obstacle.heroId || id;
+            if (!counts[heroId]) {
+                counts[heroId] = {
+                    name: obstacle.heroName || heroId,
+                    shortLabel: obstacle.heroChar || (obstacle.heroName ? obstacle.heroName.charAt(0) : "将"),
+                    count: 0,
+                    levelTotal: 0,
+                    maxLevel: 5,
+                };
+            }
+            counts[heroId].count++;
+            counts[heroId].levelTotal += Math.max(1, Math.floor(Number(obstacle.heroLevel) || 1));
+        });
+        return Object.keys(counts).map((heroId) => {
+            let item = counts[heroId];
+            return {
+                type: heroId,
+                name: item.name,
+                shortLabel: item.shortLabel,
+                description: "已完成武将组，效果按同名武将叠加",
+                levelDescriptions: [],
+                effectDescriptions: ["数量 " + item.count, "等级合计 " + item.levelTotal],
+                value: item.count,
+                level: Math.max(1, Math.min(item.maxLevel, item.count)),
+                nextValue: item.levelTotal,
+                maxLevel: item.maxLevel,
+            };
+        });
     }
 
     private buildBondEffectDescriptions(type: TurnBondResourceType, count: number, propertyValue: number, camp: TurnCamp): string[] {
@@ -1122,6 +1174,9 @@ export default class TurnBattleMap extends cc.Component {
                         continue;
                     }
                     if (obstacle.camp !== camp || obstacle.slotType !== slotType) {
+                        return false;
+                    }
+                    if (slotType === "summon_wall") {
                         return false;
                     }
                     let maxLevel = Math.max(1, Math.floor(Number(this._config.resourceMerge && this._config.resourceMerge.maxLevel) || 1));
@@ -1910,6 +1965,15 @@ export default class TurnBattleMap extends cc.Component {
             shapeKey: this.getLayoutKey(layout),
             mirrorDir: mirrorDir,
             placedByCamp: camp,
+            heroGroupId: String(snapshot && snapshot.heroGroupId ? snapshot.heroGroupId : ""),
+            heroId: String(snapshot && snapshot.heroId ? snapshot.heroId : ""),
+            heroName: String(snapshot && snapshot.heroName ? snapshot.heroName : ""),
+            heroChar: String(snapshot && snapshot.heroChar ? snapshot.heroChar : (slot && slot.heroChar ? slot.heroChar : "")),
+            heroIndex: Math.max(0, Math.floor(Number(snapshot && snapshot.heroIndex) || 0)),
+            heroCompleted: !!(snapshot && snapshot.heroCompleted),
+            heroLevel: Math.max(1, Math.floor(Number(snapshot && snapshot.heroLevel) || 1)),
+            heroGroupHp: Math.max(0, Math.floor(Number(snapshot && snapshot.heroGroupHp) || 0)),
+            heroGroupMaxHp: Math.max(0, Math.floor(Number(snapshot && snapshot.heroGroupMaxHp) || 0)),
         });
         this.refreshObstacleHpLabel(this._obstacles[this._obstacles.length - 1]);
         this.getCampStats(camp).energyTowers = this.countPlacedEnergyTowers(camp);
@@ -2390,6 +2454,7 @@ export default class TurnBattleMap extends cc.Component {
                 mirrorDir: "",
                 placed: !!placedObstacleId,
                 placedObstacleId: placedObstacleId,
+                heroChar: String(source && source.heroChar ? source.heroChar : ""),
             };
         });
     }
@@ -2429,6 +2494,9 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private getSlotDisplayName(type: TurnObstacleResourceType): string {
+        if (type === "summon_wall") {
+            return "召唤墙";
+        }
         if (type === "mirror") {
             return "反弹块";
         }
@@ -2470,20 +2538,32 @@ export default class TurnBattleMap extends cc.Component {
         let result: TurnObstacleSlotState[] = [];
         for (let i = 0; i < counts.length; i++) {
             let type = this.randomSlotType();
-            let layout = this.buildLayoutForSlot(type, counts[i]);
+            let count = type === "summon_wall" ? 1 : counts[i];
+            let layout = this.buildLayoutForSlot(type, count);
             result.push({
                 slotId: camp + "_r" + roundIndex + "_s" + i,
                 type: type,
                 name: this.getSlotDisplayName(type),
-                count: counts[i],
+                count: count,
                 layout: layout,
                 shapeKey: this.getLayoutKey(layout),
                 mirrorDir: "",
                 placed: false,
                 placedObstacleId: "",
+                heroChar: type === "summon_wall" ? this.randomSummonHeroChar() : "",
             });
         }
         return result;
+    }
+
+    private randomSummonHeroChar(): string {
+        let pool = this._config.summonHeroes && Array.isArray(this._config.summonHeroes.charPool)
+            ? this._config.summonHeroes.charPool
+            : [];
+        if (pool.length <= 0) {
+            return "召";
+        }
+        return String(pool[Math.floor(Math.random() * pool.length)] || "召");
     }
 
     private splitRoundResources(totalResources: number): number[] {
@@ -2560,6 +2640,9 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private buildLayoutForSlot(slotType: TurnObstacleResourceType, count: number): cc.Vec2[] {
+        if (slotType === "summon_wall") {
+            return [cc.v2(0, 0)];
+        }
         let safeCount = Math.max(1, Math.min(this._config.obstacleSlotMaxResources, count));
         let candidates = OBSTACLE_LAYOUT_LIBRARY[safeCount] || OBSTACLE_LAYOUT_LIBRARY[1];
         if (!candidates || candidates.length <= 0) {
@@ -3863,7 +3946,7 @@ export default class TurnBattleMap extends cc.Component {
         }
         let children = obstacle.node.children ? obstacle.node.children.slice() : [];
         for (let i = 0; i < children.length; i++) {
-            if (children[i].getComponent(cc.Label)) {
+            if (children[i].getComponent(cc.Label) || children[i].name === "HeroGroupBorder") {
                 children[i].destroy();
             }
         }
@@ -3873,8 +3956,13 @@ export default class TurnBattleMap extends cc.Component {
         let bottomPadding = -3;
         for (let i = 0; i < layout.length && i < obstacle.cellHp.length; i++) {
             let cell = layout[i];
-            let hp = Math.max(0, Math.floor(Number(obstacle.cellHp[i]) || 0));
-            let markText = getTurnObstacleShortLabel(obstacle.slotType);
+            let hp = obstacle.heroCompleted && obstacle.heroGroupHp > 0
+                ? Math.max(0, Math.floor(Number(obstacle.heroGroupHp) || 0))
+                : Math.max(0, Math.floor(Number(obstacle.cellHp[i]) || 0));
+            let markText = obstacle.slotType === "summon_wall" && obstacle.heroChar
+                ? obstacle.heroChar
+                : getTurnObstacleShortLabel(obstacle.slotType);
+            let textColor = obstacle.heroCompleted ? new cc.Color(255, 224, 76, 255) : cc.Color.WHITE;
             if (markText) {
                 let mark = this.createLabel(markText, 18);
                 mark.verticalAlign = cc.Label.VerticalAlign.CENTER;
@@ -3883,7 +3971,16 @@ export default class TurnBattleMap extends cc.Component {
                 mark.node.setAnchorPoint(0.5, 0.5);
                 mark.node.setPosition(cell.x * cellSize, cell.y * cellSize + 1);
                 mark.node.zIndex = 4;
-                mark.node.color = cc.Color.WHITE;
+                mark.node.color = textColor;
+            }
+            if (obstacle.heroCompleted && obstacle.heroIndex === 0 && obstacle.heroName) {
+                let nameLabel = this.createLabel(obstacle.heroName, 12);
+                nameLabel.node.name = "ObstacleHeroNameLabel";
+                nameLabel.node.parent = obstacle.node;
+                nameLabel.node.setAnchorPoint(0.5, 0.5);
+                nameLabel.node.setPosition(cell.x * cellSize, cell.y * cellSize + cellSize / 2 + 8);
+                nameLabel.node.zIndex = 6;
+                nameLabel.node.color = textColor;
             }
             let label = this.createLabel(String(hp), fontSize);
             label.verticalAlign = cc.Label.VerticalAlign.BOTTOM;
@@ -3892,7 +3989,18 @@ export default class TurnBattleMap extends cc.Component {
             label.node.setAnchorPoint(0.5, 0);
             label.node.setPosition(cell.x * cellSize, cell.y * cellSize - cellSize / 2 + bottomPadding);
             label.node.zIndex = 5;
-            label.node.color = cc.Color.WHITE;
+            label.node.color = textColor;
+            if (obstacle.heroCompleted) {
+                let border = new cc.Node("HeroGroupBorder");
+                border.parent = obstacle.node;
+                border.setPosition(cell.x * cellSize, cell.y * cellSize);
+                border.zIndex = 3;
+                let graphics = border.addComponent(cc.Graphics);
+                graphics.strokeColor = new cc.Color(255, 224, 76, 255);
+                graphics.lineWidth = 3;
+                graphics.roundRect(-cellSize / 2 - 3, -cellSize / 2 - 3, cellSize + 6, cellSize + 6, 8);
+                graphics.stroke();
+            }
         }
     }
 
