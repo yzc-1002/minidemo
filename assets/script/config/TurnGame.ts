@@ -18,7 +18,7 @@ export type TurnUpgradeId =
     | "coin_drop_pct"
     | "exp_drop_pct";
 export type TurnAssistZoneType = "black_hole" | "spread" | "damage_boost";
-export type TurnObstacleResourceType = "normal" | "summon_wall" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack" | "missile_silo" | "coin";
+export type TurnObstacleResourceType = "normal" | "summon_wall" | "mirror" | "exp" | "energy" | "bleed" | "bullet" | "attack" | "missile_silo" | "coin" | "shovel";
 export type TurnMirrorDirection = "bl" | "br" | "tl" | "tr";
 export type TurnUpgradeStackMode = "add" | "multiply";
 export type TurnUpgradeEffectType =
@@ -219,12 +219,17 @@ export interface TurnCoinEconomyConfig {
     initialCoins: number;
     baseRoundReward: number;
     slotCost: number;
+    slotUnitCost: number;
     refreshCost: number;
     refreshCostMultiplier: number;
     destroyedEnemyResourceCoinReward: number;
     enemyTankHitCoinReward: number;
     perDestroyedEnemyCell: number;
     perCoinBlockSettlement: number;
+}
+
+export interface TurnUndevelopedCellConfig {
+    initialCount: number;
 }
 
 export interface TurnResourceMergeConfig {
@@ -402,6 +407,7 @@ export interface TurnGameConfig {
     energyWallRoundHeal: number;
     bloodBlockHealPerStack: number;
     obstacleSlots: TurnObstacleSlotConfig[];
+    undevelopedCells: TurnUndevelopedCellConfig;
     tankMoveSpeed: number;
     mapWidth: number;
     mapHeight: number;
@@ -448,7 +454,7 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     bulletBlockExtraShotInterval: 0.5,
     bulletMaxLifeSeconds: 30,
     bulletSimStepSeconds: 1 / 60,
-    bulletSpeed: 620 * 2 / 3,
+    bulletSpeed: 620 * 0.8,
     bulletRadius: 10,
     obstacleRadius: 26,
     resourceMerge: {
@@ -593,7 +599,8 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     coinEconomy: {
         initialCoins: 0,
         baseRoundReward: 10,
-        slotCost: 10,
+        slotCost: 2,
+        slotUnitCost: 2,
         refreshCost: 5,
         refreshCostMultiplier: 2,
         destroyedEnemyResourceCoinReward: 1,
@@ -743,14 +750,18 @@ export const TURN_GAME_CONFIG: TurnGameConfig = {
     bloodBlockHealPerStack: 1,
     obstacleSlots: [
         { type: "summon_wall", name: "召唤墙", weight: 15 },
-        { type: "mirror", name: "反弹块", weight: 15 },
-        { type: "coin", name: "金币块", weight: 15 },
-        { type: "energy", name: "能量墙", weight: 15 },
-        { type: "bleed", name: "滴血块", weight: 15 },
+        { type: "mirror", name: "反弹块", weight: 14 },
+        { type: "coin", name: "金币块", weight: 14 },
+        { type: "energy", name: "能量墙", weight: 14 },
+        { type: "bleed", name: "滴血块", weight: 14 },
         { type: "bullet", name: "子弹块", weight: 10 },
         { type: "attack", name: "攻击块", weight: 10 },
-        { type: "missile_silo", name: "导弹井", weight: 5 },
+        { type: "missile_silo", name: "导弹井", weight: 4 },
+        { type: "shovel", name: "铲子", weight: 5 },
     ],
+    undevelopedCells: {
+        initialCount: 10,
+    },
     tankMoveSpeed: 360,
     mapWidth: 640,
     mapHeight: 960,
@@ -834,6 +845,9 @@ export function getTurnObstacleShortLabel(type: TurnObstacleResourceType): strin
     }
     if (type === "summon_wall") {
         return "召";
+    }
+    if (type === "shovel") {
+        return "铲";
     }
     if (type === "normal") {
         return "墙";

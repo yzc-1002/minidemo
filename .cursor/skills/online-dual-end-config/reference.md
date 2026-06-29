@@ -24,7 +24,8 @@
 ## 已有配置域（扩展时复用）
 
 - **回合节奏**：`buildSeconds`、`attackSeconds`、`waitBulletSeconds`、`settleSeconds`
-- **资源与经济**：`coinEconomy`、`initialRoundResourceTotal`、`roundResourceGrowth`
+- **资源与经济**：`coinEconomy`、`initialRoundResourceTotal`、`roundResourceGrowth`、`obstacleSlots`
+- **地图开发**：`undevelopedCells.initialCount`（开局双方镜像未开发格数量）
 - **战斗**：`bulletDamage`、`baseBulletBounce`、`bulletSpeed`、`missileSilo`
 - **障碍 HP**：`obstacleHpRules.<type>.baseHp / maxHp`
 - **羁绊/协同**：`bondRules`、`attackSynergy`、`bulletSynergy`

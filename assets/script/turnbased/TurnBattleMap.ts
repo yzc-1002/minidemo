@@ -157,6 +157,12 @@ interface TurnObstacleSlotState {
     heroChar?: string;
 }
 
+interface TurnUndevelopedCellState {
+    camp: TurnCamp;
+    x: number;
+    y: number;
+}
+
 interface TurnStaticObstacleState {
     id: number;
     name: string;
@@ -252,6 +258,7 @@ export default class TurnBattleMap extends cc.Component {
     private _tanks: { [camp: string]: TurnTankState } = {};
     private _obstacleInventory: { [camp: string]: TurnObstacleSlotState[] } = { A: null, B: null };
     private _obstacles: TurnObstacleState[] = [];
+    private _undevelopedCells: { [camp: string]: TurnUndevelopedCellState[] } = { A: [], B: [] };
     private _staticObstacleSeeds: TurnStaticObstacleState[] = [];
     private _staticObstacles: TurnStaticObstacleState[] = [];
     private _bullets: TurnBulletState[] = [];
@@ -294,6 +301,7 @@ export default class TurnBattleMap extends cc.Component {
     private _mapTileSize: cc.Size = cc.size(1, 1);
 
     private _staticObstacleLayer: cc.Node = null;
+    private _undevelopedLayer: cc.Node = null;
     private _obstacleLayer: cc.Node = null;
     private _bulletLayer: cc.Node = null;
     private _zoneLayer: cc.Node = null;
@@ -303,6 +311,9 @@ export default class TurnBattleMap extends cc.Component {
     private _buildPreviewLayer: cc.Node = null;
     private _resourceTooltipRoot: cc.Node = null;
     private _resourceTooltipObstacleId = "";
+    private _undevelopedCellSpriteFrame: cc.SpriteFrame = null;
+    private _undevelopedCellSpriteFrameLoading = false;
+    private _undevelopedCellSpriteFrameCallbacks: ((spriteFrame: cc.SpriteFrame) => void)[] = [];
 
     private _roads: { [camp: string]: cc.Rect } = { A: null, B: null };
     private _buildAreas: { [camp: string]: cc.Rect } = { A: null, B: null };
@@ -397,6 +408,7 @@ export default class TurnBattleMap extends cc.Component {
         this._tileSize = cc.size(1, 1);
         this._mapTileSize = cc.size(1, 1);
         this._staticObstacleLayer = null;
+        this._undevelopedLayer = null;
         this._obstacleLayer = null;
         this._bulletLayer = null;
         this._zoneLayer = null;
@@ -414,6 +426,10 @@ export default class TurnBattleMap extends cc.Component {
             A: [],
             B: [],
         };
+        this._undevelopedCells = {
+            A: [],
+            B: [],
+        };
 
         this.node.off(cc.Node.EventType.TOUCH_START, this.onTouchStart, this);
         this.node.off(cc.Node.EventType.TOUCH_MOVE, this.onTouchMove, this);
@@ -427,6 +443,7 @@ export default class TurnBattleMap extends cc.Component {
         if (!this.initTiledMap()) {
             this.initDebugFallback();
         }
+        this.generateInitialUndevelopedCells();
 
         this.createCampView("A");
         this.createCampView("B");
@@ -618,6 +635,7 @@ export default class TurnBattleMap extends cc.Component {
         if (Array.isArray(snapshot.staticObstacles)) {
             this.applyServerStaticObstacleState(snapshot.staticObstacles);
         }
+        this.applyUndevelopedCellsSnapshot(snapshot.undevelopedCells);
         if (!deferCombatSnapshot) {
             this.syncObstacleState(snapshot.obstacles || []);
         }
@@ -767,6 +785,9 @@ export default class TurnBattleMap extends cc.Component {
 
     getObstacleSlotHpPreview(slotType: TurnObstacleResourceType, count: number): string {
         let safeCount = Math.max(1, Math.floor(Number(count) || 1));
+        if (slotType === "shovel") {
+            return "解锁未开发格";
+        }
         if (slotType === "normal") {
             let maxHp = this.getObstacleMaxHp(slotType, safeCount);
             let perCell = this.getObstacleCellMaxHp(slotType);
@@ -1140,6 +1161,9 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     isBuildPositionValid(camp: TurnCamp, position: cc.Vec2, ignoreObstacleId?: string, slotId?: string, slotType: TurnObstacleResourceType = "normal"): boolean {
+        if (slotType === "shovel") {
+            return this.isShovelUnlockPositionValid(camp, position);
+        }
         let buildArea = this.getBuildArea(camp);
         let slot = slotId ? this.getObstacleSlotState(camp, slotId) : null;
         let obstacleRects = this.getDynamicObstacleRectsAt(position, slot ? slot.layout : null, slotType);
@@ -1168,6 +1192,10 @@ export default class TurnBattleMap extends cc.Component {
                 if (this.rectOverlaps(this._staticObstacles[j].rect, obstacleRect)) {
                     return false;
                 }
+            }
+
+            if (this.rectOverlapsUndevelopedCell(camp, obstacleRect)) {
+                return false;
             }
 
             for (let zoneIndex = 0; zoneIndex < this._assistZones.length; zoneIndex++) {
@@ -1279,6 +1307,10 @@ export default class TurnBattleMap extends cc.Component {
             return;
         }
         let snappedPosition = this.snapBuildPosition(position);
+        if (slot.type === "shovel") {
+            this.unlockUndevelopedCellAt(camp, snappedPosition, slot);
+            return;
+        }
         if (!this.isBuildPositionValid(camp, snappedPosition, undefined, slot.slotId, slot.type)) {
             this.showFloatText("位置不可用", position, cc.Color.RED);
             return;
@@ -1300,6 +1332,46 @@ export default class TurnBattleMap extends cc.Component {
         this.createBuildObstacle(camp, snappedPosition, undefined, slot.slotId, slot.type);
         this.emitStatsChanged();
         this.refreshBuildInteractionView();
+    }
+
+    private unlockUndevelopedCellAt(camp: TurnCamp, position: cc.Vec2, slot: TurnObstacleSlotState) {
+        if (!this.isShovelUnlockPositionValid(camp, position)) {
+            this.showFloatText("只能铲除未开发格", position, cc.Color.RED);
+            return;
+        }
+        if (this._serverMode) {
+            if (this.onBuildIntent) {
+                this.onBuildIntent({
+                    op: "unlock",
+                    slotId: slot.slotId,
+                    slotType: slot.type,
+                    x: position.x,
+                    y: position.y,
+                });
+            }
+            return;
+        }
+
+        if (this.removeUndevelopedCell(camp, position)) {
+            slot.placed = true;
+            slot.placedObstacleId = "unlock_" + slot.slotId;
+            this.showFloatText("已解锁", position, new cc.Color(120, 245, 160, 255));
+            this.emitStatsChanged();
+            this.refreshBuildInteractionView();
+        }
+    }
+
+    private removeUndevelopedCell(camp: TurnCamp, position: cc.Vec2): boolean {
+        let key = this.getUndevelopedCellKey(position.x, position.y);
+        let cells = this._undevelopedCells[camp] || [];
+        for (let i = 0; i < cells.length; i++) {
+            if (this.getUndevelopedCellKey(cells[i].x, cells[i].y) === key) {
+                cells.splice(i, 1);
+                this.renderUndevelopedCells();
+                return true;
+            }
+        }
+        return false;
     }
 
     cancelPaletteBuildDrag(camp?: TurnCamp) {
@@ -1965,7 +2037,7 @@ export default class TurnBattleMap extends cc.Component {
         this.drawObstacleGraphics(graphics, camp, true, slotType, layout, mirrorDir, cellLevels);
 
         let id = forcedId || String(this._nextObstacleId++);
-        if (slot) {
+        if (slot && !snapshot) {
             slot.placed = true;
             slot.placedObstacleId = id;
         }
@@ -2584,7 +2656,7 @@ export default class TurnBattleMap extends cc.Component {
             derivedUpgrades: this.buildDerivedUpgradeState({}),
             coins: Math.max(0, Math.floor(Number(economy.initialCoins) || 0)),
             placedThisRound: false,
-            slotCost: Math.max(0, Math.floor(Number(economy.slotCost) || 0)),
+            slotCost: Math.max(0, Math.floor(Number((economy as any).slotUnitCost != null ? (economy as any).slotUnitCost : economy.slotCost) || 0)),
             refreshCost: Math.max(0, Math.floor(Number(economy.refreshCost) || 0)),
             canRefresh: false,
         };
@@ -2754,12 +2826,45 @@ export default class TurnBattleMap extends cc.Component {
         });
     }
 
+    private applyUndevelopedCellsSnapshot(source: any) {
+        if (!source) {
+            return;
+        }
+        this._undevelopedCells = {
+            A: this.parseUndevelopedCellsForCamp("A", source.A),
+            B: this.parseUndevelopedCellsForCamp("B", source.B),
+        };
+        this.renderUndevelopedCells();
+    }
+
+    private parseUndevelopedCellsForCamp(camp: TurnCamp, source: any): TurnUndevelopedCellState[] {
+        let list = Array.isArray(source) ? source : [];
+        let result: TurnUndevelopedCellState[] = [];
+        let used: { [key: string]: boolean } = {};
+        for (let i = 0; i < list.length; i++) {
+            let item = list[i] || {};
+            let x = Math.round(Number(item.x) || 0);
+            let y = Math.round(Number(item.y) || 0);
+            let key = this.getUndevelopedCellKey(x, y);
+            if (used[key]) {
+                continue;
+            }
+            used[key] = true;
+            result.push({ camp: camp, x: x, y: y });
+        }
+        return result;
+    }
+
     private reconcileSlotPlacementState(slot: TurnObstacleSlotState) {
         if (!slot) {
             return;
         }
         if (!slot.placedObstacleId) {
             slot.placed = false;
+            return;
+        }
+        if (slot.type === "shovel" && slot.placedObstacleId.indexOf("unlock_") === 0) {
+            slot.placed = true;
             return;
         }
         let exists = false;
@@ -2789,6 +2894,9 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private getSlotDisplayName(type: TurnObstacleResourceType): string {
+        if (type === "shovel") {
+            return "铲子";
+        }
         if (type === "summon_wall") {
             return "召唤墙";
         }
@@ -2836,7 +2944,7 @@ export default class TurnBattleMap extends cc.Component {
         let result: TurnObstacleSlotState[] = [];
         for (let i = 0; i < counts.length; i++) {
             let type = this.randomSlotType();
-            let count = type === "summon_wall" ? 1 : counts[i];
+            let count = type === "summon_wall" || type === "shovel" ? 1 : counts[i];
             let layout = this.buildLayoutForSlot(type, count);
             result.push({
                 slotId: camp + "_r" + roundIndex + "_s" + i,
@@ -2938,7 +3046,7 @@ export default class TurnBattleMap extends cc.Component {
     }
 
     private buildLayoutForSlot(slotType: TurnObstacleResourceType, count: number): cc.Vec2[] {
-        if (slotType === "summon_wall") {
+        if (slotType === "summon_wall" || slotType === "shovel") {
             return [cc.v2(0, 0)];
         }
         let safeCount = Math.max(1, Math.min(this._config.obstacleSlotMaxResources, count));
@@ -3155,6 +3263,9 @@ export default class TurnBattleMap extends cc.Component {
         if (!valid) {
             return new cc.Color(210, 60, 60, 255);
         }
+        if (_slotType === "shovel") {
+            return new cc.Color(164, 112, 58, 255);
+        }
         let palette = [
             new cc.Color(20, 20, 20, 255),
             new cc.Color(58, 174, 84, 255),
@@ -3352,6 +3463,36 @@ export default class TurnBattleMap extends cc.Component {
             return "B";
         }
         return null;
+    }
+
+    private isShovelUnlockPositionValid(camp: TurnCamp, position: cc.Vec2): boolean {
+        if (!camp || !position) {
+            return false;
+        }
+        let buildArea = this.getBuildArea(camp);
+        let rect = this.getTileRectAt(position);
+        return !!(buildArea && this.rectContainsRect(buildArea, rect) && this.getUndevelopedCellAt(camp, position));
+    }
+
+    private getUndevelopedCellAt(camp: TurnCamp, position: cc.Vec2): TurnUndevelopedCellState {
+        let key = this.getUndevelopedCellKey(position.x, position.y);
+        let cells = this._undevelopedCells[camp] || [];
+        for (let i = 0; i < cells.length; i++) {
+            if (this.getUndevelopedCellKey(cells[i].x, cells[i].y) === key) {
+                return cells[i];
+            }
+        }
+        return null;
+    }
+
+    private rectOverlapsUndevelopedCell(camp: TurnCamp, rect: cc.Rect): boolean {
+        let cells = this._undevelopedCells[camp] || [];
+        for (let i = 0; i < cells.length; i++) {
+            if (this.rectOverlaps(this.getTileRectAt(cc.v2(cells[i].x, cells[i].y)), rect)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private findObstacleAt(position: cc.Vec2): TurnObstacleState {
@@ -3669,6 +3810,7 @@ export default class TurnBattleMap extends cc.Component {
 
     private ensureRuntimeLayers() {
         this._staticObstacleLayer = this.ensureLayerNode("TurnStaticObstacleLayer", 5);
+        this._undevelopedLayer = this.ensureLayerNode("TurnUndevelopedLayer", 8);
         this._obstacleLayer = this.ensureLayerNode("TurnObstacleLayer", 10);
         this._bulletLayer = this.ensureLayerNode("TurnBulletLayer", 20);
         this._zoneLayer = this.ensureLayerNode("TurnZoneLayer", 30);
@@ -3734,6 +3876,140 @@ export default class TurnBattleMap extends cc.Component {
             label.node.color = cc.Color.WHITE;
             label.node.zIndex = 2;
         }
+    }
+
+    private generateInitialUndevelopedCells() {
+        let count = Math.max(0, Math.floor(Number(this._config.undevelopedCells && this._config.undevelopedCells.initialCount) || 0));
+        let cellsA = this.pickRandomUndevelopedCells("A", count);
+        this._undevelopedCells.A = cellsA;
+        this._undevelopedCells.B = cellsA.map((cell) => ({
+            camp: "B" as TurnCamp,
+            x: cell.x,
+            y: -cell.y,
+        }));
+        this.renderUndevelopedCells();
+    }
+
+    private pickRandomUndevelopedCells(camp: TurnCamp, count: number): TurnUndevelopedCellState[] {
+        let candidates = this.getBuildAreaTileCenters(camp);
+        this.shuffleUndevelopedCandidates(candidates);
+        let picked: TurnUndevelopedCellState[] = [];
+        let used: { [key: string]: boolean } = {};
+        for (let i = 0; i < candidates.length && picked.length < count; i++) {
+            let point = candidates[i];
+            let key = this.getUndevelopedCellKey(point.x, point.y);
+            if (used[key] || !this.canUseUndevelopedCell(camp, point)) {
+                continue;
+            }
+            used[key] = true;
+            picked.push({ camp: camp, x: point.x, y: point.y });
+        }
+        return picked;
+    }
+
+    private getBuildAreaTileCenters(camp: TurnCamp): cc.Vec2[] {
+        let result: cc.Vec2[] = [];
+        let buildArea = this.getBuildArea(camp);
+        if (!buildArea || this._tileSize.width <= 0 || this._tileSize.height <= 0) {
+            return result;
+        }
+        let mapSize = this._mapTileSize.width > 0 && this._mapTileSize.height > 0
+            ? this._mapTileSize
+            : cc.size(
+                Math.max(1, Math.round(this._mapPixelSize.width / this._tileSize.width)),
+                Math.max(1, Math.round(this._mapPixelSize.height / this._tileSize.height)),
+            );
+        for (let tx = 0; tx < mapSize.width; tx++) {
+            for (let ty = 0; ty < mapSize.height; ty++) {
+                let center = this.tileToGamePos(cc.v2(tx, ty));
+                let tileRect = this.getTileRectAt(center);
+                if (this.rectContainsRect(buildArea, tileRect)) {
+                    result.push(center);
+                }
+            }
+        }
+        return result;
+    }
+
+    private canUseUndevelopedCell(camp: TurnCamp, point: cc.Vec2): boolean {
+        let rect = this.getTileRectAt(point);
+        for (let i = 0; i < this._staticObstacles.length; i++) {
+            if (this.rectOverlaps(this._staticObstacles[i].rect, rect)) {
+                return false;
+            }
+        }
+        for (let j = 0; j < this._noBuildAreas.length; j++) {
+            if (this.rectOverlaps(this._noBuildAreas[j], rect)) {
+                return false;
+            }
+        }
+        let buildArea = this.getBuildArea(camp);
+        return !!(buildArea && this.rectContainsRect(buildArea, rect));
+    }
+
+    private shuffleUndevelopedCandidates(candidates: cc.Vec2[]) {
+        for (let i = candidates.length - 1; i > 0; i--) {
+            let j = Math.floor(Math.random() * (i + 1));
+            let temp = candidates[i];
+            candidates[i] = candidates[j];
+            candidates[j] = temp;
+        }
+    }
+
+    private renderUndevelopedCells() {
+        if (!this._undevelopedLayer) {
+            return;
+        }
+        this._undevelopedLayer.removeAllChildren();
+        let camps: TurnCamp[] = ["A", "B"];
+        for (let c = 0; c < camps.length; c++) {
+            let cells = this._undevelopedCells[camps[c]] || [];
+            for (let i = 0; i < cells.length; i++) {
+                this.createUndevelopedCellNode(cells[i]);
+            }
+        }
+    }
+
+    private createUndevelopedCellNode(cell: TurnUndevelopedCellState) {
+        let node = new cc.Node("UndevelopedCell" + cell.camp);
+        node.parent = this._undevelopedLayer;
+        node.setPosition(cell.x, cell.y);
+        let w = this._tileSize.width || this._dynamicObstacleSize.width;
+        let h = this._tileSize.height || this._dynamicObstacleSize.height;
+        node.setContentSize(w, h);
+        let sprite = node.addComponent(cc.Sprite);
+        sprite.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+        sprite.trim = false;
+        this.loadUndevelopedCellSpriteFrame((spriteFrame) => {
+            if (sprite && cc.isValid(sprite) && spriteFrame) {
+                sprite.spriteFrame = spriteFrame;
+            }
+        });
+    }
+
+    private loadUndevelopedCellSpriteFrame(callback: (spriteFrame: cc.SpriteFrame) => void) {
+        if (this._undevelopedCellSpriteFrame) {
+            callback(this._undevelopedCellSpriteFrame);
+            return;
+        }
+        if (callback) {
+            this._undevelopedCellSpriteFrameCallbacks.push(callback);
+        }
+        if (this._undevelopedCellSpriteFrameLoading) {
+            return;
+        }
+        this._undevelopedCellSpriteFrameLoading = true;
+        cc.assetManager.loadAny({ uuid: "db65018e-e4a9-48d2-8a9a-61ae0dc79746" }, (err, asset) => {
+            this._undevelopedCellSpriteFrameLoading = false;
+            if (!err && asset) {
+                this._undevelopedCellSpriteFrame = asset instanceof cc.SpriteFrame ? asset : asset as cc.SpriteFrame;
+            }
+            let callbacks = this._undevelopedCellSpriteFrameCallbacks.slice();
+            this._undevelopedCellSpriteFrameCallbacks = [];
+            for (let i = 0; i < callbacks.length; i++) {
+                callbacks[i](this._undevelopedCellSpriteFrame);
+            }
+        });
     }
 
     private findTiledMapComponent(root: cc.Node): cc.TiledMap {
@@ -4043,6 +4319,16 @@ export default class TurnBattleMap extends cc.Component {
             && child.y >= container.y
             && child.x + child.width <= container.x + container.width
             && child.y + child.height <= container.y + container.height;
+    }
+
+    private getTileRectAt(position: cc.Vec2): cc.Rect {
+        let width = this._tileSize.width > 0 ? this._tileSize.width : this._dynamicObstacleSize.width;
+        let height = this._tileSize.height > 0 ? this._tileSize.height : this._dynamicObstacleSize.height;
+        return cc.rect(position.x - width / 2, position.y - height / 2, width, height);
+    }
+
+    private getUndevelopedCellKey(x: number, y: number): string {
+        return Math.round(Number(x) || 0) + ":" + Math.round(Number(y) || 0);
     }
 
     private rectsOverlapAny(rects: cc.Rect[], target: cc.Rect): boolean {
@@ -5272,7 +5558,13 @@ export default class TurnBattleMap extends cc.Component {
                 if (!this.rectContainsRect(buildArea, tileRect)) {
                     continue;
                 }
-                let valid = this.isBuildPositionValid(camp, center, this._dragObstacle ? this._dragObstacle.id : undefined, this._dragObstacle ? this._dragObstacle.slotType : slotType);
+                let valid = this.isBuildPositionValid(
+                    camp,
+                    center,
+                    this._dragObstacle ? this._dragObstacle.id : undefined,
+                    this._palettePreview ? this._palettePreview.slotId : undefined,
+                    this._dragObstacle ? this._dragObstacle.slotType : slotType,
+                );
                 if (!valid) {
                     continue;
                 }

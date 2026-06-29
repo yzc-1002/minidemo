@@ -1148,7 +1148,12 @@ export default class TurnHud extends cc.Component {
             graphics.roundRect(x - width / 2, y - width / 2, width, width, 8);
             graphics.stroke();
 
-            this.drawSlotShape(target, graphics, slot, x, y, width - 8);
+            if (slot.placed) {
+                this.drawEmptyBuildSlot(target, x, y, width - 8);
+            }
+            else {
+                this.drawSlotShape(target, graphics, slot, x, y, width - 8);
+            }
 
             if (slot.slotId === this._selectedBuildSlotId) {
                 graphics.strokeColor = new cc.Color(255, 235, 120, 255);
@@ -1158,6 +1163,14 @@ export default class TurnHud extends cc.Component {
             }
             this.createBuildSlotInfo(slot, x, y - width / 2 - 10);
         }
+    }
+
+    private drawEmptyBuildSlot(target: cc.Node, centerX: number, centerY: number, innerSize: number) {
+        let label = this.createChildLabel(target, "空", Math.max(18, Math.floor(innerSize * 0.42)), centerX, centerY);
+        label.verticalAlign = cc.Label.VerticalAlign.CENTER;
+        label.node.color = new cc.Color(150, 160, 178, 210);
+        label.node.zIndex = 8;
+        this._buildSlotInfoNodes.push(label.node);
     }
 
     private drawSlotShape(
@@ -1283,10 +1296,10 @@ export default class TurnHud extends cc.Component {
 
         let lineHeight = 10;
         let cursorY = 0;
-        let name = this.createChildLabel(root, this.getSlotDisplayName(slot.type, slot.name), 13, 0, 75);
+        let name = this.createChildLabel(root, slot.placed ? "空槽" : this.getSlotDisplayName(slot.type, slot.name), 13, 0, 75);
         name.node.color = slot.slotId === this._selectedBuildSlotId
             ? new cc.Color(255, 235, 120, 255)
-            : new cc.Color(230, 235, 244, 255);
+            : (slot.placed ? new cc.Color(150, 160, 178, 230) : new cc.Color(230, 235, 244, 255));
         cursorY -= lineHeight + 2;
 
         // if (slot.hpText) {
@@ -1295,7 +1308,7 @@ export default class TurnHud extends cc.Component {
         //     cursorY -= lineHeight;
         // }
 
-        let coinCost = Math.max(0, Math.floor(Number(slot.coinCost) || 0));
+        let coinCost = slot.placed ? 0 : Math.max(0, Math.floor(Number(slot.coinCost) || 0));
         if (coinCost > 0) {
             let affordable = slot.affordable !== false;
             let costLabel = this.createChildLabel(root, "-" + coinCost + " 金币", 12, 0, cursorY);
@@ -1328,6 +1341,9 @@ export default class TurnHud extends cc.Component {
     }
 
     private getSlotDisplayName(type: TurnObstacleResourceType, fallback?: string): string {
+        if (type === "shovel") {
+            return "铲子";
+        }
         if (type === "summon_wall") {
             return "召唤墙";
         }
@@ -1360,6 +1376,9 @@ export default class TurnHud extends cc.Component {
 
     private getSlotColor(_type: TurnObstacleResourceType, placed: boolean, level: number = 1): cc.Color {
         let alpha = placed ? 200 : 255;
+        if (_type === "shovel") {
+            return new cc.Color(164, 112, 58, alpha);
+        }
         let palette = [
             new cc.Color(20, 20, 20, alpha),
             new cc.Color(58, 174, 84, alpha),

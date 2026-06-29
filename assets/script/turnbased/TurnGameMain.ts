@@ -323,7 +323,7 @@ export default class TurnGameMain extends cc.Component {
             this._battleMap.getBondHudItems(enemyCamp),
         );
         let coins = this._battleMap.getCampCoins(localCamp);
-        let slotCost = this.useServer ? this._battleMap.getCampSlotCost(localCamp) : 0;
+        let slotUnitCost = this.useServer ? this._battleMap.getCampSlotCost(localCamp) : 0;
         this._hud.refreshCoins(
             this._battleMap.getCampCoins("A"),
             this._battleMap.getCampCoins("B"),
@@ -338,8 +338,8 @@ export default class TurnGameMain extends cc.Component {
                 shapeKey: slot.shapeKey,
                 placed: !!slot.placed,
                 hpText: this._battleMap.getObstacleSlotHpPreview(slot.type, slot.count),
-                coinCost: slotCost,
-                affordable: !this.useServer || slotCost <= 0 || coins >= slotCost,
+                coinCost: this.useServer ? Math.max(0, Math.floor(Number(slot.count) || 0)) * slotUnitCost : 0,
+                affordable: !this.useServer || slotUnitCost <= 0 || coins >= Math.max(0, Math.floor(Number(slot.count) || 0)) * slotUnitCost,
                 layout: Array.isArray(slot.layout)
                     ? slot.layout.map((cell) => ({ x: Number(cell.x) || 0, y: Number(cell.y) || 0 }))
                     : null,
